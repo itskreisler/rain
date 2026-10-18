@@ -51,6 +51,12 @@ jobs:
           ../../rain init || true
           test -f rain.toml
 
+      - name: Verify Rain CLI on Material3 Expressive App
+        run: |
+          cd samples/material3-expressive
+          ../../rain init || true
+          test -f rain.toml
+
   release:
     name: Build & Publish Release Binaries
     runs-on: ubuntu-latest

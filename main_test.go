@@ -27,6 +27,12 @@ func TestSampleProjects(t *testing.T) {
 			expectedPkg: "com.example.compose",
 			mode:        "completo",
 		},
+		{
+			name:        "Material 3 Expressive Application",
+			dir:         filepath.Join("samples", "material3-expressive"),
+			expectedPkg: "sco.carlukesoftware.material3expressive",
+			mode:        "completo",
+		},
 	}
 
 	for _, sample := range samples {

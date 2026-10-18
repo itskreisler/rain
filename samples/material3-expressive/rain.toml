@@ -1,0 +1,20 @@
+mode = "completo"
+dependencies = [
+    "androidx.core:core-ktx:1.16.0",
+    "androidx.activity:activity-compose:1.10.1",
+    "androidx.compose.ui:ui:1.6.0",
+    "androidx.compose.material3:material3:1.4.0-alpha17",
+    "androidx.lifecycle:lifecycle-runtime-ktx:2.9.1",
+    "org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0",
+    "org.jetbrains.kotlinx:kotlinx-datetime:0.7.1",
+    "io.insert-koin:koin-android:4.1.0",
+    "io.insert-koin:koin-androidx-compose:4.1.0"
+]
+
+[project]
+name = "Material3Expressive"
+package = "sco.carlukesoftware.material3expressive"
+version = "1.0.0"
+
+[build]
+debug = true
