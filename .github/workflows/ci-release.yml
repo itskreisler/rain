@@ -42,10 +42,11 @@ jobs:
           echo "$BUILD_TOOLS_DIR" >> $GITHUB_PATH
           echo "Added $BUILD_TOOLS_DIR to PATH"
 
-      - name: Install Kotlin Compiler
+      - name: Install Kotlin Compiler (v1.9.22)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y kotlin
+          curl -sSL "https://github.com/JetBrains/kotlin/releases/download/v1.9.22/kotlin-compiler-1.9.22.zip" -o /tmp/kotlinc.zip
+          sudo unzip -q /tmp/kotlinc.zip -d /usr/local/
+          echo "/usr/local/kotlinc/bin" >> $GITHUB_PATH
 
       - name: Run Go Unit & Integration Tests
         run: go test -v ./...

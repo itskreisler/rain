@@ -223,10 +223,19 @@ public final class BuildConfig {
 			}
 			kotlinClasspath = append(kotlinClasspath, genDir)
 
-			kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
+			var kotlincArgs []string
+			prefix := os.Getenv("PREFIX")
+			if prefix != "" {
+				jansiPath := prefix + "/lib/jansi"
+				if fileExists(jansiPath) {
+					kotlincArgs = append(kotlincArgs, "-J-Dlibrary.jansi.path="+jansiPath)
+				}
+			}
+
+			kotlincArgs = append(kotlincArgs,
 				"-d", objDir,
 				"-classpath", strings.Join(kotlinClasspath, ":"),
-				"-jvm-target", "1.8"}
+				"-jvm-target", "1.8")
 			kotlincArgs = append(kotlincArgs, kotlinSources...)
 
 			var kotlinStderr bytes.Buffer
