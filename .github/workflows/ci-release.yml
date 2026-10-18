@@ -12,9 +12,12 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   test:
-    name: Run Tests & Build Samples
+    name: Run Tests & Build Sample APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -33,41 +36,91 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Set up Android SDK & Build Tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install Kotlin Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y kotlin zipalign apksigner
+
       - name: Run Go Unit & Integration Tests
         run: go test -v ./...
 
       - name: Build Rain CLI binary
         run: go build -o rain .
 
-      - name: Verify Rain CLI on Simple App
+      - name: Locate Android JAR
+        id: sdk
         run: |
+          ANDROID_JAR=$(find $ANDROID_HOME/platforms -name "android.jar" | sort -V | tail -n 1)
+          echo "android_jar=$ANDROID_JAR" >> $GITHUB_OUTPUT
+          echo "Found android.jar at $ANDROID_JAR"
+
+      - name: Test Rain Build (Debug, Release, Clean) on Simple App
+        run: |
+          ANDROID_JAR="${{ steps.sdk.outputs.android_jar }}"
           cd samples/simple-app
-          ../../rain init || true
-          test -f rain.toml
+          ../../rain build --android-jar "$ANDROID_JAR"
+          ../../rain build --android-jar "$ANDROID_JAR" -release
+          ../../rain clean
 
-      - name: Verify Rain CLI on Compose App
+      - name: Test Rain Build (Debug, Release, Clean) on Compose App
         run: |
+          ANDROID_JAR="${{ steps.sdk.outputs.android_jar }}"
           cd samples/compose-app
-          ../../rain init || true
-          test -f rain.toml
+          ../../rain build --android-jar "$ANDROID_JAR"
+          ../../rain build --android-jar "$ANDROID_JAR" -release
+          ../../rain clean
 
-      - name: Verify Rain CLI on Material3 Expressive App
+      - name: Test Rain Build (Debug, Release, Clean) on Material3 Expressive App
         run: |
+          ANDROID_JAR="${{ steps.sdk.outputs.android_jar }}"
           cd samples/material3-expressive
-          ../../rain init || true
-          test -f rain.toml
+          ../../rain build --android-jar "$ANDROID_JAR"
+          ../../rain build --android-jar "$ANDROID_JAR" -release
+          ../../rain clean
 
-  release:
-    name: Build & Publish Release Binaries
+  create-release:
+    name: Create draft release
     runs-on: ubuntu-latest
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Create or reuse draft release
+        id: draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+            const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo });
+            let release = releases.find((r) => r.draft && r.tag_name === tag);
+            if (!release) {
+              ({ data: release } = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: `Rain ${tag}`,
+                body: `Release ${tag} of Rain Android build tool binary artifacts.`,
+                draft: true,
+                prerelease: false,
+              }));
+            }
+            core.setOutput('release_id', String(release.id));
+
+  build-release:
+    name: Build & Upload Binaries
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -75,7 +128,7 @@ jobs:
           go-version: '1.21'
           cache: true
 
-      - name: Build Cross-Platform Binaries
+      - name: Cross-Compile Binaries
         run: |
           mkdir -p dist
 
@@ -92,25 +145,49 @@ jobs:
           # Windows
           GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/rain-windows-amd64.exe .
 
-      - name: Generate SHA-256 Checksums
-        run: |
           cd dist
           sha256sum * > SHA256SUMS.txt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/rain-linux-amd64
-            dist/rain-linux-arm64
-            dist/rain-linux-aarch64
-            dist/rain-linux-arm
-            dist/rain-darwin-amd64
-            dist/rain-darwin-arm64
-            dist/rain-windows-amd64.exe
-            dist/SHA256SUMS.txt
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+      - name: Upload Release Assets
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const release_id = Number(process.env.RELEASE_ID);
+            const distDir = 'dist';
+            const files = fs.readdirSync(distDir);
+
+            for (const file of files) {
+              const filePath = path.join(distDir, file);
+              const data = fs.readFileSync(filePath);
+              console.log(`Uploading ${file} to release ${release_id}...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release_id,
+                name: file,
+                data: data
+              });
+            }
+
+  publish-release:
+    name: Publish release
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Publish draft release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            });
