@@ -1,0 +1,14 @@
+mode = "completo"
+dependencies = [
+    "androidx.compose.ui:ui:1.6.0",
+    "androidx.compose.material3:material3:1.2.0",
+    "androidx.activity:activity-compose:1.8.2"
+]
+
+[project]
+name = "ComposeApp"
+package = "com.example.compose"
+version = "1.0.0"
+
+[build]
+debug = true

@@ -1,0 +1,10 @@
+mode = "simple"
+dependencies = []
+
+[project]
+name = "SimpleApp"
+package = "com.example.simple"
+version = "1.0.0"
+
+[build]
+debug = true
