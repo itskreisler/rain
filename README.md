@@ -29,7 +29,7 @@ pkg install openjdk-21 aapt2 d8 apksigner zipalign kotlin libjansi
 Instalación
 
 ```
-git clone https://github.com/TU_USUARIO/rain.git
+git clone https://github.com/lucassogarayda/rain.git
 cd rain
 go build -o rain .
 # Opcional: mover a $PREFIX/bin para uso global
