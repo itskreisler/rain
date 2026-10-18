@@ -12,8 +12,13 @@ import (
 // Repositorios en orden de prioridad
 var repositories = []string{
 	"https://dl.google.com/dl/android/maven2",
+	"https://repo.maven.apache.org/maven2",
 	"https://repo1.maven.org/maven2",
 }
+
+const (
+	UserAgentHeader = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 // Project representa la estructura relevante de un POM de Maven.
 type Project struct {
@@ -55,16 +60,17 @@ func httpGetWithRetry(url string) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 7; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			time.Sleep(backoff)
 		}
 
 		req, reqErr := http.NewRequest("GET", url, nil)
 		if reqErr != nil {
 			return nil, reqErr
 		}
-		req.Header.Set("User-Agent", "Rain-Build-Tool/1.0 (https://github.com/lucassogarayda/rain)")
+		req.Header.Set("User-Agent", UserAgentHeader)
 
 		resp, err = client.Do(req)
 		if err == nil {
