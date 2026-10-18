@@ -76,6 +76,7 @@ jobs:
           # Linux
           GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/rain-linux-amd64 .
           GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/rain-linux-arm64 .
+          cp dist/rain-linux-arm64 dist/rain-linux-aarch64
           GOOS=linux GOARCH=arm go build -ldflags="-s -w" -o dist/rain-linux-arm .
 
           # macOS
@@ -96,6 +97,7 @@ jobs:
           files: |
             dist/rain-linux-amd64
             dist/rain-linux-arm64
+            dist/rain-linux-aarch64
             dist/rain-linux-arm
             dist/rain-darwin-amd64
             dist/rain-darwin-arm64
