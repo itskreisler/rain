@@ -13,6 +13,7 @@ import (
 	"rain/internal/ui"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -32,9 +33,23 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	buildCmd.Flags().StringVar(&flagAndroidJar, "android-jar", "", "ruta a android.jar (Requerido)")
-	buildCmd.Flags().BoolVar(&flagRelease, "release", false, "compilar en modo release (R8 y firma)")
+	buildCmd.Flags().BoolVarP(&flagRelease, "release", "r", false, "compilar en modo release (R8 y firma)")
 	buildCmd.Flags().BoolVar(&flagVerbose, "verbose", false, "mostrar detalles de ejecución")
 	buildCmd.Flags().BoolVar(&flagQuiet, "quiet", false, "solo mostrar errores")
+
+	buildCmd.Flags().SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
+		switch name {
+		case "release":
+			return pflag.NormalizedName("release")
+		case "android-jar":
+			return pflag.NormalizedName("android-jar")
+		case "verbose":
+			return pflag.NormalizedName("verbose")
+		case "quiet":
+			return pflag.NormalizedName("quiet")
+		}
+		return pflag.NormalizedName(name)
+	})
 }
 
 func runBuild() {

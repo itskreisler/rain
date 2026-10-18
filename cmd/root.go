@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -58,8 +59,34 @@ EJEMPLOS DE USO:
 `,
 }
 
+func NormalizeArgs(args []string) []string {
+	normalized := make([]string, len(args))
+	for i, arg := range args {
+		switch arg {
+		case "-release":
+			normalized[i] = "--release"
+		case "-verbose":
+			normalized[i] = "--verbose"
+		case "-quiet":
+			normalized[i] = "--quiet"
+		case "-android-jar":
+			normalized[i] = "--android-jar"
+		default:
+			if strings.HasPrefix(arg, "-android-jar=") {
+				normalized[i] = "-" + arg
+			} else {
+				normalized[i] = arg
+			}
+		}
+	}
+	return normalized
+}
+
 // Execute inicia la CLI de Cobra.
 func Execute() {
+	if len(os.Args) > 1 {
+		rootCmd.SetArgs(NormalizeArgs(os.Args[1:]))
+	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
