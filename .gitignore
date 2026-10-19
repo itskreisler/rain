@@ -1,6 +1,9 @@
 libs/
 cache/
 app/build/
+**/build/
+**/libs/
+**/cache/
 *.apk
 *.keystore
 *.jar
