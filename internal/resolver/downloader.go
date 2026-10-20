@@ -24,10 +24,9 @@ func httpGetWithRetry(url string) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
-	for attempt := 0; attempt < 7; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			time.Sleep(backoff)
+			time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
 		}
 
 		req, reqErr := http.NewRequest("GET", url, nil)
@@ -38,7 +37,12 @@ func httpGetWithRetry(url string) (*http.Response, error) {
 
 		resp, err = client.Do(req)
 		if err == nil {
-			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			if resp.StatusCode == http.StatusTooManyRequests {
+				resp.Body.Close()
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			if resp.StatusCode >= 500 {
 				resp.Body.Close()
 				continue
 			}

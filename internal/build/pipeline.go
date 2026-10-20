@@ -213,12 +213,18 @@ public final class BuildConfig {
 		if len(kotlinSources) > 0 {
 			ui.Info("compilando Kotlin (%d archivos)...", len(kotlinSources))
 
+			var pluginArgs []string
 			var kotlinClasspath []string
 			kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
 			libEntries, _ := os.ReadDir(cfg.LibsDir)
 			for _, e := range libEntries {
 				if strings.HasSuffix(e.Name(), ".jar") {
-					kotlinClasspath = append(kotlinClasspath, filepath.Join(cfg.LibsDir, e.Name()))
+					jarPath := filepath.Join(cfg.LibsDir, e.Name())
+					kotlinClasspath = append(kotlinClasspath, jarPath)
+					if strings.Contains(e.Name(), "compiler") && (strings.Contains(e.Name(), "compose") || strings.Contains(e.Name(), "plugin")) {
+						pluginArgs = append(pluginArgs, "-Xplugin="+jarPath)
+						pluginArgs = append(pluginArgs, "-P", "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=true")
+					}
 				}
 			}
 			kotlinClasspath = append(kotlinClasspath, genDir)
@@ -232,6 +238,7 @@ public final class BuildConfig {
 				}
 			}
 
+			kotlincArgs = append(kotlincArgs, pluginArgs...)
 			kotlincArgs = append(kotlincArgs,
 				"-d", objDir,
 				"-classpath", strings.Join(kotlinClasspath, ":"),
