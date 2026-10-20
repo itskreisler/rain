@@ -13,7 +13,7 @@ func TestConfigReadWrite(t *testing.T) {
 
 	original := config.Config{
 		Mode:         "completo",
-		Dependencies: []string{"androidx.core:core:1.12.0", "androidx.compose.ui:ui:1.6.0"},
+		Dependencies: []string{"androidx.core:core:1.12.0", "androidx.appcompat:appcompat:1.7.0"},
 		Project: config.Project{
 			Name:    "TestApp",
 			Package: "com.example.test",
@@ -66,19 +66,19 @@ func TestSampleConfigs(t *testing.T) {
 		t.Errorf("simple-app package expected 'com.example.simple', got %q", simpleCfg.Project.Package)
 	}
 
-	composeCfgPath := filepath.Join("..", "..", "samples", "compose-app", "rain.toml")
-	composeCfg, err := config.Read(composeCfgPath)
+	lgCfgPath := filepath.Join("..", "..", "samples", "liquid-glass", "rain.toml")
+	lgCfg, err := config.Read(lgCfgPath)
 	if err != nil {
-		t.Fatalf("failed to read compose-app config: %v", err)
+		t.Fatalf("failed to read liquid-glass config: %v", err)
 	}
-	if composeCfg.Mode != "completo" {
-		t.Errorf("compose-app mode expected 'completo', got %q", composeCfg.Mode)
+	if lgCfg.Mode != "completo" {
+		t.Errorf("liquid-glass mode expected 'completo', got %q", lgCfg.Mode)
 	}
-	if composeCfg.Project.Package != "com.example.compose" {
-		t.Errorf("compose-app package expected 'com.example.compose', got %q", composeCfg.Project.Package)
+	if lgCfg.Project.Package != "com.example.liquidglass.demo" {
+		t.Errorf("liquid-glass package expected 'com.example.liquidglass.demo', got %q", lgCfg.Project.Package)
 	}
-	if len(composeCfg.Dependencies) == 0 {
-		t.Errorf("compose-app expected dependencies, got empty slice")
+	if len(lgCfg.Dependencies) == 0 {
+		t.Errorf("liquid-glass expected dependencies, got empty slice")
 	}
 
 	m3CfgPath := filepath.Join("..", "..", "samples", "material3-expressive", "rain.toml")

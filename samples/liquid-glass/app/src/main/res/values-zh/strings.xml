@@ -1,0 +1,294 @@
+<!--
+    LiquidGlass 应用字符串资源 - 中文版
+    Chinese string resources for LiquidGlass app
+-->
+<resources>
+    <string name="app_name">液态玻璃</string>
+
+    <!-- Main UI -->
+    <string name="glass_button_text">✨ 液态玻璃\n效果演示</string>
+    <string name="performance_waiting">性能监控：等待数据…</string>
+
+    <!-- Debug Panel -->
+    <string name="debug_panel_title">⚙️ 调试面板</string>
+
+    <!-- Performance Section -->
+    <string name="section_performance">性能监控</string>
+    <string name="switch_performance_overlay">显示性能悬浮窗</string>
+    <string name="debug_info_waiting">等待性能数据…</string>
+
+    <!-- Render Path Section -->
+    <string name="section_render_path">渲染路径</string>
+    <string name="switch_gpu_render">GPU 加速渲染 (API 31+)</string>
+    <string name="gpu_render_desc">开启时模糊/饱和度（API 33+ 还包括色差）完全由 GPU 的 RenderEffect 执行，下方的 CPU 算法选项不生效。关闭后可测试 CPU 算法（模糊算法、C++/Kotlin 色差、下采样等）。</string>
+
+    <!-- Blur Method Section -->
+    <string name="section_blur_method">模糊算法</string>
+    <string name="current_blur_method">当前：智能选择</string>
+    <string name="blur_method_smart">智能选择 (推荐)</string>
+    <string name="blur_method_box">盒式模糊 (Kotlin)</string>
+    <string name="blur_method_box_cpp">盒式模糊 (C++)</string>
+    <string name="blur_method_iir">IIR 高斯 (标量)</string>
+    <string name="blur_method_neon">IIR 高斯 (NEON)</string>
+    <string name="blur_method_box3">Box3 快速模糊</string>
+    <string name="blur_method_downsample">下采样管线</string>
+    <string name="blur_method_desc">• 智能选择: 自动选择最优算法\n• Box Blur (Kotlin): 传统盒式模糊 (Kotlin 实现)\n• Box Blur (C++): 原生盒式模糊 (C++ 实现，更快)\n• IIR 高斯: C++ 递归高斯模糊\n• IIR NEON: ARM SIMD 向量化\n• Box3: 3次盒式近似高斯\n• 下采样: 强模糊优化管线</string>
+
+    <!-- Aberration Method Section -->
+    <string name="section_aberration_method">色差算法</string>
+    <string name="current_aberration_method">当前：自动选择</string>
+    <string name="aberration_method_auto">自动选择 (推荐)</string>
+    <string name="aberration_method_cpp">C++ 实现 (高性能)</string>
+    <string name="aberration_method_kotlin">Kotlin 实现 (兼容)</string>
+    <string name="aberration_method_desc">• 自动选择: 根据图像大小智能选择\n• C++ 实现: 高性能原生实现 (3-5x 提升)\n• Kotlin 实现: 纯 Kotlin 实现 (兼容性好)\n\n推荐：\n- 大图/实时处理 → C++ 实现\n- 小图/静态图片 → Kotlin 实现</string>
+
+    <!-- Effect Switches -->
+    <string name="section_effect_switches">效果开关</string>
+    <string name="switch_enable_blur">启用模糊效果</string>
+    <string name="switch_enable_aberration">启用色差效果</string>
+    <string name="switch_enable_chromatic_effect">启用色散/色差效果</string>
+    <string name="switch_enable_saturation">启用饱和度调节</string>
+
+    <!-- Parameters -->
+    <string name="section_blur_params">模糊参数</string>
+    <string name="blur_amount">模糊强度: %.3f</string>
+
+    <string name="section_saturation">饱和度</string>
+    <string name="saturation_value">饱和度: %d%%</string>
+
+    <string name="section_aberration">色差强度</string>
+    <string name="aberration_value">色差强度: %.1f</string>
+
+    <!-- Downsample -->
+    <string name="section_global_downsample">全局下采样（所有效果）</string>
+    <string name="global_downsample_value">全局下采样: %.2fx</string>
+    <string name="global_downsample_none">全局下采样: 1.00x (无下采样)</string>
+
+    <string name="section_aberration_downsample">色差效果下采样</string>
+    <string name="aberration_downsample_value">色差下采样: %.2fx</string>
+
+    <!-- Channel Offset -->
+    <string name="section_channel_offset">色差通道偏移</string>
+    <string name="red_offset">红色偏移: %.2f</string>
+    <string name="green_offset">绿色偏移: %.2f</string>
+    <string name="blue_offset">蓝色偏移: %.2f</string>
+
+    <!-- Quality -->
+    <string name="switch_high_quality">高质量模糊（线性色彩空间）</string>
+
+    <!-- Image Size Info -->
+    <string name="section_image_size">图片尺寸信息</string>
+    <string name="image_size_waiting">等待数据…</string>
+    <string name="captured_size">截取图片尺寸: %s</string>
+    <string name="blurred_size">实际模糊尺寸: %s</string>
+    <string name="size_info_desc">说明：\n- 截取尺寸 = LiquidGlass 按钮大小\n- 模糊尺寸 = 实际处理的图片大小\n- 如果两者不同，说明使用了下采样优化</string>
+
+    <!-- Background & Language Section -->
+    <string name="section_background_language">背景与语言</string>
+    <string name="button_change_background">更换背景图片</string>
+    <string name="button_open_github">打开 GitHub 仓库</string>
+    <string name="github_star_button">★ GitHub 点个 Star</string>
+    <string name="button_language_chinese">切换到中文</string>
+    <string name="button_language_english">Switch to English</string>
+    <string name="current_language">当前语言：中文</string>
+
+    <!-- Toast Messages -->
+    <string name="toast_image_selected">背景图片已更新</string>
+    <string name="toast_language_changed">语言已切换为中文</string>
+    <string name="toast_no_image_selected">未选择图片</string>
+
+    <!-- Performance Display -->
+    <string name="fps_format">帧率: ~%d</string>
+    <string name="capture_time">捕获: %sms</string>
+    <string name="blur_time">模糊: %sms (%s)</string>
+    <string name="aberration_time">色差: %sms (%s)</string>
+    <string name="total_time">总计: %sms</string>
+
+    <!-- Edge Highlight -->
+    <string name="section_edge_highlight">边缘高光</string>
+    <string name="switch_enable_edge_highlight">启用边缘高光</string>
+    <string name="switch_over_light">亮背景模式</string>
+    <string name="border_width">边框宽度: %.1f px</string>
+    <string name="highlight_opacity">高光不透明度: %.0f%%</string>
+
+    <!-- 色差质量 -->
+    <string name="section_aberration_quality">色差效果质量</string>
+    <string name="switch_bilinear_interpolation">使用双线性插值（高质量）</string>
+    <string name="bilinear_desc">• 启用：平滑采样，无马赛克（性能开销 2-3 倍）\n• 禁用：最近邻采样，性能优先（可能有轻微马赛克）\n\n注意：同时影响 Kotlin 和 C++ 实现。</string>
+
+    <!-- 色散效果（新增） -->
+    <string name="section_chromatic_dispersion">色散效果（基于物理光学）</string>
+    <string name="switch_enable_dispersion">启用色散效果</string>
+    <string name="dispersion_desc">基于 Snell 定律的物理色散效果。\n• 真实的玻璃/水晶效果\n• 边缘折射\n• RGB 波长分离</string>
+
+    <string name="dispersion_thickness">折射厚度: %.0fpx</string>
+    <string name="dispersion_factor">折射系数: %.2f</string>
+    <string name="dispersion_gain">色散增益: %.1f</string>
+    <string name="dispersion_downscale">色散降采样: %.2fx</string>
+
+    <string name="dispersion_preset">色散预设</string>
+    <string name="preset_glass">玻璃</string>
+    <string name="preset_diamond">钻石</string>
+    <string name="preset_crystal">水晶</string>
+    <string name="preset_rainbow">彩虹</string>
+    <string name="preset_subtle">轻微</string>
+    <string name="preset_custom">自定义</string>
+
+    <!-- 效果算法选择 -->
+    <string name="effect_algorithm">效果算法</string>
+    <string name="algorithm_aberration">色差效果</string>
+    <string name="algorithm_dispersion">色散效果</string>
+
+    <!-- 优化捕获 -->
+    <string name="section_optimized_capture">优化捕获</string>
+    <string name="switch_enable_optimized_capture">启用优化捕获</string>
+    <string name="optimized_capture_desc">• 启用：仅捕获圆角内区域，降低渲染量\n• 禁用：捕获完整矩形区域\n\n适用场景：圆角按钮、圆角卡片\n性能提升：约 5-8%</string>
+
+    <!-- 演示场景 -->
+    <string name="scene_playground">调参</string>
+    <string name="playground_bg_gradient">渐变</string>
+    <string name="playground_bg_image">图片</string>
+    <string name="playground_bg_animated">动画</string>
+
+    <!-- 现代面板 -->
+    <string name="section_glass_params">玻璃参数（GPU + CPU 通用）</string>
+    <string name="section_color_effect">色彩效果</string>
+    <string name="section_cpu_options">CPU 算法选项</string>
+    <string name="render_gpu_first">GPU 优先</string>
+    <string name="render_force_cpu">强制 CPU</string>
+    <string name="effect_none">无</string>
+    <string name="impl_auto">自动</string>
+    <string name="corner_radius_value">圆角半径: %.0f px</string>
+    <string name="displacement_scale_value">位移强度: %.0f</string>
+    <string name="displacement_mode">位移模式</string>
+    <string name="disp_mode_standard">标准</string>
+    <string name="disp_mode_polar">极坐标</string>
+    <string name="disp_mode_prominent">突出</string>
+    <string name="dispersion_cpu_only_note">色散仅在 CPU 管线实现，启用后会自动回退到 CPU 渲染。</string>
+    <string name="channel_offset_advanced">高级 · 通道偏移</string>
+
+    <!-- 交互 · 点击效果 -->
+    <string name="section_interaction">交互 · 点击效果</string>
+    <string name="switch_press_effect">启用点击效果</string>
+    <string name="press_scale_value">按压缩放: %.2f</string>
+    <string name="elasticity_value">弹性系数: %.2f</string>
+
+    <!-- Liquid Glass 2.0（透镜管线） -->
+    <string name="scene_merge">融合</string>
+    <string name="scene_home">桌面</string>
+    <string name="scene_control_center">控制中心</string>
+    <string name="cc_hint">从上往下拉开控制中心，往上滑收起；点右上角电源图标显示 demo 控件</string>
+    <string name="scene_list">列表</string>
+    <string name="scene_text">文字</string>
+    <string name="text_scene_hint">输入文字，实时变成玻璃</string>
+    <string name="text_scene_apply">应用</string>
+    <string name="text_scene_default">液态玻璃</string>
+    <string name="scene_overlays">弹层</string>
+    <string name="sheet_open">打开底部弹层</string>
+    <string name="sheet_title">跨 window 的玻璃</string>
+    <string name="sheet_body">弹层有独立 window，背景靠 backdropSource 指到 Activity 的内容视图。</string>
+    <string name="sheet_dialog_open">打开玻璃弹窗</string>
+    <string name="sheet_dialog_title">玻璃弹窗</string>
+    <string name="sheet_dialog_body">Material 弹窗的整个面板套在 LiquidGlassView 里。</string>
+    <string name="sheet_toast_open">弹一条玻璃 Toast</string>
+    <string name="sheet_toast_text">玻璃 Toast · 自带 window，压在弹层和弹窗之上</string>
+    <string name="simulate_api_label">模拟 API 级别</string>
+    <string name="api_cap_device">跟随设备</string>
+    <string name="simulate_api_desc">把管线分层钳制到指定级别，预览低版本机型效果：36+ AGSL 颜色滤镜/混合增强 · 33–35 透镜 · 31–32 经典 GPU · ≤30 CPU。悬浮层显示 实际 → 生效 API。</string>
+    <string name="render_lens">透镜 2.0</string>
+    <string name="render_classic_gpu">经典 GPU</string>
+    <string name="section_lens">Liquid Glass 2.0 · 透镜（API 33+）</string>
+    <string name="lens_note">单 pass AGSL 透镜：真实 SDF 折射、边缘色散、法线驱动的两道对称边缘亮线（重力传感器光源）、亮度自适应染色与液态融合。API 33 以下自动回退。</string>
+    <string name="lens_material">材质</string>
+    <string name="material_regular">常规</string>
+    <string name="material_clear">高透</string>
+    <string name="switch_sensor_highlight">传感器高光</string>
+    <string name="switch_adaptive_tint">背景亮度自适应</string>
+    <string name="switch_refraction_no_fold">折射不翻折（iOS 式拉伸）</string>
+    <string name="switch_refraction_outward">向外折射（凸透镜）</string>
+    <string name="switch_adaptive_lens_scale">透镜尺寸自适应（小控件）</string>
+    <string name="lens_bevel">斜面宽度: %.0f px</string>
+    <string name="lens_refraction">折射强度: %.0f px</string>
+    <string name="lens_dispersion">色散强度: %.2f</string>
+    <string name="lens_falloff">折射衰减指数（逆幂）: %.1f</string>
+    <string name="switch_a11y_opaque">无障碍不透明降级</string>
+    <string name="merge_hint">拖动圆形玻璃靠近胶囊——边缘会像液体一样黏连融合</string>
+    <string name="text_param_title">文字样式参数</string>
+    <string name="param_size">字号 dp</string>
+    <string name="param_blur">模糊</string>
+    <string name="param_bevel">斜面 ×em</string>
+    <string name="param_refract">折射 ×em</string>
+    <string name="param_dispersion">色散</string>
+    <string name="param_spec">高光</string>
+    <string name="param_shadow">内阴影</string>
+    <string name="param_saturation">饱和度</string>
+    <string name="param_tint">染色浓度</string>
+    <string name="param_tint_light">染色：亮（点击切换）</string>
+    <string name="param_tint_dark">染色：暗（点击切换）</string>
+
+    <!-- 小部件场景（现成组件） -->
+    <string name="scene_widgets">小部件</string>
+    <string name="widgets_tab_1">首页</string>
+    <string name="widgets_tab_2">探索</string>
+    <string name="widgets_tab_3">资料库</string>
+    <string name="widgets_button_regular">✨ 玻璃按钮</string>
+    <string name="widgets_button_clear">Clear 材质</string>
+    <string name="widgets_toast_button">点击了：%1$s</string>
+    <string name="widgets_toast_tab">标签：%1$s</string>
+    <string name="widgets_toast_fab">点击了 FAB</string>
+    <string name="widgets_chip_explore">探索</string>
+    <string name="widgets_chip_photos">照片</string>
+    <string name="widgets_chip_videos">视频</string>
+    <string name="widgets_chip_music">音乐</string>
+    <string name="widgets_chip_paris">巴黎</string>
+    <string name="widgets_toast_chip">Chip：%1$s</string>
+    <string name="widgets_toast_chip_removed">已移除：%1$s</string>
+    <string name="widgets_toast_filters">筛选：%1$s</string>
+    <string name="widgets_filters_none">无</string>
+
+    <!-- 列表场景（M3 列表项，合并 / 分离） -->
+    <string name="group_style_merged">合并</string>
+    <string name="group_style_separated">分离</string>
+    <string name="group_hint_merged">合并：行与行贴边拼成一块，只有组的外沿有透镜边缘。</string>
+    <string name="group_hint_separated">分离：每一行都是独立的圆角卡片，行间留空。</string>
+    <string name="group_wifi_title">Wi‑Fi</string>
+    <string name="group_wifi_sub">已连接 · Home 5G</string>
+    <string name="group_bt_title">蓝牙</string>
+    <string name="group_bt_sub">已开启 · 2 台设备</string>
+    <string name="group_notif_title">通知</string>
+    <string name="group_notif_sub">3 个应用已静音</string>
+    <string name="group_display_title">显示</string>
+    <string name="group_display_sub">自适应亮度</string>
+    <string name="group_display_trailing">80%</string>
+    <string name="group_signout_title">退出登录</string>
+    <string name="group_wifi_detail">Home 5G · 866 Mbps · IPv6\n其他网络：Office、Cafe_Guest、iPhone</string>
+    <string name="group_bt_detail">Pixel Buds Pro · 74%\nGalaxy Watch · 52%</string>
+    <string name="group_notif_detail">已静音：邮件、Slack、天气\n勿扰：23:00 – 07:00</string>
+    <string name="group_display_detail">亮度跟随环境光。\n刷新率：流畅（最高 90 Hz）</string>
+    <string name="group_custom_caption">自带内容：行里放任意视图</string>
+    <string name="group_custom_airplane">飞行模式</string>
+    <string name="group_custom_airplane_on">飞行模式已开启</string>
+    <string name="group_custom_airplane_off">飞行模式已关闭</string>
+    <string name="group_custom_brightness">亮度</string>
+
+    <!-- 玻璃染色（抽屉卡片） -->
+    <string name="section_glass_tint">玻璃染色</string>
+    <string name="tint_readout">%1$s · %2$s · %3$d%%</string>
+    <string name="tint_readout_none">未染色 · glassTint = 0</string>
+    <string name="tint_none">无</string>
+    <string name="tint_blue">蓝</string>
+    <string name="tint_cyan">青</string>
+    <string name="tint_green">绿</string>
+    <string name="tint_yellow">黄</string>
+    <string name="tint_orange">橙</string>
+    <string name="tint_red">红</string>
+    <string name="tint_pink">粉</string>
+    <string name="tint_purple">紫</string>
+
+    <!-- 背景源场景（backdropSource 的两种拓扑） -->
+    <string name="scene_backdrop">背景源</string>
+    <string name="backdrop_mode_sibling">兄弟子树</string>
+    <string name="backdrop_mode_ancestor">跨层祖先</string>
+    <string name="backdrop_hint_sibling">玻璃在列表旁边的透明宿主里，backdropSource 指向列表内容。</string>
+    <string name="backdrop_hint_ancestor">玻璃埋在两层容器里，backdropSource 直接指向场景根布局。</string>
+</resources>

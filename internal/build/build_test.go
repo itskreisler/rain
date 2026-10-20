@@ -10,7 +10,7 @@ import (
 
 func TestSampleAppStructures(t *testing.T) {
 	simpleAppDir := filepath.Join("..", "..", "samples", "simple-app")
-	composeAppDir := filepath.Join("..", "..", "samples", "compose-app")
+	lgAppDir := filepath.Join("..", "..", "samples", "liquid-glass")
 
 	simpleManifest := filepath.Join(simpleAppDir, "app", "src", "main", "AndroidManifest.xml")
 	if _, err := os.Stat(simpleManifest); err != nil {
@@ -22,14 +22,14 @@ func TestSampleAppStructures(t *testing.T) {
 		t.Errorf("simple-app MainActivity.java missing: %v", err)
 	}
 
-	composeManifest := filepath.Join(composeAppDir, "app", "src", "main", "AndroidManifest.xml")
-	if _, err := os.Stat(composeManifest); err != nil {
-		t.Errorf("compose-app Manifest missing: %v", err)
+	lgManifest := filepath.Join(lgAppDir, "app", "src", "main", "AndroidManifest.xml")
+	if _, err := os.Stat(lgManifest); err != nil {
+		t.Errorf("liquid-glass Manifest missing: %v", err)
 	}
 
-	composeActivity := filepath.Join(composeAppDir, "app", "src", "main", "kotlin", "com", "example", "compose", "MainActivity.kt")
-	if _, err := os.Stat(composeActivity); err != nil {
-		t.Errorf("compose-app MainActivity.kt missing: %v", err)
+	lgActivity := filepath.Join(lgAppDir, "app", "src", "main", "java", "com", "example", "liquidglass", "HeroShowcaseActivity.kt")
+	if _, err := os.Stat(lgActivity); err != nil {
+		t.Errorf("liquid-glass HeroShowcaseActivity.kt missing: %v", err)
 	}
 }
 

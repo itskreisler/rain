@@ -1,0 +1,15 @@
+mode = "completo"
+dependencies = [
+    "androidx.core:core-ktx:1.13.1",
+    "androidx.appcompat:appcompat:1.7.0",
+    "com.google.android.material:material:1.12.0",
+    "androidx.viewpager2:viewpager2:1.1.0"
+]
+
+[project]
+name = "LiquidGlassDemo"
+package = "com.example.liquidglass.demo"
+version = "2.0.11"
+
+[build]
+debug = true

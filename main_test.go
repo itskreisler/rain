@@ -62,9 +62,9 @@ func TestSampleProjects(t *testing.T) {
 			mode:        "simple",
 		},
 		{
-			name:        "Compose Application",
-			dir:         filepath.Join("samples", "compose-app"),
-			expectedPkg: "com.example.compose",
+			name:        "Liquid Glass Application",
+			dir:         filepath.Join("samples", "liquid-glass"),
+			expectedPkg: "com.example.liquidglass.demo",
 			mode:        "completo",
 		},
 		{

@@ -69,10 +69,10 @@ jobs:
           ../../rain build --android-jar "$ANDROID_JAR" -release
           ../../rain clean
 
-      - name: Test Rain Build (Debug, Release, Clean) on Compose App
+      - name: Test Rain Build (Debug, Release, Clean) on Liquid Glass App
         run: |
           ANDROID_JAR="${{ steps.sdk.outputs.android_jar }}"
-          cd samples/compose-app
+          cd samples/liquid-glass
           ../../rain build --android-jar "$ANDROID_JAR"
           ../../rain build --android-jar "$ANDROID_JAR" -release
           ../../rain clean
