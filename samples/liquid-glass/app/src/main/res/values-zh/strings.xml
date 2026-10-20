@@ -54,7 +54,7 @@
     <string name="blur_amount">模糊强度: %.3f</string>
 
     <string name="section_saturation">饱和度</string>
-    <string name="saturation_value">饱和度: %d%%</string>
+    <string name="saturation_value" formatted="false">饱和度: %d%%</string>
 
     <string name="section_aberration">色差强度</string>
     <string name="aberration_value">色差强度: %.1f</string>
@@ -109,7 +109,7 @@
     <string name="switch_enable_edge_highlight">启用边缘高光</string>
     <string name="switch_over_light">亮背景模式</string>
     <string name="border_width">边框宽度: %.1f px</string>
-    <string name="highlight_opacity">高光不透明度: %.0f%%</string>
+    <string name="highlight_opacity" formatted="false">高光不透明度: %.0f%%</string>
 
     <!-- 色差质量 -->
     <string name="section_aberration_quality">色差效果质量</string>
@@ -273,7 +273,7 @@
 
     <!-- 玻璃染色（抽屉卡片） -->
     <string name="section_glass_tint">玻璃染色</string>
-    <string name="tint_readout">%1$s · %2$s · %3$d%%</string>
+    <string name="tint_readout" formatted="false">%1$s · %2$s · %3$d%%</string>
     <string name="tint_readout_none">未染色 · glassTint = 0</string>
     <string name="tint_none">无</string>
     <string name="tint_blue">蓝</string>

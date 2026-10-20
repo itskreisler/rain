@@ -54,7 +54,7 @@
     <string name="blur_amount">Blur Amount: %.3f</string>
 
     <string name="section_saturation">Saturation</string>
-    <string name="saturation_value">Saturation: %d%%</string>
+    <string name="saturation_value" formatted="false">Saturation: %d%%</string>
 
     <string name="section_aberration">Chromatic Aberration Intensity</string>
     <string name="aberration_value">Aberration: %.1f</string>
@@ -109,7 +109,7 @@
     <string name="switch_enable_edge_highlight">Enable Edge Highlight</string>
     <string name="switch_over_light">Over Light Mode</string>
     <string name="border_width">Border Width: %.1f px</string>
-    <string name="highlight_opacity">Highlight Opacity: %.0f%%</string>
+    <string name="highlight_opacity" formatted="false">Highlight Opacity: %.0f%%</string>
 
     <!-- Chromatic Aberration Quality -->
     <string name="section_aberration_quality">Chromatic Aberration Quality</string>
@@ -273,7 +273,7 @@
 
     <!-- Glass Tint (drawer card) -->
     <string name="section_glass_tint">Glass Tint</string>
-    <string name="tint_readout">%1$s · %2$s · %3$d%%</string>
+    <string name="tint_readout" formatted="false">%1$s · %2$s · %3$d%%</string>
     <string name="tint_readout_none">No tint · glassTint = 0</string>
     <string name="tint_none">None</string>
     <string name="tint_blue">Blue</string>
