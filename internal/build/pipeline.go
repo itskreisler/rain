@@ -1,0 +1,792 @@
+package build
+
+import (
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/itskreisler/rain/internal/config"
+	"github.com/itskreisler/rain/internal/ui"
+)
+
+type Config struct {
+	AppDir      string
+	BuildDir    string
+	LibsDir     string
+	AndroidJar  string
+	Package     string
+	Release     bool
+	Signing     *config.Signing
+	MinSdk      int
+	TargetSdk   int
+	VersionCode int
+	VersionName string
+	AppName     string
+}
+
+var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
+
+// sourceRoot soporta el layout Gradle (app/src/main) y el layout plano que
+// usan los ejemplos de android2apk (AndroidManifest.xml, java/ y res/ en la raíz).
+func sourceRoot(appDir string) string {
+	gradleRoot := filepath.Join(appDir, "src", "main")
+	if fileExists(filepath.Join(gradleRoot, "AndroidManifest.xml")) {
+		return gradleRoot
+	}
+	return appDir
+}
+
+func manifestPath(appDir string) string {
+	return filepath.Join(sourceRoot(appDir), "AndroidManifest.xml")
+}
+
+func resPath(appDir string) string {
+	return filepath.Join(sourceRoot(appDir), "res")
+}
+
+func manifestPackage(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	match := manifestPackageRe.FindSubmatch(data)
+	if len(match) == 2 {
+		return string(match[1])
+	}
+	return ""
+}
+
+// PackageFromManifest devuelve el package declarado en AndroidManifest.xml.
+func PackageFromManifest(appDir string) string {
+	return manifestPackage(manifestPath(appDir))
+}
+
+func hashFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
+
+func computeResourceHash(appDir string) (string, error) {
+	var files []string
+	resDir := resPath(appDir)
+	manifest := manifestPath(appDir)
+
+	if err := filepath.Walk(resDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if _, err := os.Stat(manifest); err == nil {
+		files = append(files, manifest)
+	}
+	sort.Strings(files)
+
+	global := sha256.New()
+	for _, f := range files {
+		h, err := hashFile(f)
+		if err != nil {
+			return "", err
+		}
+		global.Write(h)
+		global.Write([]byte(filepath.Base(f)))
+	}
+	return fmt.Sprintf("%x", global.Sum(nil)), nil
+}
+
+func computeJavaHash(appDir, libsDir, genDir string, release bool) (string, error) {
+	var files []string
+	if err := filepath.Walk(sourceRoot(appDir), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(path, ".java") || strings.HasSuffix(path, ".kt") {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := filepath.Walk(genDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(path, ".java") {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	entries, _ := os.ReadDir(libsDir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".jar") {
+			files = append(files, filepath.Join(libsDir, e.Name()))
+		}
+	}
+	sort.Strings(files)
+
+	global := sha256.New()
+	if release {
+		global.Write([]byte("release"))
+	} else {
+		global.Write([]byte("debug"))
+	}
+	for _, f := range files {
+		h, err := hashFile(f)
+		if err != nil {
+			return "", err
+		}
+		global.Write(h)
+		global.Write([]byte(filepath.Base(f)))
+	}
+	return fmt.Sprintf("%x", global.Sum(nil)), nil
+}
+
+func Run(cfg Config) error {
+	start := time.Now()
+	if cfg.MinSdk <= 0 {
+		cfg.MinSdk = 21
+	}
+	if cfg.TargetSdk <= 0 {
+		cfg.TargetSdk = 36
+	}
+	if cfg.VersionCode <= 0 {
+		cfg.VersionCode = 1
+	}
+	if cfg.VersionName == "" {
+		cfg.VersionName = "1.0"
+	}
+	if cfg.Package == "" {
+		cfg.Package = manifestPackage(manifestPath(cfg.AppDir))
+	}
+	if cfg.Package == "" {
+		return fmt.Errorf("no se pudo determinar el package desde AndroidManifest.xml")
+	}
+
+	if err := os.MkdirAll(cfg.BuildDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio de build: %w", err)
+	}
+
+	genDir := filepath.Join(cfg.BuildDir, "gen")
+	if err := os.MkdirAll(genDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio gen: %w", err)
+	}
+
+	// --- Recursos ---
+	resHashPath := filepath.Join(cfg.BuildDir, ".rain-res-hash")
+	flatDir := filepath.Join(cfg.BuildDir, "res")
+	baseApk := filepath.Join(cfg.BuildDir, "base.apk")
+
+	currentResHash, err := computeResourceHash(cfg.AppDir)
+	if err != nil {
+		return fmt.Errorf("hash de recursos: %w", err)
+	}
+	prevResHash, _ := os.ReadFile(resHashPath)
+	resUpToDate := string(prevResHash) == currentResHash && fileExists(baseApk)
+
+	if resUpToDate {
+		ui.Info("recursos sin cambios, reutilizando APK base")
+	} else {
+		ui.Info("compilando recursos...")
+		resDir := resPath(cfg.AppDir)
+		manifest := manifestPath(cfg.AppDir)
+		if !fileExists(manifest) {
+			return fmt.Errorf("no se encontró AndroidManifest.xml en %s", sourceRoot(cfg.AppDir))
+		}
+
+		var flatFiles []string
+		if dirExists(resDir) {
+			if err := os.RemoveAll(flatDir); err != nil {
+				return fmt.Errorf("limpiando recursos planos: %w", err)
+			}
+			if err := os.MkdirAll(flatDir, 0755); err != nil {
+				return fmt.Errorf("creando directorio de recursos planos: %w", err)
+			}
+
+			cmd := exec.Command("aapt2", "compile", "--dir", resDir, "-o", flatDir)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("aapt2 compile: %w", err)
+			}
+
+			entries, err := os.ReadDir(flatDir)
+			if err != nil {
+				return fmt.Errorf("leyendo recursos planos: %w", err)
+			}
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".flat") {
+					flatFiles = append(flatFiles, filepath.Join(flatDir, e.Name()))
+				}
+			}
+		} else {
+			ui.VerboseLog("sin directorio res/, se enlaza solo el manifest")
+		}
+
+		ui.Info("enlazando recursos...")
+		args := []string{
+			"link", "-o", baseApk, "-I", cfg.AndroidJar,
+			"--manifest", manifest, "--java", genDir,
+			"--min-sdk-version", strconv.Itoa(cfg.MinSdk),
+			"--target-sdk-version", strconv.Itoa(cfg.TargetSdk),
+			"--version-code", strconv.Itoa(cfg.VersionCode),
+			"--version-name", cfg.VersionName,
+		}
+		if assets := filepath.Join(sourceRoot(cfg.AppDir), "assets"); dirExists(assets) {
+			args = append(args, "-A", assets)
+		}
+		args = append(args, flatFiles...)
+
+		cmd := exec.Command("aapt2", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("aapt2 link: %w", err)
+		}
+		if err := os.WriteFile(resHashPath, []byte(currentResHash), 0644); err != nil {
+			return fmt.Errorf("guardando hash de recursos: %w", err)
+		}
+	}
+
+	// --- Generar BuildConfig.java ---
+	buildConfigDir := filepath.Join(genDir, strings.ReplaceAll(cfg.Package, ".", "/"))
+	if err := os.MkdirAll(buildConfigDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio BuildConfig: %w", err)
+	}
+
+	debugValue := "true"
+	buildType := "debug"
+	if cfg.Release {
+		debugValue = "false"
+		buildType = "release"
+	}
+
+	buildConfigContent := fmt.Sprintf(`package %s;
+
+public final class BuildConfig {
+    public static final boolean DEBUG = %s;
+    public static final String APPLICATION_ID = "%s";
+    public static final String BUILD_TYPE = "%s";
+    public static final int VERSION_CODE = %d;
+    public static final String VERSION_NAME = "%s";
+}
+`, cfg.Package, debugValue, cfg.Package, buildType, cfg.VersionCode, cfg.VersionName)
+
+	buildConfigPath := filepath.Join(buildConfigDir, "BuildConfig.java")
+	if err := os.WriteFile(buildConfigPath, []byte(buildConfigContent), 0644); err != nil {
+		return fmt.Errorf("generando BuildConfig: %w", err)
+	}
+
+	// --- Java / DEX ---
+	javaHashPath := filepath.Join(cfg.BuildDir, ".rain-java-hash")
+	dexPath := filepath.Join(cfg.BuildDir, "dex", "classes.dex")
+
+	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release)
+	if err != nil {
+		return fmt.Errorf("hash de java: %w", err)
+	}
+	prevJavaHash, _ := os.ReadFile(javaHashPath)
+	javaUpToDate := string(prevJavaHash) == currentJavaHash && fileExists(dexPath)
+
+	if javaUpToDate {
+		ui.Info("java sin cambios, reutilizando classes.dex")
+	} else {
+		objDir := filepath.Join(cfg.BuildDir, "obj")
+		if err := os.MkdirAll(objDir, 0755); err != nil {
+			return fmt.Errorf("creando directorio de objetos: %w", err)
+		}
+
+		// --- Compilar Kotlin (si hay archivos .kt) ---
+		var kotlinSources []string
+		if err := filepath.Walk(sourceRoot(cfg.AppDir), func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasSuffix(path, ".kt") {
+				kotlinSources = append(kotlinSources, path)
+			}
+			return nil
+		}); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("buscando fuentes Kotlin: %w", err)
+		}
+
+		if len(kotlinSources) > 0 {
+			ui.Info("compilando Kotlin (%d archivos)...", len(kotlinSources))
+
+			var kotlinClasspath []string
+			kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
+			libEntries, _ := os.ReadDir(cfg.LibsDir)
+			for _, e := range libEntries {
+				if strings.HasSuffix(e.Name(), ".jar") {
+					kotlinClasspath = append(kotlinClasspath, filepath.Join(cfg.LibsDir, e.Name()))
+				}
+			}
+			kotlinClasspath = append(kotlinClasspath, genDir)
+
+			kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
+				"-d", objDir,
+				"-classpath", strings.Join(kotlinClasspath, ":"),
+				"-jvm-target", "1.8"}
+			kotlincArgs = append(kotlincArgs, kotlinSources...)
+
+			var kotlinStderr bytes.Buffer
+			cmd := exec.Command("kotlinc", kotlincArgs...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = &kotlinStderr
+			if err := cmd.Run(); err != nil {
+				ui.Error("Errores de compilación Kotlin:")
+				fmt.Println(kotlinStderr.String())
+				return fmt.Errorf("kotlinc falló")
+			}
+			ui.Info("Kotlin compilado")
+		}
+
+		ui.Info("compilando Java...")
+		var sources []string
+		if err := filepath.Walk(sourceRoot(cfg.AppDir), func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasSuffix(path, ".java") {
+				sources = append(sources, path)
+			}
+			return nil
+		}); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("buscando fuentes Java: %w", err)
+		}
+		if err := filepath.Walk(genDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasSuffix(path, ".java") {
+				sources = append(sources, path)
+			}
+			return nil
+		}); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("buscando fuentes generadas: %w", err)
+		}
+
+		var classpath []string
+		classpath = append(classpath, cfg.AndroidJar)
+		classpath = append(classpath, objDir) // Incluir clases de Kotlin ya compiladas
+		libEntries, _ := os.ReadDir(cfg.LibsDir)
+		for _, e := range libEntries {
+			if strings.HasSuffix(e.Name(), ".jar") {
+				classpath = append(classpath, filepath.Join(cfg.LibsDir, e.Name()))
+			}
+		}
+
+		javacArgs := []string{"-d", objDir, "--release", "8", "-encoding", "UTF-8", "-Xlint:-options",
+			"-classpath", strings.Join(classpath, ":")}
+		javacArgs = append(javacArgs, sources...)
+
+		var stderrBuf bytes.Buffer
+		cmd := exec.Command("javac", javacArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = &stderrBuf
+		if err := cmd.Run(); err != nil {
+			ui.Error("Errores de compilación Java:")
+			fmt.Println(stderrBuf.String())
+			return fmt.Errorf("javac falló")
+		}
+
+		var classFiles []string
+		if err := filepath.Walk(objDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasSuffix(path, ".class") {
+				classFiles = append(classFiles, path)
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("buscando clases compiladas: %w", err)
+		}
+		if len(kotlinSources) > 0 {
+			stdlib := findKotlinStdlib()
+			if stdlib == "" {
+				return fmt.Errorf("se compiló Kotlin pero no se encontró kotlin-stdlib.jar (revisa la instalación de kotlinc)")
+			}
+			classFiles = append(classFiles, stdlib)
+		}
+
+		dexDir := filepath.Join(cfg.BuildDir, "dex")
+		if err := os.MkdirAll(dexDir, 0755); err != nil {
+			return fmt.Errorf("creando directorio dex: %w", err)
+		}
+
+		if cfg.Release {
+			ui.Info("generando DEX con R8 (release)...")
+			d8Jar := findD8Jar()
+			if d8Jar == "" {
+				return fmt.Errorf("no se encontró d8.jar para R8")
+			}
+			proguardFile := filepath.Join(cfg.BuildDir, "proguard.pro")
+			if !fileExists(proguardFile) {
+				if err := os.WriteFile(proguardFile, []byte("-keep public class * extends android.app.Activity\n-dontwarn **\n"), 0644); err != nil {
+					return fmt.Errorf("escribiendo proguard.pro: %w", err)
+				}
+			}
+			r8Args := []string{"-cp", d8Jar, "com.android.tools.r8.R8",
+				"--release", "--output", dexDir, "--lib", cfg.AndroidJar,
+				"--min-api", strconv.Itoa(cfg.MinSdk), "--pg-conf", proguardFile}
+			r8Args = append(r8Args, classFiles...)
+			cmd = exec.Command("java", r8Args...)
+		} else {
+			ui.Info("generando DEX con d8...")
+			d8Args := []string{"--output", dexDir, "--lib", cfg.AndroidJar, "--min-api", strconv.Itoa(cfg.MinSdk)}
+			d8Args = append(d8Args, classFiles...)
+			cmd = exec.Command("d8", d8Args...)
+		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("dex: %w", err)
+		}
+		if err := os.WriteFile(javaHashPath, []byte(currentJavaHash), 0644); err != nil {
+			return fmt.Errorf("guardando hash de Java: %w", err)
+		}
+	}
+	// --- Empaquetado ---
+	ui.Info("empaquetando...")
+	dexFiles, err := filepath.Glob(filepath.Join(cfg.BuildDir, "dex", "classes*.dex"))
+	if err != nil {
+		return fmt.Errorf("buscando DEX: %w", err)
+	}
+	if len(dexFiles) == 0 {
+		return fmt.Errorf("no se generó ningún classes*.dex")
+	}
+	sort.Slice(dexFiles, func(i, j int) bool {
+		return dexNumber(dexFiles[i]) < dexNumber(dexFiles[j])
+	})
+	if err := appendDex(baseApk, dexFiles); err != nil {
+		return err
+	}
+
+	ui.Info("alineando...")
+	alignedApk := filepath.Join(cfg.BuildDir, "aligned.apk")
+	cmd := exec.Command("zipalign", "-f", "4", baseApk, alignedApk)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("zipalign: %w", err)
+	}
+
+	ui.Info("firmando...")
+	var keystore, ksPass, keyAlias, keyPass string
+
+	if cfg.Release && cfg.Signing != nil {
+		ui.Info("usando keystore de release: %s", cfg.Signing.StoreFile)
+		keystore = cfg.Signing.StoreFile
+		ksPass = "pass:" + cfg.Signing.StorePassword
+		keyAlias = cfg.Signing.KeyAlias
+		keyPass = "pass:" + cfg.Signing.KeyPassword
+	} else {
+		keystore = filepath.Join(cfg.BuildDir, "debug.keystore")
+		if !fileExists(keystore) {
+			cmd = exec.Command("keytool", "-genkey", "-v", "-keystore", keystore,
+				"-alias", "androiddebugkey", "-storepass", "android", "-keypass", "android",
+				"-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
+				"-dname", "CN=Android Debug,O=Android,C=US")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("generando keystore de debug: %w", err)
+			}
+		}
+		ksPass = "pass:android"
+		keyAlias = "androiddebugkey"
+		keyPass = "pass:android"
+	}
+
+	apkName := "app-debug.apk"
+	if cfg.Release {
+		apkName = "app-release.apk"
+	}
+	finalApk := filepath.Join(cfg.BuildDir, apkName)
+
+	apksignerArgs := []string{"sign", "--ks", keystore, "--ks-pass", ksPass}
+	if keyAlias != "" {
+		apksignerArgs = append(apksignerArgs, "--ks-key-alias", keyAlias)
+	}
+	if keyPass != "" {
+		apksignerArgs = append(apksignerArgs, "--key-pass", keyPass)
+	}
+	apksignerArgs = append(apksignerArgs, "--out", finalApk, alignedApk)
+	cmd = exec.Command("apksigner", apksignerArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("apksigner: %w", err)
+	}
+
+	// Copia descriptiva estilo android2apk: <nombre>-<version>-<abi>.apk
+	namedApk := filepath.Join(cfg.BuildDir, apkNameFor(cfg))
+	if err := copyFile(finalApk, namedApk); err != nil {
+		return fmt.Errorf("creando %s: %w", namedApk, err)
+	}
+
+	elapsed := time.Since(start)
+	ui.Success("APK generado: %s (tardó %d segundos)", namedApk, int(elapsed.Seconds()))
+	ui.Info("ruta estable: %s", finalApk)
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	st, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, st.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+// appendDex añade todos los classes*.dex al APK base (multidex) preservando
+// el resto de entradas (manifest, resources.arsc...), igual que hace
+// android2apk. No usamos "zip" porque machacaría resources.arsc y su alineado.
+func appendDex(baseApk string, dexFiles []string) error {
+	src, err := zip.OpenReader(baseApk)
+	if err != nil {
+		return fmt.Errorf("abriendo APK base: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	tmp := baseApk + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("creando APK temporal: %w", err)
+	}
+
+	writer := zip.NewWriter(out)
+	for _, file := range src.File {
+		if err := copyZipEntry(writer, file); err != nil {
+			_ = writer.Close()
+			_ = out.Close()
+			_ = os.Remove(tmp)
+			return fmt.Errorf("copiando %s: %w", file.Name, err)
+		}
+	}
+
+	for _, dex := range dexFiles {
+		data, err := os.ReadFile(dex)
+		if err != nil {
+			_ = writer.Close()
+			_ = out.Close()
+			_ = os.Remove(tmp)
+			return fmt.Errorf("leyendo %s: %w", dex, err)
+		}
+		header := &zip.FileHeader{
+			Name:     filepath.Base(dex),
+			Method:   zip.Deflate,
+			Modified: time.Now(),
+		}
+		entry, err := writer.CreateHeader(header)
+		if err != nil {
+			_ = writer.Close()
+			_ = out.Close()
+			_ = os.Remove(tmp)
+			return fmt.Errorf("añadiendo %s: %w", dex, err)
+		}
+		if _, err := entry.Write(data); err != nil {
+			_ = writer.Close()
+			_ = out.Close()
+			_ = os.Remove(tmp)
+			return fmt.Errorf("escribiendo %s: %w", dex, err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("cerrando APK: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("cerrando archivo APK: %w", err)
+	}
+	return os.Rename(tmp, baseApk)
+}
+
+func copyZipEntry(writer *zip.Writer, file *zip.File) error {
+	header := file.FileHeader
+	entry, err := writer.CreateHeader(&header)
+	if err != nil {
+		return err
+	}
+	reader, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = reader.Close() }()
+	_, err = io.Copy(entry, reader)
+	return err
+}
+
+// apkNameFor construye el nombre descriptivo estilo android2apk:
+// <nombre>-<versionName>-<abi>.apk, y deja también la ruta estable app-*.apk.
+func apkNameFor(cfg Config) string {
+	name := sanitizeTag(cfg.AppName)
+	if name == "" {
+		name = sanitizeTag(filepath.Base(filepath.Clean(cfg.AppDir)))
+	}
+	if name == "" {
+		name = "app"
+	}
+	version := sanitizeTag(cfg.VersionName)
+	if version == "" {
+		version = "1.0"
+	}
+	return fmt.Sprintf("%s-%s-%s.apk", name, version, detectABI(cfg.AppDir))
+}
+
+func sanitizeTag(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '.', r == '_', r == '-':
+			builder.WriteRune(r)
+		default:
+			builder.WriteByte('-')
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+// detectABI mira lib/<abi>/ dentro del proyecto; sin código nativo es "universal".
+func detectABI(appDir string) string {
+	libDir := filepath.Join(appDir, "lib")
+	entries, err := os.ReadDir(libDir)
+	if err != nil {
+		return "universal"
+	}
+
+	var abis []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		hasSo := false
+		files, err := os.ReadDir(filepath.Join(libDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".so") {
+				hasSo = true
+				break
+			}
+		}
+		if hasSo {
+			abis = append(abis, entry.Name())
+		}
+	}
+	if len(abis) == 0 {
+		return "universal"
+	}
+	sort.Strings(abis)
+	if strings.Join(abis, "_") == "arm64-v8a_armeabi-v7a_x86_x86_64" {
+		return "universal"
+	}
+	return strings.Join(abis, "_")
+}
+
+func dexNumber(path string) int {
+	name := strings.TrimSuffix(filepath.Base(path), ".dex")
+	name = strings.TrimPrefix(name, "classes")
+	if name == "" {
+		return 1
+	}
+	number, err := strconv.Atoi(name)
+	if err != nil {
+		return 1 << 30
+	}
+	return number
+}
+
+func findD8Jar() string {
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		filepath.Join(home, ".rain", "toolchain", "r8.jar"),
+		filepath.Join(home, ".rain", "toolchain", "d8.jar"),
+		"/data/data/com.termux/files/usr/share/java/d8.jar",
+		os.Getenv("PREFIX") + "/share/java/d8.jar",
+	}
+	for _, p := range paths {
+		if fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func findKotlinStdlib() string {
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		os.Getenv("KOTLIN_STDLIB"),
+		filepath.Join(home, ".rain", "toolchain", "kotlinc", "lib", "kotlin-stdlib.jar"),
+		filepath.Join(home, "kotlin", "kotlinc", "lib", "kotlin-stdlib.jar"),
+		"/usr/share/kotlin/lib/kotlin-stdlib.jar",
+		os.Getenv("PREFIX") + "/lib/kotlin-stdlib.jar",
+	}
+	if kotlinc, err := exec.LookPath("kotlinc"); err == nil {
+		if real, err := filepath.EvalSymlinks(kotlinc); err == nil {
+			paths = append(paths, filepath.Join(filepath.Dir(real), "..", "lib", "kotlin-stdlib.jar"))
+		}
+	}
+	for _, p := range paths {
+		if p != "" && fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}

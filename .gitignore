@@ -1,0 +1,7 @@
+libs/
+cache/
+app/build/
+*.apk
+*.keystore
+*.jar
+rain

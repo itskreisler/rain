@@ -1,0 +1,16 @@
+mode = 'simple'
+dependencies = ["androidx.core:core:1.12.0"]
+
+[project]
+name = 'MiApp'
+package = 'com.rain.miapp'
+version = '1.0'
+
+[build]
+debug = true
+
+[signing]
+store_file = "release.keystore"
+store_password = "releasepass"
+key_alias = "releasekey"
+key_password = "releasepass"

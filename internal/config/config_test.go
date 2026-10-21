@@ -1,0 +1,89 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestWriteReadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+
+	original := Config{
+		Project:      Project{Name: "Demo", Package: "com.demo.app", Version: "2.1"},
+		Build:        Build{Debug: true},
+		Mode:         "completo",
+		Dependencies: []string{"androidx.core:core:1.12.0"},
+		Modules:      []Module{{Name: "app", Path: "app"}},
+	}
+	if err := Write(path, original); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	if got.Project != original.Project {
+		t.Errorf("Project = %+v, quiero %+v", got.Project, original.Project)
+	}
+	if got.Mode != original.Mode {
+		t.Errorf("Mode = %q, quiero %q", got.Mode, original.Mode)
+	}
+	if len(got.Dependencies) != 1 || got.Dependencies[0] != original.Dependencies[0] {
+		t.Errorf("Dependencies = %v, quiero %v", got.Dependencies, original.Dependencies)
+	}
+	if len(got.Modules) != 1 || got.Modules[0] != original.Modules[0] {
+		t.Errorf("Modules = %v, quiero %v", got.Modules, original.Modules)
+	}
+	if got.Signing != nil {
+		t.Errorf("Signing = %+v, quiero nil", got.Signing)
+	}
+}
+
+func TestReadMissingFile(t *testing.T) {
+	if _, err := Read(filepath.Join(t.TempDir(), "noexiste.toml")); err == nil {
+		t.Fatal("Read con archivo inexistente debería fallar")
+	}
+}
+
+func TestReadInvalidTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rain.toml")
+	if err := os.WriteFile(path, []byte("esto no es = toml valido ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(path); err == nil {
+		t.Fatal("Read con TOML inválido debería fallar")
+	}
+}
+
+func TestSigningRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+
+	original := Config{
+		Project: Project{Name: "Firma", Package: "com.firma", Version: "1"},
+		Signing: &Signing{
+			StoreFile:     "release.keystore",
+			StorePassword: "secreto",
+			KeyAlias:      "release",
+			KeyPassword:   "otro",
+		},
+	}
+	if err := Write(path, original); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Signing == nil {
+		t.Fatal("Signing quedó nil tras el round-trip")
+	}
+	if *got.Signing != *original.Signing {
+		t.Errorf("Signing = %+v, quiero %+v", *got.Signing, *original.Signing)
+	}
+}
