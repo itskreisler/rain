@@ -365,3 +365,52 @@ func readZip(t *testing.T, path string) map[string]string {
 	}
 	return out
 }
+
+func TestUsesComposeDetectsImports(t *testing.T) {
+	dir := t.TempDir()
+
+	// Kotlin puro, sin Compose.
+	writeFile(t, filepath.Join(dir, "app", "java", "com", "x", "Main.kt"),
+		"package com.x\n\nimport android.os.Bundle\n\nclass Main\n")
+
+	cfg := Config{AppDir: filepath.Join(dir, "app")}
+	if cfg.usesCompose() {
+		t.Error("usesCompose() = true sin imports de androidx.compose")
+	}
+
+	// Fuente con import de Compose.
+	writeFile(t, filepath.Join(dir, "app", "java", "com", "x", "Ui.kt"),
+		"package com.x\n\nimport androidx.compose.runtime.Composable\n\n@Composable fun Ui() {}\n")
+
+	if !cfg.usesCompose() {
+		t.Error("usesCompose() = false con import de androidx.compose")
+	}
+}
+
+func TestAppliesComposePluginRequiresPluginAndUsage(t *testing.T) {
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "compose-compiler-plugin.jar")
+	writeFile(t, plugin, "plugin")
+
+	app := filepath.Join(dir, "app")
+
+	// Sin fuentes Compose: no se aplica aunque el plugin exista.
+	writeFile(t, filepath.Join(app, "java", "com", "x", "Main.kt"), "package com.x\nclass Main\n")
+	cfg := Config{AppDir: app, ComposePlugin: plugin}
+	if cfg.appliesComposePlugin() {
+		t.Error("appliesComposePlugin() = true con Kotlin sin Compose")
+	}
+	if got := cfg.jvmTarget(); got != 8 {
+		t.Errorf("jvmTarget() = %d, quiero 8 sin Compose", got)
+	}
+
+	// Con Compose y plugin presente: se aplica y sube a 11.
+	writeFile(t, filepath.Join(app, "java", "com", "x", "Ui.kt"),
+		"package com.x\nimport androidx.compose.runtime.Composable\n@Composable fun Ui() {}\n")
+	if !cfg.appliesComposePlugin() {
+		t.Error("appliesComposePlugin() = false con Compose y plugin presente")
+	}
+	if got := cfg.jvmTarget(); got != 11 {
+		t.Errorf("jvmTarget() = %d, quiero 11 con Compose", got)
+	}
+}

@@ -394,9 +394,11 @@ public final class BuildConfig {
 				"-classpath", strings.Join(kotlinClasspath, ":"),
 				"-jvm-target", kotlinJVMTarget(jvmTarget)}
 
-			if plugin := cfg.composePlugin(); plugin != "" {
-				ui.VerboseLog("plugin Compose: %s", plugin)
-				kotlincArgs = append(kotlincArgs, "-Xplugin="+plugin)
+			if cfg.appliesComposePlugin() {
+				if plugin := cfg.composePlugin(); plugin != "" {
+					ui.VerboseLog("plugin Compose: %s", plugin)
+					kotlincArgs = append(kotlincArgs, "-Xplugin="+plugin)
+				}
 			}
 
 			kotlincArgs = append(kotlincArgs, kotlinSources...)
@@ -903,10 +905,33 @@ func (c Config) jvmTarget() int {
 	if c.JVMTarget > 0 {
 		return c.JVMTarget
 	}
-	if c.hasDeps() && len(c.findKotlinSources()) > 0 && c.composePlugin() != "" {
+	if c.appliesComposePlugin() {
 		return 11
 	}
 	return 8
+}
+
+// appliesComposePlugin indica si el proyecto realmente usa Compose y por tanto
+// hay que aplicar el plugin del compilador y subir el target a JVM 11. Un
+// proyecto Kotlin sin Compose (p. ej. khello) NO debe recibir el plugin: exige
+// androidx.compose.runtime en el classpath y fallaría con
+// "noRuntimeOnClasspathError".
+func (c Config) appliesComposePlugin() bool {
+	return c.composePlugin() != "" && c.usesCompose()
+}
+
+// usesCompose detecta si alguna fuente Kotlin importa algo de androidx.compose.
+func (c Config) usesCompose() bool {
+	for _, path := range c.findKotlinSources() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(data), "androidx.compose") {
+			return true
+		}
+	}
+	return false
 }
 
 // composePlugin localiza compose-compiler-plugin.jar (explícito, ~/.rain o la

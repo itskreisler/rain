@@ -55,15 +55,6 @@ func (c Config) libraryJars() []string {
 	return out
 }
 
-// hasDeps indica si hay AAR/JAR preparados en DepsDir.
-func (c Config) hasDeps() bool {
-	if c.DepsDir == "" {
-		return false
-	}
-	st, err := os.Stat(filepath.Join(c.DepsDir, "aars"))
-	return err == nil && st.IsDir()
-}
-
 // prepareLibraryResources fusiona los res/ de las librerías (si hay) y devuelve
 // el directorio fusionado y los packages para --extra-packages.
 func (c Config) prepareLibraryResources(libs *aar.Set) (string, []string, error) {
