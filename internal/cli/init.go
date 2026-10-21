@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,82 +15,196 @@ import (
 
 func newInitCmd() *cobra.Command {
 	var (
-		mode           string
+		template       string
+		modeAlias      string
 		name           string
 		pkg            string
 		version        string
+		dir            string
 		nonInteractive bool
 		force          bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Crea un rain.toml en el directorio actual",
-		Args:  cobra.NoArgs,
+		Use:   "init [dir]",
+		Short: "Crea un proyecto rain listo para compilar",
+		Long: "Crea un proyecto Android completo (rain.toml, AndroidManifest.xml, fuentes y\n" +
+			"recursos) en [dir] o en el directorio actual.\n\n" +
+			"Plantillas:\n" +
+			"  simple    Java con vistas programáticas, sin dependencias externas\n" +
+			"  completo  Kotlin + Compose (AndroidX), resuelto en modo completo\n\n" +
+			"El proyecto generado compila tal cual con `rain build`.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := os.Stat("rain.toml"); err == nil && !force {
-				ui.Warn("rain.toml ya existe. No se sobrescribe (usa --force para reemplazarlo).")
-				return nil
+			root := "."
+			if len(args) == 1 {
+				root = args[0]
+			}
+			if dir != "" {
+				root = dir
 			}
 
-			if mode == "" {
+			if template == "" {
+				template = modeAlias
+			}
+			if template == "" {
 				if nonInteractive {
-					mode = "simple"
+					template = "simple"
 				} else {
-					mode = promptMode(cmd)
+					template = promptTemplate(cmd)
 				}
 			}
-			if mode != "simple" && mode != "completo" {
-				return usageErr("modo inválido %q: usa simple o completo", mode)
+			if template != "simple" && template != "completo" {
+				return usageErr("plantilla inválida %q: usa simple o completo", template)
 			}
 
 			if name == "" {
 				name = "MiApp"
 			}
 			if pkg == "" {
-				pkg = "com.rain.miapp"
+				pkg = defaultPackage(name)
 			}
 			if version == "" {
 				version = "1.0"
 			}
 
-			cfg := config.Config{
-				Project:      config.Project{Name: name, Package: pkg, Version: version},
-				Build:        config.Build{Debug: true},
-				Mode:         mode,
-				Dependencies: []string{},
+			if err := validatePackage(pkg); err != nil {
+				return usageErr("%v", err)
 			}
-			if err := config.Write("rain.toml", cfg); err != nil {
+
+			cfgPath := filepath.Join(root, "rain.toml")
+			if _, err := os.Stat(cfgPath); err == nil && !force {
+				ui.Warn("rain.toml ya existe en %s. No se sobrescribe (usa --force).", root)
+				return nil
+			}
+
+			files, cfg, err := scaffold(template, name, pkg, version)
+			if err != nil {
+				return err
+			}
+
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				return fmt.Errorf("creando %s: %w", root, err)
+			}
+			for rel, content := range files {
+				path := filepath.Join(root, rel)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return fmt.Errorf("creando %s: %w", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					return fmt.Errorf("escribiendo %s: %w", path, err)
+				}
+			}
+			if err := config.Write(cfgPath, cfg); err != nil {
 				return fmt.Errorf("escribiendo rain.toml: %w", err)
 			}
 
-			ui.Success("rain.toml creado (modo: %s, paquete: %s)", mode, pkg)
+			ui.Success("Proyecto %q creado en %s (plantilla: %s)", name, root, template)
+			ui.Info("Siguiente paso: cd %s && rain build", root)
+			if template == "completo" {
+				ui.Info("La plantilla completo descarga AndroidX/Compose en el primer build.")
+			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&mode, "mode", "", "modo de dependencias: simple|completo")
-	cmd.Flags().StringVar(&name, "name", "", "nombre del proyecto (por defecto MiApp)")
-	cmd.Flags().StringVar(&pkg, "package", "", "package id (por defecto com.rain.miapp)")
-	cmd.Flags().StringVar(&version, "version", "", "versión del proyecto (por defecto 1.0)")
+	cmd.Flags().StringVar(&template, "template", "", "plantilla: simple|completo")
+	cmd.Flags().StringVar(&modeAlias, "mode", "", "alias de --template")
+	cmd.Flags().StringVar(&name, "name", "", "nombre de la app (por defecto MiApp)")
+	cmd.Flags().StringVar(&pkg, "package", "", "package id (por defecto com.rain.<nombre>)")
+	cmd.Flags().StringVar(&version, "version", "", "versión (por defecto 1.0)")
+	cmd.Flags().StringVar(&dir, "dir", "", "directorio destino (por defecto el actual)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "no preguntar; usar valores por defecto")
-	cmd.Flags().BoolVar(&force, "force", false, "sobrescribir rain.toml si existe")
+	cmd.Flags().BoolVar(&force, "force", false, "sobrescribir archivos existentes")
 
 	return cmd
 }
 
-func promptMode(cmd *cobra.Command) string {
+func promptTemplate(cmd *cobra.Command) string {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "Rain init — ¿modo de dependencias?")
-	fmt.Fprintln(out, "  1) simple   — AAR/JAR explícitos, sin transitivas")
-	fmt.Fprintln(out, "  2) completo — resuelve POMs, parents, dependencyManagement")
+	fmt.Fprintln(out, "Rain init — ¿qué plantilla quieres?")
+	fmt.Fprintln(out, "  1) simple    — Java, vistas programáticas, sin dependencias externas")
+	fmt.Fprintln(out, "  2) completo  — Kotlin + Compose (AndroidX), modo completo")
 	fmt.Fprint(out, "Elige [1/2]: ")
 
 	reader := bufio.NewReader(cmd.InOrStdin())
 	line, _ := reader.ReadString('\n')
-	choice := strings.TrimSpace(line)
-	if choice == "2" {
+	if strings.TrimSpace(line) == "2" {
 		return "completo"
 	}
 	return "simple"
+}
+
+// scaffold devuelve los archivos a crear (ruta relativa -> contenido) y la
+// configuración rain.toml para la plantilla dada.
+func scaffold(template, name, pkg, version string) (map[string]string, config.Config, error) {
+	cfg := config.Config{
+		Project: config.Project{Name: name, Package: pkg, Version: version},
+		Build:   config.Build{Debug: true},
+		Mode:    template,
+	}
+
+	files := map[string]string{
+		"app/AndroidManifest.xml":    manifestXML(name, pkg, template),
+		"app/res/values/strings.xml": stringsXML(name),
+		"app/res/values/themes.xml":  themesXML(template),
+	}
+
+	pkgPath := strings.ReplaceAll(pkg, ".", "/")
+
+	switch template {
+	case "simple":
+		files[filepath.ToSlash(filepath.Join("app/java", pkgPath, "MainActivity.java"))] = javaMainActivity(pkg)
+		cfg.Dependencies = []string{}
+	case "completo":
+		files[filepath.ToSlash(filepath.Join("app/java", pkgPath, "MainActivity.kt"))] = kotlinComposeMainActivity(pkg)
+		// Cierre mínimo de Compose; rain resuelve el resto en modo completo.
+		cfg.Dependencies = []string{
+			"androidx.activity:activity-compose:1.8.2",
+			"androidx.compose.material3:material3-android:1.5.0-beta01",
+		}
+	default:
+		return nil, cfg, usageErr("plantilla inválida %q", template)
+	}
+
+	return files, cfg, nil
+}
+
+// defaultPackage deriva un package válido a partir del nombre.
+func defaultPackage(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	slug := b.String()
+	if slug == "" {
+		slug = "miapp"
+	}
+	if slug[0] >= '0' && slug[0] <= '9' {
+		slug = "app" + slug
+	}
+	return "com.rain." + slug
+}
+
+// validatePackage comprueba que el package sea un identificador Java válido.
+func validatePackage(pkg string) error {
+	if pkg == "" {
+		return fmt.Errorf("el package no puede estar vacío")
+	}
+	for _, part := range strings.Split(pkg, ".") {
+		if part == "" {
+			return fmt.Errorf("package inválido %q: componente vacío", pkg)
+		}
+		for i, r := range part {
+			ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(i > 0 && r >= '0' && r <= '9')
+			if !ok {
+				return fmt.Errorf("package inválido %q: %q no es un identificador válido", pkg, part)
+			}
+		}
+	}
+	return nil
 }

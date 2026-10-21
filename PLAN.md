@@ -310,7 +310,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 - [x] **T2.3** Matriz de compatibilidad JDK/R8/Kotlin/SDK en código; `doctor` avisa (p. ej. Kotlin 2.4 + R8 8.10.9 = incompatible).
   > `internal/compat`: `CheckMatrix(Versions)` con severidades `advice`/`warning`/`error`; `doctor --json` incluye `compat` y la salida humana muestra la sección "Compatibilidad del toolchain".
 - [x] **T2.4** Perfil complejo: `kotlinc`, plugin Compose, caché AAR, `libjansi` solo Termux, disco.
-- [ ] **T2.5** Tests con `httptest` y FS temporal (sin red real).
+- [x] **T2.5** Tests con `httptest` y FS temporal (sin red real). Cubre `httpx` (reintentos/backoff), `aar` (extracción, `ExtraPackages`, `NativeDir`, fusión de recursos) y `pom`/`build` (dedupe de clases).
 
 **Criterio de salida:** `rain doctor --profile complex --fix` deja un Alpine limpio listo para Kotlin/Compose sin root.
 
@@ -365,7 +365,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 - [ ] **T7.1** README nuevo + `docs/doctor.md`, `docs/toolchain.md`, `docs/compatibilidad.md`, guía de migración desde android2apk.
 - [ ] **T7.2** `CHANGELOG`, versionado semver, releases con binarios linux/amd64 y linux/arm64.
-- [ ] **T7.3** `rain init` con scaffolding real (manifest, `MainActivity`, `res/`, plantillas Java/Kotlin/Compose).
+- [x] **T7.3** `rain init` con scaffolding real (manifest, `MainActivity`, `res/`, plantillas Java/Kotlin/Compose).
 - [ ] **T7.4** `rain deps tree`, `rain doctor --json`, salida amigable para agentes.
 - [ ] **T7.5** `SECURITY.md`, NOTICE de terceros, cabeceras de licencia.
 

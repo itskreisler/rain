@@ -56,7 +56,7 @@ func TestInitWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if !strings.Contains(out, "rain.toml creado") {
+	if !strings.Contains(out, "creado en") {
 		t.Errorf("salida de init = %q", out)
 	}
 
@@ -69,6 +69,143 @@ func TestInitWritesConfig(t *testing.T) {
 	}
 	if cfg.Mode != "simple" {
 		t.Errorf("Mode = %q, quiero simple", cfg.Mode)
+	}
+
+	// La plantilla simple crea el proyecto completo, no solo rain.toml.
+	for _, rel := range []string{
+		"app/AndroidManifest.xml",
+		"app/res/values/strings.xml",
+		"app/res/values/themes.xml",
+		filepath.Join("app", "java", "com", "demo", "MainActivity.java"),
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("falta %s tras init: %v", rel, err)
+		}
+	}
+
+	manifest, err := os.ReadFile(filepath.Join(dir, "app", "AndroidManifest.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(manifest), `package="com.demo"`) {
+		t.Errorf("manifest sin package:\n%s", manifest)
+	}
+	if !strings.Contains(string(manifest), `android:name=".MainActivity"`) {
+		t.Errorf("manifest sin actividad:\n%s", manifest)
+	}
+}
+
+func TestInitCompletoScaffoldsCompose(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	out, err := runCmd(t, "init", "--non-interactive", "--mode", "completo", "--name", "Compose Demo")
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if !strings.Contains(out, "completo") {
+		t.Errorf("salida de init = %q", out)
+	}
+
+	cfg, err := config.Read(filepath.Join(dir, "rain.toml"))
+	if err != nil {
+		t.Fatalf("leyendo rain.toml: %v", err)
+	}
+	if cfg.Mode != "completo" {
+		t.Errorf("Mode = %q, quiero completo", cfg.Mode)
+	}
+	if len(cfg.Dependencies) == 0 {
+		t.Error("la plantilla completo debería declarar dependencias de Compose")
+	}
+
+	// El nombre con espacios produce un package válido derivado.
+	if !strings.HasPrefix(cfg.Project.Package, "com.rain.") {
+		t.Errorf("Package = %q, quiero prefijo com.rain.", cfg.Project.Package)
+	}
+
+	kt := filepath.Join(dir, "app", "java", filepath.FromSlash(strings.ReplaceAll(cfg.Project.Package, ".", "/")), "MainActivity.kt")
+	src, err := os.ReadFile(kt)
+	if err != nil {
+		t.Fatalf("leyendo MainActivity.kt: %v", err)
+	}
+	if !strings.Contains(string(src), "setContent") || !strings.Contains(string(src), "@Composable") {
+		t.Errorf("la plantilla completo debería usar Compose:\n%s", src)
+	}
+}
+
+func TestInitNonInteractiveCreatesDefaultPackage(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	if _, err := runCmd(t, "init", "--non-interactive", "--name", "1 App"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cfg, err := config.Read(filepath.Join(dir, "rain.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Project.Package != "com.rain.app1app" {
+		t.Errorf("Package = %q, quiero com.rain.app1app", cfg.Project.Package)
+	}
+}
+
+func TestInitDirFlag(t *testing.T) {
+	base := t.TempDir()
+	chdir(t, base)
+
+	out, err := runCmd(t, "init", "--non-interactive", "--name", "Sub", "--dir", filepath.Join("sub", "app"))
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if !strings.Contains(out, filepath.Join("sub", "app")) {
+		t.Errorf("salida de init = %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(base, "sub", "app", "rain.toml")); err != nil {
+		t.Errorf("rain.toml no creado en sub/app: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "sub", "app", "app", "AndroidManifest.xml")); err != nil {
+		t.Errorf("manifest no creado en sub/app/app: %v", err)
+	}
+}
+
+func TestInitInvalidPackageIsUsageError(t *testing.T) {
+	chdir(t, t.TempDir())
+
+	_, err := runCmd(t, "init", "--non-interactive", "--package", "com..malo")
+	if err == nil {
+		t.Fatal("un package inválido debería fallar")
+	}
+	if code := ExitCode(err); code != 2 {
+		t.Errorf("ExitCode = %d, quiero 2 (error de uso)", code)
+	}
+}
+
+func TestDefaultPackageAndValidate(t *testing.T) {
+	cases := []struct {
+		name, want string
+	}{
+		{"MiApp", "com.rain.miapp"},
+		{"Hello Rain", "com.rain.hellorain"},
+		{"1App", "com.rain.app1app"},
+		{"!!!", "com.rain.miapp"},
+	}
+	for _, tc := range cases {
+		if got := defaultPackage(tc.name); got != tc.want {
+			t.Errorf("defaultPackage(%q) = %q, quiero %q", tc.name, got, tc.want)
+		}
+	}
+
+	valid := []string{"com.demo", "a.b.c", "com.example.app_1", "x"}
+	for _, pkg := range valid {
+		if err := validatePackage(pkg); err != nil {
+			t.Errorf("validatePackage(%q) = %v, quiero nil", pkg, err)
+		}
+	}
+	invalid := []string{"", "com..malo", ".com", "com.", "com.1app", "com.mi-app"}
+	for _, pkg := range invalid {
+		if err := validatePackage(pkg); err == nil {
+			t.Errorf("validatePackage(%q) = nil, quiero error", pkg)
+		}
 	}
 }
 
