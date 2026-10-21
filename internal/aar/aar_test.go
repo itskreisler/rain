@@ -45,6 +45,7 @@ func TestExtractAARFull(t *testing.T) {
 		"AndroidManifest.xml":       `<manifest package="com.example.lib"></manifest>`,
 		"jni/arm64-v8a/libfoo.so":   "ELF arm64",
 		"jni/armeabi-v7a/libfoo.so": "ELF arm",
+		"proguard.txt":              "-keep class com.example.lib.** { *; }",
 	})
 
 	c := NewClient()
@@ -82,6 +83,27 @@ func TestExtractAARFull(t *testing.T) {
 	}
 	if len(lib.NativeABIs) != 2 || lib.NativeABIs[0] != "arm64-v8a" || lib.NativeABIs[1] != "armeabi-v7a" {
 		t.Errorf("NativeABIs = %v", lib.NativeABIs)
+	}
+	// Las reglas ProGuard del AAR se extraen.
+	if lib.ProguardRules != filepath.Join(dir, "proguard", "lib-1.0.pro") {
+		t.Errorf("ProguardRules = %q", lib.ProguardRules)
+	}
+	if _, err := os.Stat(lib.ProguardRules); err != nil {
+		t.Errorf("proguard.txt no extraído: %v", err)
+	}
+}
+
+func TestSetProguardFiles(t *testing.T) {
+	set := &Set{
+		Libraries: []Library{
+			{Coordinate: "b:b:1", ProguardRules: "/b/b.pro"},
+			{Coordinate: "a:a:1", ProguardRules: "/a/a.pro"},
+			{Coordinate: "c:c:1"}, // sin reglas
+		},
+	}
+	got := set.ProguardFiles()
+	if len(got) != 2 || got[0] != "/a/a.pro" || got[1] != "/b/b.pro" {
+		t.Errorf("ProguardFiles = %v, quiero [/a/a.pro /b/b.pro]", got)
 	}
 }
 

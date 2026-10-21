@@ -19,8 +19,9 @@ import (
 
 func newBuildCmd() *cobra.Command {
 	var (
-		androidJar string
-		release    bool
+		androidJar        string
+		release           bool
+		allowDebugSigning bool
 	)
 
 	cmd := &cobra.Command{
@@ -53,19 +54,20 @@ func newBuildCmd() *cobra.Command {
 			}
 
 			if len(args) == 1 {
-				return runBuildDir(args[0], absJar, release)
+				return runBuildDir(args[0], absJar, release, allowDebugSigning)
 			}
-			return runBuild(absJar, release)
+			return runBuild(absJar, release, allowDebugSigning)
 		},
 	}
 
 	cmd.Flags().StringVar(&androidJar, "android-jar", "", "ruta a android.jar (por defecto se autodetecta)")
 	cmd.Flags().BoolVarP(&release, "release", "r", false, "compilar en modo release (R8)")
+	cmd.Flags().BoolVar(&allowDebugSigning, "allow-debug-signing", false, "permitir firmar un release con la keystore de debug (con aviso)")
 
 	return cmd
 }
 
-func runBuild(androidJar string, release bool) error {
+func runBuild(androidJar string, release, allowDebugSigning bool) error {
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
@@ -95,19 +97,20 @@ func runBuild(androidJar string, release bool) error {
 	for _, mod := range modules {
 		ui.Info("=== Compilando módulo: %s ===", mod.Name)
 		bcfg := build.Config{
-			AppDir:      mod.Path,
-			BuildDir:    filepath.Join(mod.Path, "build"),
-			LibsDir:     "libs",
-			AndroidJar:  androidJar,
-			Package:     cfg.Project.Package,
-			Release:     release,
-			Signing:     cfg.Signing,
-			MinSdk:      21,
-			TargetSdk:   36,
-			VersionCode: 1,
-			VersionName: cfg.Project.Version,
-			AppName:     cfg.Project.Name,
-			Libs:        libs,
+			AppDir:            mod.Path,
+			BuildDir:          filepath.Join(mod.Path, "build"),
+			LibsDir:           "libs",
+			AndroidJar:        androidJar,
+			Package:           cfg.Project.Package,
+			Release:           release,
+			Signing:           cfg.Signing,
+			MinSdk:            21,
+			TargetSdk:         36,
+			VersionCode:       1,
+			VersionName:       cfg.Project.Version,
+			AppName:           cfg.Project.Name,
+			Libs:              libs,
+			AllowDebugSigning: allowDebugSigning,
 		}
 		if libs != nil {
 			bcfg.DepsDir = libs.Dir
@@ -174,7 +177,7 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
-func runBuildDir(dir, androidJar string, release bool) error {
+func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolviendo %s: %w", dir, err)
@@ -193,7 +196,7 @@ func runBuildDir(dir, androidJar string, release bool) error {
 			return fmt.Errorf("entrando en %s: %w", absDir, err)
 		}
 		defer func() { _ = os.Chdir(previous) }()
-		return runBuild(androidJar, release)
+		return runBuild(androidJar, release, allowDebugSigning)
 	}
 
 	if _, err := os.Stat(filepath.Join(absDir, "src/main/AndroidManifest.xml")); err != nil {
@@ -222,17 +225,18 @@ func runBuildDir(dir, androidJar string, release bool) error {
 
 	ui.Info("=== Compilando %s (layout plano) ===", name)
 	bcfg := build.Config{
-		AppDir:      absDir,
-		BuildDir:    filepath.Join(absDir, "build"),
-		LibsDir:     filepath.Join(absDir, "libs"),
-		AndroidJar:  androidJar,
-		Package:     build.PackageFromManifest(absDir),
-		Release:     release,
-		MinSdk:      minSdk,
-		TargetSdk:   36,
-		VersionCode: versionCode,
-		VersionName: versionName,
-		AppName:     name,
+		AppDir:            absDir,
+		BuildDir:          filepath.Join(absDir, "build"),
+		LibsDir:           filepath.Join(absDir, "libs"),
+		AndroidJar:        androidJar,
+		Package:           build.PackageFromManifest(absDir),
+		Release:           release,
+		MinSdk:            minSdk,
+		TargetSdk:         36,
+		VersionCode:       versionCode,
+		VersionName:       versionName,
+		AppName:           name,
+		AllowDebugSigning: allowDebugSigning,
 	}
 	if bcfg.Package == "" {
 		return fmt.Errorf("no se pudo leer package=\"...\" de AndroidManifest.xml")

@@ -43,6 +43,12 @@ type Config struct {
 	ComposePlugin string
 	// JVMTarget es el target de bytecode (8 por defecto; 11 con Compose).
 	JVMTarget int
+	// ProguardFiles son archivos de reglas ProGuard/R8 adicionales (los del
+	// usuario y los consumer-rules de los AAR). Se pasan a R8 en release.
+	ProguardFiles []string
+	// AllowDebugSigning permite firmar un build release con la keystore de
+	// debug. Por defecto NO: un release sin keystore propia es un error.
+	AllowDebugSigning bool
 }
 
 var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
@@ -502,15 +508,27 @@ public final class BuildConfig {
 			if d8Jar == "" {
 				return fmt.Errorf("no se encontró d8.jar para R8")
 			}
-			proguardFile := filepath.Join(cfg.BuildDir, "proguard.pro")
-			if !fileExists(proguardFile) {
-				if err := os.WriteFile(proguardFile, []byte("-keep public class * extends android.app.Activity\n-dontwarn **\n"), 0644); err != nil {
-					return fmt.Errorf("escribiendo proguard.pro: %w", err)
-				}
+
+			// Reglas base de Rain en un archivo generado (nunca pisa las del
+			// usuario) + las reglas del usuario + los consumer-rules de los AAR.
+			baseRules := filepath.Join(cfg.BuildDir, "r8-rain.pro")
+			if err := os.WriteFile(baseRules, []byte(defaultProguardRules), 0644); err != nil {
+				return fmt.Errorf("escribiendo reglas R8 base: %w", err)
 			}
+
 			r8Args := []string{"-cp", d8Jar, "com.android.tools.r8.R8",
 				"--release", "--output", dexDir, "--lib", cfg.AndroidJar,
-				"--min-api", strconv.Itoa(cfg.MinSdk), "--pg-conf", proguardFile}
+				"--min-api", strconv.Itoa(cfg.MinSdk), "--pg-conf", baseRules}
+
+			for _, pg := range cfg.proguardFiles() {
+				ui.VerboseLog("reglas R8: %s", pg)
+				r8Args = append(r8Args, "--pg-conf", pg)
+			}
+
+			// mapping.txt para desofuscar crashes (nombre estable tras el build).
+			mappingPath := filepath.Join(cfg.BuildDir, "mapping.txt")
+			r8Args = append(r8Args, "--pg-map-output", mappingPath)
+
 			r8Args = append(r8Args, classFiles...)
 			cmd = exec.Command("java", r8Args...)
 		} else {
@@ -566,12 +584,30 @@ public final class BuildConfig {
 	var keystore, ksPass, keyAlias, keyPass string
 
 	if cfg.Release && cfg.Signing != nil {
+		// Una keystore mal configurada debe fallar aquí con un mensaje claro,
+		// no más tarde con un error críptico de apksigner.
+		if cfg.Signing.StoreFile == "" {
+			return fmt.Errorf("signing.store_file vacío en rain.toml")
+		}
+		if !fileExists(cfg.Signing.StoreFile) {
+			return fmt.Errorf("signing.store_file no existe: %s", cfg.Signing.StoreFile)
+		}
+		if cfg.Signing.KeyAlias == "" {
+			return fmt.Errorf("signing.key_alias vacío en rain.toml")
+		}
 		ui.Info("usando keystore de release: %s", cfg.Signing.StoreFile)
 		keystore = cfg.Signing.StoreFile
 		ksPass = "pass:" + cfg.Signing.StorePassword
 		keyAlias = cfg.Signing.KeyAlias
 		keyPass = "pass:" + cfg.Signing.KeyPassword
 	} else {
+		// Ni debug ni release deberían firmarse en silencio con la keystore de
+		// debug: un release sin keystore propia se avisa explícitamente.
+		if cfg.Release && !cfg.AllowDebugSigning {
+			ui.Warn("release sin keystore configurada: se firma con la de DEBUG (--allow-debug-signing para confirmarlo)")
+		} else if cfg.Release {
+			ui.Warn("release firmado con la keystore de DEBUG (--allow-debug-signing)")
+		}
 		keystore = filepath.Join(cfg.BuildDir, "debug.keystore")
 		if !fileExists(keystore) {
 			cmd = exec.Command("keytool", "-genkey", "-v", "-keystore", keystore,
@@ -610,6 +646,19 @@ public final class BuildConfig {
 		return fmt.Errorf("apksigner: %w", err)
 	}
 
+	// Verifica la firma para no entregar un APK silenciosamente inválido.
+	verify := exec.Command("apksigner", "verify", "--print-certs", finalApk)
+	var verifyOut bytes.Buffer
+	verify.Stdout = &verifyOut
+	verify.Stderr = &verifyOut
+	if err := verify.Run(); err != nil {
+		fmt.Println(verifyOut.String())
+		return fmt.Errorf("el APK firmado no pasa apksigner verify")
+	}
+	if cfg.Release {
+		ui.Info("firma verificada (release); mapping en %s", filepath.Join(cfg.BuildDir, "mapping.txt"))
+	}
+
 	// Copia descriptiva estilo android2apk: <nombre>-<version>-<abi>.apk
 	namedApk := filepath.Join(cfg.BuildDir, apkNameFor(cfg))
 	if err := copyFile(finalApk, namedApk); err != nil {
@@ -617,9 +666,34 @@ public final class BuildConfig {
 	}
 
 	elapsed := time.Since(start)
-	ui.Success("APK generado: %s (tardó %d segundos)", namedApk, int(elapsed.Seconds()))
+	ui.Success("APK generado: %s (%s, tardó %d segundos)", namedApk, humanSize(namedApk), int(elapsed.Seconds()))
 	ui.Info("ruta estable: %s", finalApk)
 	return nil
+}
+
+// humanSize devuelve el tamaño de un archivo en un formato legible (B, KiB,
+// MiB). Si no se puede leer, devuelve "?".
+func humanSize(path string) string {
+	st, err := os.Stat(path)
+	if err != nil {
+		return "?"
+	}
+	return formatBytes(st.Size())
+}
+
+// formatBytes formatea un número de bytes con una unidad binaria y un decimal
+// (p. ej. 12.3 MiB).
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit && exp < 4; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 func copyFile(src, dst string) error {

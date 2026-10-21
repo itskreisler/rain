@@ -17,22 +17,27 @@ Rain es una alternativa minimalista a Gradle para compilar APKs directamente en 
 
 ## Requisitos
 
-- Termux (probado en Android 12, arquitectura ARMv7).
-- Paquetes de Termux: `openjdk-21`, `aapt2`, `d8`, `apksigner`, `zipalign`, `kotlin`, `libjansi`.
-- Un `android.jar` del SDK (API 33 o superior recomendado). Puedes descargarlo de los repositorios de AOSP o usar el que tengas del SDK.
+- Termux o Linux con glibc/musl (probado también en Alpine dentro de un contenedor).
+- JDK 17 o superior (`pkg install openjdk-17`). Rain acepta JDK ≥ 17; OpenJDK 21
+  funciona en Termux pero un kernel PRoot puede romperlo, por eso el mínimo es 17.
+- `aapt2` del sistema (`pkg install aapt2`).
+- El resto de la toolchain (`d8`/R8, `apksigner`, `zipalign`, `android.jar`, Kotlin
+  y el plugin de Compose) **la autoprovisiona Rain** en `~/.rain`, así que no hace
+  falta instalar el SDK de Android a mano. Para prepararla:
 
-Instala las dependencias con:
 ```
-pkg install openjdk-21 aapt2 d8 apksigner zipalign kotlin libjansi
+rain doctor --fix
 ```
+
+Si ya tienes un `android.jar` propio puedes pasarlo con `--android-jar <ruta>`.
 
 Instalación
 
 ```
-git clone https://github.com/lucassogarayda/rain.git
+git clone https://github.com/itskreisler/rain.git
 cd rain
 go build -o rain .
-# Opcional: mover a $PREFIX/bin para uso global
+# Opcional: mover a $PREFIX/bin (o ~/.local/bin) para uso global
 cp rain $PREFIX/bin/
 ```
 
@@ -113,10 +118,10 @@ Modo debug:
 Modo release (con R8 y firma):
 
 ```
-./rain build --android-jar ./ruta/a/android.jar -release
+./rain build --android-jar ./ruta/a/android.jar --release
 ```
 
-Rain mostrará una barra de progreso mientras descarga dependencias, y luego el progreso de cada etapa de compilación. Al final, el APK estará en app/build/app-debug.apk o app/build/app-release.apk.
+Rain mostrará una barra de progreso mientras descarga dependencias, y luego el progreso de cada etapa de compilación. Al final, el APK estará en `app/build/app-debug.apk` o `app/build/app-release.apk` (además de una copia descriptiva `<nombre>-<version>-<abi>.apk`). Si no defines `[signing]`, un build release se firma con una keystore de **debug** y Rain te lo avisa; confírmalo con `--allow-debug-signing` si es lo que quieres.
 
 4. Limpia el build (opcional)
 
@@ -128,10 +133,12 @@ Borra los directorios app/build, libs y cache, dejando el proyecto como nuevo.
 
 Comandos disponibles
 
-Comando Descripción
-rain init Inicializa un rain.toml interactivamente.
-rain build Compila el APK. Flags: --android-jar <ruta>, -release, --verbose, --quiet.
-rain clean Borra artefactos de build, dependencias y caché.
+| Comando | Descripción |
+| --- | --- |
+| `rain init` | Inicializa un proyecto (`--template simple` o `--template completo`). |
+| `rain build [dir]` | Compila el APK. Flags: `--android-jar <ruta>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet`. Con `[dir]` compila un proyecto o un layout plano estilo android2apk. |
+| `rain doctor` | Diagnostica la toolchain (`--profile simple\|complex`, `--json`, `--fix`, `--print-install`). |
+| `rain clean` | Borra artefactos de build, dependencias y caché. |
 
 ¿Cómo funciona internamente?
 

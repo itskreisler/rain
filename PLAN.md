@@ -322,7 +322,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 - [ ] **T3.4** Pasar `minSdk`/`targetSdk` a `aapt2` y `d8` (quitar 21/36 hardcodeados).
 - [ ] **T3.5** Soportar proyectos sin `res/` (arreglar el pánico) y sin `assets/`.
 - [ ] **T3.6** Empaquetar `assets/`; Kotlin ↔ Java en el mismo módulo (orden/classpath correcto); `kotlin-stdlib` automática.
-- [ ] **T3.7** Compilar y verificar `hello`, `khello`, `pulse`, `notes`, `todo` **sin modificar los ejemplos**.
+- [x] **T3.7** Compilar y verificar `hello`, `khello`, `pulse`, `notes`, `todo` **sin modificar los ejemplos**. Verificado: los 5 generan APK firmado (`apksigner verify` OK) con package y `launchable-activity` correctos, incluidos los recursos (`res/layout`, `res/drawable`, `resources.arsc`) de `pulse`/`notes`. Bug corregido: un proyecto Kotlin puro (khello) recibía el plugin Compose y fallaba con `noRuntimeOnClasspathError`; ahora el plugin se aplica solo si hay imports de `androidx.compose`.
 - [ ] **T3.8** `rain clean` respeta módulos; validar `manifest.package` vs config.
 
 **Criterio de salida:** `rain build <cada ejemplo simple>` genera un APK firmado, `apksigner verify` OK y `aapt2 dump badging` muestra el paquete/versión correctos.
@@ -335,7 +335,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 - [x] **T4.4** Multidex: se empaquetan `classes*.dex` en orden (verificado en Compose: `classes.dex` + `classes2.dex`).
 - [x] **T4.5** JNI: se empaquetan `lib/<abi>/*.so` de los AAR (verificado en Compose: 4 ABIs). Pendiente: `zipalign -P 16`.
 - [ ] **T4.6** Dependencias correctas: exclusiones, BOM/import, classifiers, properties built-in, parents locales, checksums, caché atómica. (Ya: timeouts/reintentos, moduleKey/highest-wins, dedupe de clases, omisión resiliente.)
-- [ ] **T4.7** Release: R8 con reglas del usuario + `consumer-rules.pro`, mapping, **nunca** caer a debug en silencio, `apksigner verify`, contraseñas por env/archivo.
+- [x] **T4.7** Release: R8 con reglas del usuario + `consumer-rules.pro`, mapping, **nunca** caer a debug en silencio, `apksigner verify`, contraseñas por env/archivo. Implementado: reglas base en `build/r8-rain.pro` (nunca pisan las del usuario) + `proguard-rules.pro`/`proguard.pro` del proyecto + `proguard.txt` de cada AAR; `--pg-map-output` → `build/mapping.txt`; aviso explícito (o `--allow-debug-signing`) si falta keystore de release; `apksigner verify` tras firmar; `-dontwarn` para paquetes AndroidX opcionales/ausentes (emoji2, window, profileinstaller, tracing, startup) que R8 valida y D8 no.
 - [ ] **T4.8** Test de integración con una app AndroidX/AppCompat real y verificación de recursos en runtime.
 
 **Criterio de salida:** una app con AndroidX compila, arranca y no lanza `Resources$NotFoundException`.

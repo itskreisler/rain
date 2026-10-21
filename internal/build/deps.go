@@ -216,3 +216,68 @@ func stripJarClasses(jar, scratchDir string, seen map[string]bool) (string, erro
 	}
 	return dest, nil
 }
+
+// defaultProguardRules son las reglas base de Rain para release. Se escriben en
+// un archivo generado (nunca pisan el proguard.pro del usuario). Mantienen lo
+// esencial que Android necesita en runtime: componentes declarados en el
+// manifest, clases de entrada y metadatos que la reflexión usa.
+const defaultProguardRules = `# Reglas base de Rain (generadas; no editar).
+# Rain no conoce aún el manifest final, así que conserva las clases que el
+# framework instancia por reflexión.
+-keep public class * extends android.app.Activity
+-keep public class * extends android.app.Application
+-keep public class * extends android.app.Service
+-keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.content.ContentProvider
+-keep public class * extends android.view.View {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+# Views infladas desde XML.
+-keepclasseswithmembers class * {
+    public <init>(android.content.Context, android.util.AttributeSet);
+}
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+# Conserva la metadata de Kotlin (necesaria para reflexión/Compose en release).
+-keep class kotlin.Metadata { *; }
+-keepclassmembers class **$WhenMappings { <fields>; }
+# AndroidX referencia clases que solo existen en versiones nuevas de la
+# plataforma o en artefactos opcionales (no están en android.jar ni en el
+# classpath). D8 las ignora; R8 las valida y aborta con "Missing class".
+# AGP emite estos mismos -dontwarn por defecto para sus dependencias.
+-dontwarn androidx.emoji2.**
+-dontwarn androidx.window.**
+-dontwarn androidx.profileinstaller.**
+-dontwarn androidx.tracing.**
+-dontwarn androidx.startup.**
+-dontwarn kotlinx.coroutines.debug.**
+`
+
+// proguardFiles reúne las reglas que R8 debe aplicar además de las base: el
+// proguard.pro del proyecto (si existe) y los consumer-rules de los AAR.
+func (c Config) proguardFiles() []string {
+	var files []string
+
+	for _, name := range []string{"proguard-rules.pro", "proguard.pro"} {
+		path := filepath.Join(sourceRoot(c.AppDir), name)
+		if fileExists(path) {
+			files = append(files, path)
+		}
+	}
+	files = append(files, c.ProguardFiles...)
+	if c.Libs != nil {
+		files = append(files, c.Libs.ProguardFiles()...)
+	}
+
+	// Deduplica conservando el orden.
+	seen := make(map[string]bool)
+	var out []string
+	for _, f := range files {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}

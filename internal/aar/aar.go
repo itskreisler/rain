@@ -29,11 +29,12 @@ var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
 
 // Library es el resultado de preparar una dependencia.
 type Library struct {
-	Coordinate string // group:artifact:version
-	ClassJar   string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
-	ResDir     string // res/ del AAR, si tiene recursos
-	Package    string // package del AndroidManifest.xml del AAR (para --extra-packages)
-	NativeABIs []string
+	Coordinate    string // group:artifact:version
+	ClassJar      string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
+	ResDir        string // res/ del AAR, si tiene recursos
+	Package       string // package del AndroidManifest.xml del AAR (para --extra-packages)
+	NativeABIs    []string
+	ProguardRules string // ruta a las reglas R8/ProGuard del AAR (proguard.txt), si las trae
 }
 
 // Set es el conjunto de dependencias preparadas para compilar.
@@ -86,6 +87,19 @@ func (s *Set) NativeDir() string {
 		return dir
 	}
 	return ""
+}
+
+// ProguardFiles devuelve las reglas R8/ProGuard (consumer-rules) de las
+// librerías que las traigan.
+func (s *Set) ProguardFiles() []string {
+	var out []string
+	for _, lib := range s.Libraries {
+		if lib.ProguardRules != "" {
+			out = append(out, lib.ProguardRules)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Client permite inyectar un http.Client en tests.
@@ -236,6 +250,12 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 			if abi := strings.Split(rel, "/")[0]; !contains(lib.NativeABIs, abi) {
 				lib.NativeABIs = append(lib.NativeABIs, abi)
 			}
+		case f.Name == "proguard.txt":
+			dest := filepath.Join(dir, "proguard", artifact+"-"+version+".pro")
+			if err := extractFile(f, dest); err != nil {
+				return nil, err
+			}
+			lib.ProguardRules = dest
 		}
 	}
 

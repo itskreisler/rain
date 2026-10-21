@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/itskreisler/rain/internal/aar"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -412,5 +415,89 @@ func TestAppliesComposePluginRequiresPluginAndUsage(t *testing.T) {
 	}
 	if got := cfg.jvmTarget(); got != 11 {
 		t.Errorf("jvmTarget() = %d, quiero 11 con Compose", got)
+	}
+}
+
+func TestProguardFilesIncludesUserRulesAndLibs(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+
+	// Reglas del proyecto (layout plano).
+	writeFile(t, filepath.Join(app, "proguard-rules.pro"), "-keep class com.x.** { *; }\n")
+
+	cfg := Config{
+		AppDir:        app,
+		ProguardFiles: []string{"/extra/user.pro"},
+		Libs: &aar.Set{Libraries: []aar.Library{
+			{Coordinate: "a:a:1", ProguardRules: "/deps/a.pro"},
+		}},
+	}
+
+	got := cfg.proguardFiles()
+	want := []string{
+		filepath.Join(app, "proguard-rules.pro"),
+		"/extra/user.pro",
+		"/deps/a.pro",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("proguardFiles() = %v, quiero %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("proguardFiles()[%d] = %q, quiero %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestProguardFilesDedupesAndSkipsMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		AppDir:        dir, // sin proguard-rules.pro
+		ProguardFiles: []string{"/a.pro", "/a.pro", ""},
+	}
+	got := cfg.proguardFiles()
+	if len(got) != 1 || got[0] != "/a.pro" {
+		t.Errorf("proguardFiles() = %v, quiero [/a.pro]", got)
+	}
+}
+
+func TestDefaultProguardRulesKeepsFrameworkEntryPoints(t *testing.T) {
+	for _, want := range []string{"android.app.Activity", "android.app.Service", "kotlin.Metadata"} {
+		if !strings.Contains(defaultProguardRules, want) {
+			t.Errorf("defaultProguardRules no menciona %q", want)
+		}
+	}
+}
+
+func TestDefaultProguardRulesDontWarnOptionalAndroidX(t *testing.T) {
+	// R8 valida clases ausentes (a diferencia de d8): las deps de AndroidX
+	// referencian clases de artefactos opcionales o de plataformas nuevas. Sin
+	// estos -dontwarn, un release con Compose aborta con "Missing class".
+	for _, want := range []string{
+		"-dontwarn androidx.emoji2.**",
+		"-dontwarn androidx.window.**",
+	} {
+		if !strings.Contains(defaultProguardRules, want) {
+			t.Errorf("defaultProguardRules no incluye %q", want)
+		}
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{1024 * 1024, "1.0 MiB"},
+		{12345678, "11.8 MiB"},
+	}
+	for _, c := range cases {
+		if got := formatBytes(c.n); got != c.want {
+			t.Errorf("formatBytes(%d) = %q, quiero %q", c.n, got, c.want)
+		}
 	}
 }
