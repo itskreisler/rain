@@ -252,6 +252,8 @@ const defaultProguardRules = `# Reglas base de Rain (generadas; no editar).
 -dontwarn androidx.tracing.**
 -dontwarn androidx.startup.**
 -dontwarn kotlinx.coroutines.debug.**
+# Anotaciones de JetBrains: solo metadatos de compilación, no van al runtime.
+-dontwarn org.jetbrains.annotations.**
 `
 
 // proguardFiles reúne las reglas que R8 debe aplicar además de las base: el

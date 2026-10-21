@@ -99,7 +99,7 @@ debug = true
 store_file = "mi-release.keystore"
 store_password = "tu_password"
 key_alias = "mi_alias"
-key_password = "tu_key_password"
+key_password = "tu_key_password"   # opcional: si se omite, se usa store_password
 
 # Opcional: múltiples módulos
 [[modules]]

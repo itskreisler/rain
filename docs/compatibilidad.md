@@ -66,3 +66,36 @@ Rain se prueba sobre estas combinaciones:
 
 Kotlin y R8 se provisionan vía `rain doctor --fix`, lo que desacopla el build
 del `build-tools` del sistema y evita las combinaciones rotas.
+
+## Release (R8) y firma
+
+`rain build --release` minifica con R8 y firma el APK. Comportamiento:
+
+- **Reglas**: se aplican, en este orden, las reglas base de Rain
+  (`build/r8-rain.pro`, generadas y nunca sobrescriben las tuyas), tu
+  `proguard-rules.pro`/`proguard.pro` del proyecto y los `proguard.txt`
+  (consumer-rules) que traen los AAR. Las reglas base mantienen los puntos de
+  entrada que el framework instancia por reflexión (Activity, Service,
+  BroadcastReceiver, ContentProvider, Views infladas) y la metadata de Kotlin.
+- **Clases ausentes**: R8 valida las referencias del programa (a diferencia de
+  d8). Las dependencias de AndroidX referencian clases de artefactos opcionales
+  o de versiones nuevas de la plataforma (emoji2, window, profileinstaller,
+  tracing, startup) y anotaciones de JetBrains. Rain emite los `-dontwarn`
+  equivalentes a los que genera AGP y añade `kotlin-stdlib`/`annotations` del
+  toolchain como librerías de R8, para que un release con AndroidX/Compose no
+  aborte con `Missing class`.
+- **`mapping.txt`**: se escribe en `build/mapping.txt` para desofuscar crashes.
+- **Firma**: si defines `[signing]` se usa tu keystore (se valida que exista y
+  que `key_alias` no esté vacío). Si no, un release se firma con la keystore de
+  **debug** y Rain te lo **avisa**; confírmalo con `--allow-debug-signing`.
+  Rain **nunca** cae a debug en silencio.
+- **Verificación**: tras firmar, `apksigner verify` comprueba el APK; si falla,
+  el build termina con error en vez de entregar un APK inválido.
+
+Tamaños medidos (debug → release):
+
+| Proyecto | Debug | Release |
+| --- | --- | --- |
+| `hello` (Java) | 12,7 KiB | 8,6 KiB |
+| `notes` (Java + recursos) | 40 KiB | 21 KiB |
+| Compose (`rain init --template completo`) | 11,3 MiB | 946 KiB |

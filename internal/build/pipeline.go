@@ -517,8 +517,12 @@ public final class BuildConfig {
 			}
 
 			r8Args := []string{"-cp", d8Jar, "com.android.tools.r8.R8",
-				"--release", "--output", dexDir, "--lib", cfg.AndroidJar,
+				"--release", "--output", dexDir,
 				"--min-api", strconv.Itoa(cfg.MinSdk), "--pg-conf", baseRules}
+
+			for _, lib := range cfg.r8LibraryJars() {
+				r8Args = append(r8Args, "--lib", lib)
+			}
 
 			for _, pg := range cfg.proguardFiles() {
 				ui.VerboseLog("reglas R8: %s", pg)
@@ -600,6 +604,11 @@ public final class BuildConfig {
 		ksPass = "pass:" + cfg.Signing.StorePassword
 		keyAlias = cfg.Signing.KeyAlias
 		keyPass = "pass:" + cfg.Signing.KeyPassword
+		// Muchos keystores son PKCS12 y no admiten una clave distinta a la del
+		// almacén: si no se define key_password, se reutiliza store_password.
+		if cfg.Signing.KeyPassword == "" {
+			keyPass = ksPass
+		}
 	} else {
 		// Ni debug ni release deberían firmarse en silencio con la keystore de
 		// debug: un release sin keystore propia se avisa explícitamente.
@@ -963,6 +972,49 @@ func findKotlinStdlib() string {
 	if kotlinc, err := exec.LookPath("kotlinc"); err == nil {
 		if real, err := filepath.EvalSymlinks(kotlinc); err == nil {
 			paths = append(paths, filepath.Join(filepath.Dir(real), "..", "lib", "kotlin-stdlib.jar"))
+		}
+	}
+	for _, p := range paths {
+		if p != "" && fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// r8LibraryJars devuelve los jars que R8 debe tratar como librerías (--lib)
+// además de android.jar. R8 valida las referencias del programa contra estas
+// librerías y aborta con "Missing class" si no las encuentra (d8 no valida).
+// Un proyecto Java con AAR de AndroidX que usan Kotlin necesita el stdlib del
+// toolchain, aunque el propio proyecto no tenga fuentes Kotlin.
+func (c Config) r8LibraryJars() []string {
+	jars := []string{c.AndroidJar}
+	if stdlib := findKotlinStdlib(); stdlib != "" {
+		jars = append(jars, stdlib)
+	}
+	if annotations := findJetbrainsAnnotations(); annotations != "" {
+		jars = append(jars, annotations)
+	}
+	return jars
+}
+
+// findJetbrainsAnnotations localiza annotations.jar (org.jetbrains.annotations.*),
+// que AndroidX y Kotlin referencian desde sus APIs públicas.
+func findJetbrainsAnnotations() string {
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		os.Getenv("JB_ANNOTATIONS"),
+		filepath.Join(home, ".rain", "toolchain", "kotlinc", "lib", "annotations-13.0.jar"),
+		filepath.Join(home, "kotlin", "kotlinc", "lib", "annotations-13.0.jar"),
+		"/usr/share/kotlin/lib/annotations-13.0.jar",
+		os.Getenv("PREFIX") + "/lib/annotations-13.0.jar",
+	}
+	if kotlinc, err := exec.LookPath("kotlinc"); err == nil {
+		if real, err := filepath.EvalSymlinks(kotlinc); err == nil {
+			dir := filepath.Join(filepath.Dir(real), "..", "lib")
+			if matches, _ := filepath.Glob(filepath.Join(dir, "annotations-*.jar")); len(matches) > 0 {
+				paths = append(paths, matches...)
+			}
 		}
 	}
 	for _, p := range paths {
