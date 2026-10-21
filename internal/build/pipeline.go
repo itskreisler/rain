@@ -520,7 +520,7 @@ public final class BuildConfig {
 				"--release", "--output", dexDir,
 				"--min-api", strconv.Itoa(cfg.MinSdk), "--pg-conf", baseRules}
 
-			for _, lib := range cfg.r8LibraryJars() {
+			for _, lib := range cfg.r8LibraryJars(classFiles) {
 				r8Args = append(r8Args, "--lib", lib)
 			}
 
@@ -987,12 +987,21 @@ func findKotlinStdlib() string {
 // librerías y aborta con "Missing class" si no las encuentra (d8 no valida).
 // Un proyecto Java con AAR de AndroidX que usan Kotlin necesita el stdlib del
 // toolchain, aunque el propio proyecto no tenga fuentes Kotlin.
-func (c Config) r8LibraryJars() []string {
+//
+// programJars son los jars que ya entran como programa: si el stdlib o las
+// anotaciones ya están ahí (proyecto con fuentes Kotlin), no se repiten como
+// librería para evitar el aviso "defined by both the program and the library".
+func (c Config) r8LibraryJars(programJars []string) []string {
+	inProgram := make(map[string]bool, len(programJars))
+	for _, j := range programJars {
+		inProgram[j] = true
+	}
+
 	jars := []string{c.AndroidJar}
-	if stdlib := findKotlinStdlib(); stdlib != "" {
+	if stdlib := findKotlinStdlib(); stdlib != "" && !inProgram[stdlib] {
 		jars = append(jars, stdlib)
 	}
-	if annotations := findJetbrainsAnnotations(); annotations != "" {
+	if annotations := findJetbrainsAnnotations(); annotations != "" && !inProgram[annotations] {
 		jars = append(jars, annotations)
 	}
 	return jars

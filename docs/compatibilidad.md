@@ -99,3 +99,18 @@ Tamaños medidos (debug → release):
 | `hello` (Java) | 12,7 KiB | 8,6 KiB |
 | `notes` (Java + recursos) | 40 KiB | 21 KiB |
 | Compose (`rain init --template completo`) | 11,3 MiB | 946 KiB |
+
+## Modos de resolución de dependencias
+
+- **completo** (`mode = "completo"`): Rain lee los POMs de Google Maven y Maven
+  Central y resuelve las dependencias transitivas (como Gradle). Es el modo
+  necesario para AndroidX/Compose.
+- **simple** (`mode = "simple"`): solo se descargan las coordenadas que declaran
+  `dependencies`; no se siguen transitivas. Útil para control total o proyectos
+  pequeños.
+
+En ambos modos, si una coordenada resuelve a un **JAR de Kotlin Multiplatform**
+(solo metadata, sin clases `.class` — p. ej. `androidx.annotation:annotation`),
+Rain descarga automáticamente la variante `-jvm` hermana (equivalente a lo que
+Gradle hace con Gradle Module Metadata). Así `androidx.annotation:annotation:1.6.0`
+funciona igual en modo simple que en completo.

@@ -2,6 +2,8 @@ package aar
 
 import (
 	"archive/zip"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -183,5 +185,105 @@ func TestSetAccessors(t *testing.T) {
 	}
 	if set.NativeDir() != filepath.Join(dir, "jni") {
 		t.Errorf("NativeDir = %q, quiero %q", set.NativeDir(), filepath.Join(dir, "jni"))
+	}
+}
+
+func TestJarHasClasses(t *testing.T) {
+	dir := t.TempDir()
+
+	// Stub de Kotlin Multiplatform: solo metadata, sin .class.
+	stub := filepath.Join(dir, "stub.jar")
+	writeZip(t, stub, map[string]string{
+		"META-INF/MANIFEST.MF":                            "Manifest-Version: 1.0\n",
+		"META-INF/kotlin-project-structure-metadata.json": "{}",
+	})
+	if jarHasClasses(stub) {
+		t.Error("jarHasClasses(stub) = true, quiero false")
+	}
+
+	// JAR con clases reales.
+	full := filepath.Join(dir, "full.jar")
+	writeZip(t, full, map[string]string{"androidx/annotation/NonNull.class": "bytecode"})
+	if !jarHasClasses(full) {
+		t.Error("jarHasClasses(full) = false, quiero true")
+	}
+
+	// Archivo inexistente o corrupto: false sin pánico.
+	if jarHasClasses(filepath.Join(dir, "nope.jar")) {
+		t.Error("jarHasClasses(inexistente) = true, quiero false")
+	}
+}
+
+func TestPrepareJARFallsBackToJVMVariant(t *testing.T) {
+	dir := t.TempDir()
+	serveDir := t.TempDir()
+
+	// El artefacto base es un stub KMP sin clases.
+	writeZip(t, filepath.Join(serveDir, "annotation-1.6.0.jar"), map[string]string{
+		"META-INF/kotlin-project-structure-metadata.json": "{}",
+	})
+	// La variante -jvm trae las clases.
+	writeZip(t, filepath.Join(serveDir, "annotation-jvm-1.6.0.jar"), map[string]string{
+		"androidx/annotation/NonNull.class": "bytecode",
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
+		data, err := os.ReadFile(filepath.Join(serveDir, name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	old := repositories
+	repositories = []string{srv.URL}
+	defer func() { repositories = old }()
+
+	c := NewClient()
+	lib, err := c.prepareOne("androidx.annotation:annotation:1.6.0", dir)
+	if err != nil {
+		t.Fatalf("prepareOne: %v", err)
+	}
+	if lib.Coordinate != "androidx.annotation:annotation-jvm:1.6.0" {
+		t.Errorf("Coordinate = %q, quiero la variante -jvm", lib.Coordinate)
+	}
+	if !jarHasClasses(lib.ClassJar) {
+		t.Errorf("ClassJar %q no tiene clases", lib.ClassJar)
+	}
+}
+
+func TestPrepareJARKeepsPlainJar(t *testing.T) {
+	dir := t.TempDir()
+	serveDir := t.TempDir()
+
+	// JAR normal con clases: no se busca variante -jvm.
+	writeZip(t, filepath.Join(serveDir, "guava-1.0.jar"), map[string]string{
+		"com/google/common/Base.class": "bytecode",
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := os.ReadFile(filepath.Join(serveDir, filepath.Base(r.URL.Path)))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	old := repositories
+	repositories = []string{srv.URL}
+	defer func() { repositories = old }()
+
+	c := NewClient()
+	lib, err := c.prepareOne("com.google.guava:guava:1.0", dir)
+	if err != nil {
+		t.Fatalf("prepareOne: %v", err)
+	}
+	if lib.Coordinate != "com.google.guava:guava:1.0" {
+		t.Errorf("Coordinate = %q, quiero el JAR original", lib.Coordinate)
 	}
 }

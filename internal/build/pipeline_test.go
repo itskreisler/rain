@@ -504,7 +504,7 @@ func TestFormatBytes(t *testing.T) {
 
 func TestR8LibraryJarsAlwaysIncludesAndroidJar(t *testing.T) {
 	cfg := Config{AndroidJar: "/sdk/android.jar"}
-	jars := cfg.r8LibraryJars()
+	jars := cfg.r8LibraryJars(nil)
 	if len(jars) == 0 || jars[0] != "/sdk/android.jar" {
 		t.Fatalf("r8LibraryJars() = %v, quiero que empiece por android.jar", jars)
 	}

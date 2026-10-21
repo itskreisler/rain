@@ -142,11 +142,51 @@ func (c *Client) prepareOne(coord, dir string) (*Library, error) {
 			continue
 		}
 		if ext == "jar" {
-			return &Library{Coordinate: coord, ClassJar: path}, nil
+			return c.prepareJAR(coord, dir, path)
 		}
 		return c.extractAAR(coord, artifact, version, path, dir)
 	}
 	return nil, fmt.Errorf("no se encontró AAR ni JAR para %s", coord)
+}
+
+// prepareJAR prepara un JAR plano. Si el JAR es un stub de Kotlin Multiplatform
+// (solo metadata, sin clases) — el caso de androidx.annotation:annotation, que
+// publica las clases en annotation-jvm — descarga el artefacto -jvm hermano.
+// Gradle resuelve esto vía Gradle Module Metadata; rain lo emula aquí para que
+// funcione también en modo simple (sin transitivas).
+func (c *Client) prepareJAR(coord, dir, path string) (*Library, error) {
+	if jarHasClasses(path) {
+		return &Library{Coordinate: coord, ClassJar: path}, nil
+	}
+
+	parts := strings.Split(coord, ":")
+	if len(parts) == 3 && !strings.HasSuffix(parts[1], "-jvm") {
+		group, artifact, version := parts[0], parts[1], parts[2]
+		jvmCoord := fmt.Sprintf("%s:%s-jvm:%s", group, artifact, version)
+		if jvmPath, err := c.download(jvmCoord, dir, "jar"); err == nil && jarHasClasses(jvmPath) {
+			return &Library{Coordinate: jvmCoord, ClassJar: jvmPath}, nil
+		}
+	}
+
+	// Sin alternativas, se devuelve el JAR tal cual (el usuario verá el error
+	// de compilación si de verdad faltan clases).
+	return &Library{Coordinate: coord, ClassJar: path}, nil
+}
+
+// jarHasClasses indica si un JAR contiene al menos un .class (y por tanto no es
+// un stub de metadata de Kotlin Multiplatform).
+func jarHasClasses(path string) bool {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = zr.Close() }()
+	for _, f := range zr.File {
+		if strings.HasSuffix(f.Name, ".class") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) download(coord, dir, ext string) (string, error) {

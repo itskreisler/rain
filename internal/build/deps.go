@@ -50,6 +50,16 @@ func (c Config) libraryJars() []string {
 				}
 			}
 		}
+		// Los artefactos que son JAR plano (no AAR) se descargan directamente
+		// en aars/ y también deben entrar en el classpath.
+		aarDir := filepath.Join(c.DepsDir, "aars")
+		if entries, err := os.ReadDir(aarDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".jar") {
+					add(filepath.Join(aarDir, e.Name()))
+				}
+			}
+		}
 	}
 
 	return out
