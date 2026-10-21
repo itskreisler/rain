@@ -366,7 +366,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 ### Fase 7 — Producto y documentación (P2)
 
 - [ ] **T7.1** README nuevo + `docs/doctor.md`, `docs/toolchain.md`, `docs/compatibilidad.md`, guía de migración desde android2apk.
-- [ ] **T7.2** `CHANGELOG`, versionado semver, releases con binarios linux/amd64 y linux/arm64.
+- [x] **T7.2** `CHANGELOG`, versionado semver, releases con binarios linux/amd64 y linux/arm64. Hecho: `scripts/next-version.sh` calcula la siguiente versión desde Conventional Commits; `.github/workflows/release.yml` crea tag anotado + release (binarios amd64/arm64 + SHA256SUMS) en cada push a `main` con `feat`/`fix`; `Makefile` inyecta versión/commit/fecha vía `-ldflags`; `CHANGELOG.md` añadido; primer tag `v0.1.0`.
 - [x] **T7.3** `rain init` con scaffolding real (manifest, `MainActivity`, `res/`, plantillas Java/Kotlin/Compose).
 - [ ] **T7.4** `rain deps tree`, `rain doctor --json`, salida amigable para agentes.
 - [ ] **T7.5** `SECURITY.md`, NOTICE de terceros, cabeceras de licencia.
