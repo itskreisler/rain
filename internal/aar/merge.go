@@ -333,12 +333,12 @@ type rawElement struct {
 }
 
 type manifestDoc struct {
-	rootAttrs   []xml.Attr
-	permissions []rawElement
-	permNames   map[string]bool
-	appAttrs    []xml.Attr
-	appChildren []rawElement
-	appChildKeys map[string]bool
+	rootAttrs     []xml.Attr
+	permissions   []rawElement
+	permNames     map[string]bool
+	appAttrs      []xml.Attr
+	appChildren   []rawElement
+	appChildKeys  map[string]bool
 	otherElements []rawElement
 }
 
