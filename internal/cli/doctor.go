@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/itskreisler/rain/internal/compat"
 	"github.com/itskreisler/rain/internal/doctor"
 	"github.com/itskreisler/rain/internal/toolchain"
 	"github.com/itskreisler/rain/internal/ui"
@@ -119,6 +120,20 @@ func printDoctorReport(cmd *cobra.Command, report doctor.Report, onlyInstall boo
 		}
 
 		fmt.Fprintln(out)
+		if len(report.Compat) > 0 {
+			fmt.Fprintln(out, "Compatibilidad del toolchain:")
+			for _, issue := range report.Compat {
+				symbol := "ℹ️ "
+				switch issue.Severity {
+				case compat.Error:
+					symbol = "❌"
+				case compat.Warning:
+					symbol = "⚠️ "
+				}
+				fmt.Fprintf(out, "%s %s\n", symbol, issue.Message)
+			}
+			fmt.Fprintln(out)
+		}
 		if report.Ready {
 			ui.Success("Todo listo para el perfil %s", report.Profile)
 			if report.Profile == doctor.Simple {

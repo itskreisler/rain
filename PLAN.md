@@ -307,7 +307,8 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 - [x] **T2.1** Estructura `~/.rain` + descargas atómicas + checksums + reintentos/timeout.
 - [x] **T2.2** Resolver de toolchain: `system-first`/`managed-first`, overrides por env, `rain doctor --fix`.
-- [ ] **T2.3** Matriz de compatibilidad JDK/R8/Kotlin/SDK en código; `doctor` avisa (p. ej. Kotlin 2.4 + R8 8.10.9 = incompatible).
+- [x] **T2.3** Matriz de compatibilidad JDK/R8/Kotlin/SDK en código; `doctor` avisa (p. ej. Kotlin 2.4 + R8 8.10.9 = incompatible).
+  > `internal/compat`: `CheckMatrix(Versions)` con severidades `advice`/`warning`/`error`; `doctor --json` incluye `compat` y la salida humana muestra la sección "Compatibilidad del toolchain".
 - [x] **T2.4** Perfil complejo: `kotlinc`, plugin Compose, caché AAR, `libjansi` solo Termux, disco.
 - [ ] **T2.5** Tests con `httptest` y FS temporal (sin red real).
 

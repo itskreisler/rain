@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itskreisler/rain/internal/compat"
 	"github.com/itskreisler/rain/internal/toolchain"
 )
 
@@ -56,15 +57,16 @@ type Check struct {
 const SchemaVersion = "1"
 
 type Report struct {
-	SchemaVersion string   `json:"schemaVersion"`
-	Profile       Profile  `json:"profile"`
-	Platform      Platform `json:"platform"`
-	OS            string   `json:"os"`
-	Arch          string   `json:"arch"`
-	Ready         bool     `json:"ready"`
-	Checks        []Check  `json:"checks"`
-	Missing       []string `json:"missing,omitempty"`
-	Commands      []string `json:"commands,omitempty"`
+	SchemaVersion string         `json:"schemaVersion"`
+	Profile       Profile        `json:"profile"`
+	Platform      Platform       `json:"platform"`
+	OS            string         `json:"os"`
+	Arch          string         `json:"arch"`
+	Ready         bool           `json:"ready"`
+	Checks        []Check        `json:"checks"`
+	Compat        []compat.Issue `json:"compat,omitempty"`
+	Missing       []string       `json:"missing,omitempty"`
+	Commands      []string       `json:"commands,omitempty"`
 }
 
 func Diagnose(profile Profile) Report {
@@ -232,6 +234,8 @@ func Diagnose(profile Profile) Report {
 		}
 	}
 
+	report.Compat = compat.CheckMatrix(versionsFromChecks(report.Checks))
+
 	report.Ready = true
 	for _, check := range report.Checks {
 		if check.Required && !check.OK {
@@ -241,6 +245,25 @@ func Diagnose(profile Profile) Report {
 	}
 	report.Commands = Recommendations(report.Platform, profile)
 	return report
+}
+
+// versionsFromChecks reúne las versiones detectadas para la matriz de
+// compatibilidad (T2.3).
+func versionsFromChecks(checks []Check) compat.Versions {
+	versions := compat.Versions{CompileSDK: 36}
+	for _, check := range checks {
+		switch check.Name {
+		case "java":
+			versions.JDK = check.Version
+		case "d8":
+			versions.R8 = check.Version
+		case "kotlinc":
+			versions.Kotlin = check.Version
+		case "build-tools":
+			versions.BuildTools = check.Version
+		}
+	}
+	return versions
 }
 
 func DetectPlatform() Platform {
