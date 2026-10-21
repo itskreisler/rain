@@ -13,14 +13,14 @@ func NormalizeVersion(v string) string {
 		return ""
 	}
 
-	// Rango exacto: [2.1.0]
-	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
-		inner := strings.Trim(v, "[]")
+	// Rango con corchete al inicio: [2.1.0], [1.0,2.0), [1.0,2.0]
+	if strings.HasPrefix(v, "[") {
+		inner := strings.TrimRight(strings.TrimPrefix(v, "["), "]")
 		// Si no hay coma, es un rango exacto con un solo valor
 		if !strings.Contains(inner, ",") {
 			return strings.TrimSpace(inner)
 		}
-		// Rango con coma: [1.0,2.0] o [1.0,2.0)
+		// Rango con coma: coge el límite inferior
 		parts := strings.SplitN(inner, ",", 2)
 		lower := strings.TrimSpace(parts[0])
 		if lower != "" {

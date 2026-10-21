@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -22,6 +23,23 @@ var (
 	NoColor bool
 )
 
+// Out y Err permiten redirigir la salida (tests, embebido). Por defecto van a
+// os.Stdout/os.Stderr.
+var (
+	Out io.Writer = os.Stdout
+	Err io.Writer = os.Stderr
+)
+
+// SetOutput redirige todos los mensajes de ui a los writers dados.
+func SetOutput(out, errOut io.Writer) {
+	if out != nil {
+		Out = out
+	}
+	if errOut != nil {
+		Err = errOut
+	}
+}
+
 func paint(code, text string) string {
 	if NoColor {
 		return text
@@ -33,32 +51,32 @@ func Success(format string, a ...interface{}) {
 	if Quiet {
 		return
 	}
-	fmt.Printf("%s "+format+"\n", append([]interface{}{paint(Green, "✅ ")}, a...)...)
+	fmt.Fprintf(Out, "%s "+format+"\n", append([]interface{}{paint(Green, "✅ ")}, a...)...)
 }
 
 func Warn(format string, a ...interface{}) {
 	if Quiet {
 		return
 	}
-	fmt.Printf("%s "+format+"\n", append([]interface{}{paint(Yellow, "⚠️  ")}, a...)...)
+	fmt.Fprintf(Out, "%s "+format+"\n", append([]interface{}{paint(Yellow, "⚠️  ")}, a...)...)
 }
 
 func Error(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]interface{}{paint(Red, "❌ ")}, a...)...)
+	fmt.Fprintf(Err, "%s "+format+"\n", append([]interface{}{paint(Red, "❌ ")}, a...)...)
 }
 
 func Info(format string, a ...interface{}) {
 	if Quiet {
 		return
 	}
-	fmt.Printf("%s "+format+"\n", append([]interface{}{paint(Cyan, "[rain] ")}, a...)...)
+	fmt.Fprintf(Out, "%s "+format+"\n", append([]interface{}{paint(Cyan, "[rain] ")}, a...)...)
 }
 
 func VerboseLog(format string, a ...interface{}) {
 	if !Verbose || Quiet {
 		return
 	}
-	fmt.Printf("%s "+format+"\n", append([]interface{}{paint(Gray, "       ")}, a...)...)
+	fmt.Fprintf(Out, "%s "+format+"\n", append([]interface{}{paint(Gray, "       ")}, a...)...)
 }
 
 // ProgressBar dibuja una barra de progreso de una sola línea.
@@ -102,12 +120,14 @@ func (p *ProgressBar) Render() {
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
 	if NoColor {
-		fmt.Printf("\r[%s] %3d%% %s", bar, int(percentage*100), strings.Repeat(" ", 5))
+		fmt.Fprintf(Out, "\r[%s] %3d%% %s", bar, int(percentage*100), strings.Repeat(" ", 5))
 		return
 	}
-	fmt.Printf("\033[2K\r%s[%s%s%s] %3d%% %s",
+	fmt.Fprintf(Out, "\033[2K\r%s[%s%s%s] %3d%% %s",
 		p.Label, color, bar, Reset, int(percentage*100), strings.Repeat(" ", 5))
-	_ = os.Stdout.Sync()
+	if f, ok := Out.(*os.File); ok {
+		_ = f.Sync()
+	}
 }
 
 func (p *ProgressBar) Finish() {
@@ -116,5 +136,5 @@ func (p *ProgressBar) Finish() {
 	}
 	p.Current = p.Total
 	p.Render()
-	fmt.Println()
+	fmt.Fprintln(Out)
 }

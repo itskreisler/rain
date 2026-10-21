@@ -69,6 +69,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 			ui.Verbose = opts.verbose
 			ui.Quiet = opts.quiet
 			ui.NoColor = opts.noColor || os.Getenv("NO_COLOR") != ""
+			ui.SetOutput(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			addManagedBinToPath()
 			return nil
 		},

@@ -51,23 +51,29 @@ type Check struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
+// SchemaVersion identifica la versión del esquema JSON de doctor. Los
+// consumidores (CI, scripts) deben comprobarla antes de parsear el resto.
+const SchemaVersion = "1"
+
 type Report struct {
-	Profile  Profile  `json:"profile"`
-	Platform Platform `json:"platform"`
-	OS       string   `json:"os"`
-	Arch     string   `json:"arch"`
-	Ready    bool     `json:"ready"`
-	Checks   []Check  `json:"checks"`
-	Missing  []string `json:"missing,omitempty"`
-	Commands []string `json:"commands,omitempty"`
+	SchemaVersion string   `json:"schemaVersion"`
+	Profile       Profile  `json:"profile"`
+	Platform      Platform `json:"platform"`
+	OS            string   `json:"os"`
+	Arch          string   `json:"arch"`
+	Ready         bool     `json:"ready"`
+	Checks        []Check  `json:"checks"`
+	Missing       []string `json:"missing,omitempty"`
+	Commands      []string `json:"commands,omitempty"`
 }
 
 func Diagnose(profile Profile) Report {
 	report := Report{
-		Profile:  profile,
-		Platform: DetectPlatform(),
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
+		SchemaVersion: SchemaVersion,
+		Profile:       profile,
+		Platform:      DetectPlatform(),
+		OS:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
 	}
 
 	add := func(check Check) {

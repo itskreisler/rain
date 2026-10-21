@@ -132,16 +132,70 @@ func versionLess(a, b string) bool {
 	pa := strings.Split(a, ".")
 	pb := strings.Split(b, ".")
 	for i := 0; i < len(pa) && i < len(pb); i++ {
-		var na, nb int
-		if _, err := fmt.Sscanf(pa[i], "%d", &na); err != nil {
-			return pa[i] < pb[i]
+		na, aok := numericPrefix(pa[i])
+		nb, bok := numericPrefix(pb[i])
+		if aok && bok {
+			if na != nb {
+				return na < nb
+			}
+			// Si ambos son puramente numéricos, sigue; si uno tiene
+			// cualificador (1.0.0-beta) el otro (1.0.0) gana, y entre
+			// cualificadores decide el orden textual.
+			if pa[i] != pb[i] {
+				return qualifierLess(pa[i], pb[i])
+			}
+			continue
 		}
-		if _, err := fmt.Sscanf(pb[i], "%d", &nb); err != nil {
-			return pa[i] < pb[i]
-		}
-		if na != nb {
-			return na < nb
-		}
+		return pa[i] < pb[i]
 	}
+	// Mismas partes numéricas comunes: decide por lo que queda
+	// ("1.0" < "1.0.1").
 	return len(pa) < len(pb)
+}
+
+// numericPrefix extrae el número inicial de un segmento ("0-beta" -> 0, true).
+func numericPrefix(segment string) (int, bool) {
+	i := 0
+	for i < len(segment) && segment[i] >= '0' && segment[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, false
+	}
+	return atoi(segment[:i]), true
+}
+
+// atoi convierte un prefijo numérico ya validado.
+func atoi(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		n = n*10 + int(s[i]-'0')
+	}
+	return n
+}
+
+// qualifierLess compara dos segmentos con cualificador textual.
+// Un segmento sin cualificador ("0") es mayor que uno con él ("0-beta").
+func qualifierLess(a, b string) bool {
+	qa := qualifierOf(a)
+	qb := qualifierOf(b)
+	switch {
+	case qa == "" && qb == "":
+		return false
+	case qa == "":
+		return false // 0 > 0-beta
+	case qb == "":
+		return true // 0-beta < 0
+	default:
+		return qa < qb
+	}
+}
+
+// qualifierOf devuelve la parte textual de un segmento ("0-beta" -> "-beta").
+func qualifierOf(segment string) string {
+	i := 0
+	for i < len(segment) && segment[i] >= '0' && segment[i] <= '9' {
+		i++
+	}
+	return segment[i:]
 }

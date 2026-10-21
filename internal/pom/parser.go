@@ -21,7 +21,7 @@ type Project struct {
 	ArtifactID           string       `xml:"artifactId"`
 	Version              string       `xml:"version"`
 	Parent               *Parent      `xml:"parent"`
-	Properties           []Property   `xml:"properties>entry"`
+	Properties           Properties   `xml:"properties"`
 	DependencyManagement *DepMgmt     `xml:"dependencyManagement"`
 	Dependencies         []Dependency `xml:"dependencies>dependency"`
 }
@@ -32,9 +32,39 @@ type Parent struct {
 	Version    string `xml:"version"`
 }
 
+// Property es una entrada de <properties>; el nombre del elemento es la clave.
 type Property struct {
 	XMLName xml.Name
 	Value   string `xml:",chardata"`
+}
+
+// Properties es un slice de propiedades con unmarshal propio: encoding/xml no
+// puede mapear elementos de nombre arbitrario (<kotlin.version>,
+// <androidx.core.version>...) a un slice, así que los recogemos con `,any`.
+type Properties []Property
+
+// UnmarshalXML implementa la lectura de <properties> elemento a elemento:
+// cada hijo directo es una propiedad cuyo nombre es la clave.
+func (props *Properties) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			var value string
+			if err := d.DecodeElement(&value, &t); err != nil {
+				return err
+			}
+			*props = append(*props, Property{XMLName: t.Name, Value: value})
+		case xml.EndElement:
+			if t.Name == start.Name {
+				return nil
+			}
+		}
+	}
 }
 
 type DepMgmt struct {
