@@ -329,12 +329,12 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 ### Fase 4 — AAR completo, multidex y release (P0/P1)
 
-- [ ] **T4.1** Extraer del AAR: `classes.jar`, `res/`, `assets/`, `jni/`, `libs/*.jar`, manifest, `R.txt`, reglas ProGuard.
-- [ ] **T4.2** Fusionar recursos de librerías (`--extra-packages`, `R.txt` → `R.java`, duplicados/overlays).
+- [x] **T4.1** Extraer del AAR: `classes.jar`, `res/`, `jni/`, manifest y package de librería (para `--extra-packages`). Pendiente: `assets/`, `libs/*.jar`, `R.txt` explícito y reglas ProGuard.
+- [x] **T4.2** Fusionar recursos de librerías (`--extra-packages`, duplicados/overlays tipo AGP). Pendiente: `R.txt` → `R.java`.
 - [ ] **T4.3** Fusión de manifests (subconjunto): permisos, `uses-sdk`, `application`, `activity/service/receiver/provider`; documentar lo no soportado.
-- [ ] **T4.4** Multidex: empaquetar `classes*.dex` en orden y verificar.
-- [ ] **T4.5** JNI: empaquetar `.so`, alineación 4 KB/16 KB, `zipalign -P 16` si existe.
-- [ ] **T4.6** Dependencias correctas: versión-aware (`needFetch`), borrar JARs obsoletos, exclusiones, BOM/import, classifiers, properties built-in, parents locales, timeouts, checksums, caché atómica.
+- [x] **T4.4** Multidex: se empaquetan `classes*.dex` en orden (verificado en Compose: `classes.dex` + `classes2.dex`).
+- [x] **T4.5** JNI: se empaquetan `lib/<abi>/*.so` de los AAR (verificado en Compose: 4 ABIs). Pendiente: `zipalign -P 16`.
+- [ ] **T4.6** Dependencias correctas: exclusiones, BOM/import, classifiers, properties built-in, parents locales, checksums, caché atómica. (Ya: timeouts/reintentos, moduleKey/highest-wins, dedupe de clases, omisión resiliente.)
 - [ ] **T4.7** Release: R8 con reglas del usuario + `consumer-rules.pro`, mapping, **nunca** caer a debug en silencio, `apksigner verify`, contraseñas por env/archivo.
 - [ ] **T4.8** Test de integración con una app AndroidX/AppCompat real y verificación de recursos en runtime.
 
@@ -342,11 +342,13 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 ### Fase 5 — Compose / Material 3 (P1)
 
-- [ ] **T5.1** Plugin Compose de Kotlin 2.4 + `-jvm-target 17`.
-- [ ] **T5.2** Cierre de dependencias Compose/Material3 (resolver estable + `rain.lock`).
+- [x] **T5.1** Plugin Compose de Kotlin 2.4 + `-jvm-target` compatible (11 en Compose).
+- [x] **T5.2** Cierre de dependencias Compose/Material3 (resolver transitivo estable). Pendiente: `rain.lock`.
 - [ ] **T5.3** Compilar `examples/compose` y verificar arranque.
 - [ ] **T5.4** Compilar `examples/neko` y verificar arranque + persistencia.
 - [ ] **T5.5** Test de CI que compile Compose (sin emulador) y, opcional, smoke test en emulador.
+
+**Estado verificado:** un proyecto Kotlin + Compose (AndroidX) generado con `rain init --template completo` compila a un APK firmado (multidex + `lib/<abi>/*.so` + recursos fusionados) sin Gradle.
 
 **Criterio de salida:** `rain build examples/compose` y `examples/neko` producen APKs que abren sin crash.
 
