@@ -3,9 +3,10 @@ package pom
 import (
 	"encoding/xml"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
+
+	"github.com/itskreisler/rain/internal/httpx"
 )
 
 // Repositorios en orden de prioridad
@@ -98,20 +99,15 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 		return "", err
 	}
 
+	client := httpx.NewClient()
 	var lastErr error
 	for _, repo := range repositories {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.pom",
 			repo, groupPath, artifact, version, artifact, version)
 
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err != nil {
-			lastErr = fmt.Errorf("error de red en %s: %w", repo, err)
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d en %s", resp.StatusCode, url)
+			lastErr = fmt.Errorf("%w en %s", err, url)
 			continue
 		}
 

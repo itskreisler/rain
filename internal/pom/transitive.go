@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/itskreisler/rain/internal/ui"
 )
 
 // ResolvedDep representa una dependencia final resuelta.
@@ -19,14 +21,17 @@ func (d ResolvedDep) Coordinate() string {
 }
 
 // ResolveTransitive resuelve todas las dependencias transitivas de una coordenada raíz.
-// Usa "highest wins" para conflictos de versión.
+// Usa "highest wins" para conflictos de versión. Las ramas que no se pueden
+// descargar se omiten (con Warning) en vez de abortar toda la resolución: el
+// grafo de AndroidX trae artefactos antiguos/no publicados que no aportan nada.
 func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error) {
 	resolved := make(map[string]ResolvedDep) // key: group:artifact
 	visited := make(map[string]bool)         // key: group:artifact:version
+	skipped := make(map[string]bool)         // coordenadas omitidas
 
-	var walk func(coord string) error
-	walk = func(coord string) error {
-		if visited[coord] {
+	var walk func(coord string, depth int) error
+	walk = func(coord string, depth int) error {
+		if visited[coord] || skipped[coord] {
 			return nil
 		}
 		visited[coord] = true
@@ -48,18 +53,34 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		} else {
 			path, dlErr := DownloadPOM(coord, groupPath)
 			if dlErr != nil {
-				return fmt.Errorf("descargando POM %s: %w", coord, dlErr)
+				// No abortamos: la rama se omite. Solo la raíz es crítica.
+				if coord == rootCoord {
+					return fmt.Errorf("descargando POM raíz %s: %w", coord, dlErr)
+				}
+				skipped[coord] = true
+				ui.Warn("dependencia omitida (no descargable): %s", coord)
+				return nil
 			}
 			p, err = ParsePOM(path)
 		}
 		if err != nil {
-			return fmt.Errorf("parseando POM %s: %w", coord, err)
+			if coord == rootCoord {
+				return fmt.Errorf("parseando POM %s: %w", coord, err)
+			}
+			skipped[coord] = true
+			ui.Warn("dependencia omitida (POM inválido): %s", coord)
+			return nil
 		}
 
 		// Resolver cadena de parents
 		chain, err := ResolveParentChain(p, cacheDir)
 		if err != nil {
-			return fmt.Errorf("resolviendo parents de %s: %w", coord, err)
+			if coord == rootCoord {
+				return fmt.Errorf("resolviendo parents de %s: %w", coord, err)
+			}
+			skipped[coord] = true
+			ui.Warn("dependencia omitida (parents no resolubles): %s", coord)
+			return nil
 		}
 
 		// Fusionar propiedades y management
@@ -69,7 +90,12 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		// Resolver dependencias directas de este POM
 		deps, err := ResolveDependencies(p, mgmt, props)
 		if err != nil {
-			return fmt.Errorf("resolviendo dependencias de %s: %w", coord, err)
+			if coord == rootCoord {
+				return fmt.Errorf("resolviendo dependencias de %s: %w", coord, err)
+			}
+			skipped[coord] = true
+			ui.Warn("dependencia omitida (dependencias no resolubles): %s", coord)
+			return nil
 		}
 
 		for _, dep := range deps {
@@ -80,8 +106,26 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			if dep.Optional == "true" {
 				continue
 			}
+			// kotlin-stdlib-jdk7/jdk8 se fusionaron en kotlin-stdlib desde
+			// Kotlin 1.8; arrastrarlos trae versiones antiguas (1.5.x) que
+			// además ya no se publican en algunos repos.
+			if isMergedKotlinStdlib(dep.GroupID, dep.ArtifactID) {
+				continue
+			}
+			// El stdlib lo aporta el kotlinc del toolchain: no lo dupliquemos.
+			if isKotlinStdlib(dep.GroupID, dep.ArtifactID) {
+				continue
+			}
+			// Artefactos absorbidos por otros: evitan clases duplicadas en d8.
+			if deprecatedArtifact(dep.GroupID, dep.ArtifactID) {
+				continue
+			}
 
-			key := dep.GroupID + ":" + dep.ArtifactID
+			// Clave de módulo: normaliza variantes de publicación (foo,
+			// foo-android, foo-jvm) a un mismo módulo lógico, para que
+			// "highest wins" elija la versión nueva y no se cuelen a la vez
+			// la 2.6.1 sin sufijo y la 2.10.0 -android (clases duplicadas).
+			key := moduleKey(dep.GroupID, dep.ArtifactID)
 			newCoord := dep.GroupID + ":" + dep.ArtifactID + ":" + dep.Version
 
 			// Highest wins: si ya existe, comparar versiones
@@ -94,14 +138,14 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			}
 
 			// Recursión
-			if err := walk(newCoord); err != nil {
+			if err := walk(newCoord, depth+1); err != nil {
 				return err
 			}
 		}
 
 		// Añadir este artefacto al resultado (si no es la raíz)
 		if coord != rootCoord {
-			key := group + ":" + artifact
+			key := moduleKey(group, artifact)
 			if existing, ok := resolved[key]; !ok || versionLess(existing.Version, version) {
 				resolved[key] = ResolvedDep{group, artifact, version}
 			}
@@ -110,7 +154,7 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		return nil
 	}
 
-	if err := walk(rootCoord); err != nil {
+	if err := walk(rootCoord, 0); err != nil {
 		return nil, err
 	}
 
@@ -120,6 +164,55 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// moduleKey normaliza el nombre de artefacto de un módulo a su forma base,
+// eliminando el sufijo de variante de publicación de AndroidX/Maven
+// (-android, -jvm). Así `lifecycle-runtime`, `lifecycle-runtime-android` y
+// `lifecycle-runtime-jvm` se tratan como el mismo módulo a efectos de
+// "highest wins", evitando definir dos veces las mismas clases en d8.
+func moduleKey(group, artifact string) string {
+	base := artifact
+	for _, suffix := range []string{"-android", "-jvm"} {
+		base = strings.TrimSuffix(base, suffix)
+	}
+	return group + ":" + base
+}
+
+// isMergedKotlinStdlib detecta los artefactos kotlin-stdlib-jdk7/jdk8, cuyas
+// clases se integraron en kotlin-stdlib en Kotlin 1.8.
+func isMergedKotlinStdlib(group, artifact string) bool {
+	if group != "org.jetbrains.kotlin" {
+		return false
+	}
+	return artifact == "kotlin-stdlib-jdk7" || artifact == "kotlin-stdlib-jdk8"
+}
+
+// isKotlinStdlib detecta cualquier artefacto del stdlib de Kotlin. Rain inyecta
+// el stdlib del propio kotlinc (versión del toolchain) al dexear, así que
+// arrastrar otra versión desde el grafo provocaría clases duplicadas en d8.
+func isKotlinStdlib(group, artifact string) bool {
+	if group != "org.jetbrains.kotlin" {
+		return false
+	}
+	switch artifact {
+	case "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8", "kotlin-stdlib-common":
+		return true
+	default:
+		return false
+	}
+}
+
+// deprecatedArtifact detecta artefactos que fueron absorbidos por otro y cuya
+// presencia duplica clases (d8 falla con "defined multiple times"). Se omiten
+// del cierre para no arrastrar versiones antiguas.
+func deprecatedArtifact(group, artifact string) bool {
+	switch group + ":" + artifact {
+	case "androidx.lifecycle:lifecycle-common-java8": // absorbido por lifecycle-common ≥2.4
+		return true
+	default:
+		return false
+	}
 }
 
 // versionLess compara dos versiones de forma simple (asume formato semver-like).

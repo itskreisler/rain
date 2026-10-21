@@ -216,7 +216,7 @@ func TestAppendDexPreservesEntries(t *testing.T) {
 	writeFile(t, dex1, "dex-uno")
 	writeFile(t, dex2, "dex-dos")
 
-	if err := appendDex(baseApk, []string{dex1, dex2}); err != nil {
+	if err := appendDex(baseApk, []string{dex1, dex2}, nil); err != nil {
 		t.Fatalf("appendDex: %v", err)
 	}
 
@@ -255,6 +255,90 @@ func writeZip(t *testing.T, path string, entries map[string]string) {
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDedupeJarsByClassNoOverlap(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.jar")
+	b := filepath.Join(dir, "b.jar")
+	writeZip(t, a, map[string]string{"com/x/A.class": "a"})
+	writeZip(t, b, map[string]string{"com/x/B.class": "b"})
+
+	got := dedupeJarsByClass([]string{a, b}, filepath.Join(dir, "scratch"))
+	if len(got) != 2 {
+		t.Fatalf("jars = %v, quiero 2 sin solapes", got)
+	}
+	// Sin solapes no se reempaqueta: se conservan las rutas originales.
+	if got[0] != a || got[1] != b {
+		t.Errorf("got = %v, quiero originales sin tocar", got)
+	}
+}
+
+func TestDedupeJarsByClassFullDuplicateDropped(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.jar")
+	b := filepath.Join(dir, "b.jar")
+	writeZip(t, a, map[string]string{"com/x/A.class": "new"})
+	writeZip(t, b, map[string]string{"com/x/A.class": "old"}) // idéntico
+
+	got := dedupeJarsByClass([]string{a, b}, filepath.Join(dir, "scratch"))
+	if len(got) != 1 || got[0] != a {
+		t.Fatalf("got = %v, quiero solo el primero", got)
+	}
+}
+
+func TestDedupeJarsByClassPartialOverlapStripped(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.jar")
+	b := filepath.Join(dir, "b.jar")
+	writeZip(t, a, map[string]string{"com/x/A.class": "a"})
+	// b comparte A con a pero aporta B y un recurso embebido.
+	writeZip(t, b, map[string]string{
+		"com/x/A.class":        "dup",
+		"com/x/B.class":        "b",
+		"META-INF/MANIFEST.MF": "manifest",
+	})
+
+	scratch := filepath.Join(dir, "scratch")
+	got := dedupeJarsByClass([]string{a, b}, scratch)
+	if len(got) != 2 {
+		t.Fatalf("got = %v, quiero 2 (b filtrado)", got)
+	}
+	if got[0] != a {
+		t.Errorf("got[0] = %q, quiero el original a", got[0])
+	}
+
+	// El jar filtrado debe conservar B y el recurso, pero no la clase duplicada.
+	zr, err := zip.OpenReader(got[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+	names := make(map[string]bool)
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	if names["com/x/A.class"] {
+		t.Error("la clase duplicada A debería haberse eliminado")
+	}
+	if !names["com/x/B.class"] {
+		t.Error("falta la clase única B")
+	}
+	if !names["META-INF/MANIFEST.MF"] {
+		t.Error("falta el recurso embebido")
+	}
+}
+
+func TestDedupeJarsByClassUnreadableKept(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.jar")
+	if err := os.WriteFile(bad, []byte("no soy zip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := dedupeJarsByClass([]string{bad}, filepath.Join(dir, "scratch"))
+	if len(got) != 1 || got[0] != bad {
+		t.Errorf("got = %v, un jar ilegible se conserva", got)
 	}
 }
 

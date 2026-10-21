@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/itskreisler/rain/internal/aar"
 	"github.com/itskreisler/rain/internal/build"
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/doctor"
 	"github.com/itskreisler/rain/internal/pom"
-	"github.com/itskreisler/rain/internal/resolver"
 	"github.com/itskreisler/rain/internal/ui"
 )
 
@@ -71,10 +71,19 @@ func runBuild(androidJar string, release bool) error {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
 	}
 
-	if needFetch(cfg) {
+	var libs *aar.Set
+	if len(cfg.Dependencies) > 0 {
 		ui.Info("Resolviendo y descargando dependencias...")
-		if err := resolveAndFetchWithProgress(cfg, "libs"); err != nil {
-			return fmt.Errorf("resolviendo dependencias: %w", err)
+		coords := cfg.Dependencies
+		if cfg.Mode == "completo" {
+			coords, err = resolveTransitiveCoordinates(cfg)
+			if err != nil {
+				return fmt.Errorf("resolviendo dependencias: %w", err)
+			}
+		}
+		libs, err = prepareAARSet(coords, ".rain-deps")
+		if err != nil {
+			return fmt.Errorf("preparando dependencias: %w", err)
 		}
 	}
 
@@ -98,12 +107,69 @@ func runBuild(androidJar string, release bool) error {
 			VersionCode: 1,
 			VersionName: cfg.Project.Version,
 			AppName:     cfg.Project.Name,
+			Libs:        libs,
+		}
+		if libs != nil {
+			bcfg.DepsDir = libs.Dir
 		}
 		if err := build.Run(bcfg); err != nil {
 			return fmt.Errorf("módulo %s: %w", mod.Name, err)
 		}
 	}
 	return nil
+}
+
+// resolveTransitiveCoordinates resuelve el cierre transitivo de las
+// dependencias declaradas (modo completo).
+func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
+	var coords []string
+	seen := make(map[string]bool)
+
+	for _, dep := range cfg.Dependencies {
+		deps, err := pom.ResolveTransitive(dep, "cache")
+		if err != nil {
+			return nil, fmt.Errorf("resolviendo %s: %w", dep, err)
+		}
+		for _, d := range deps {
+			coord := d.Coordinate()
+			if !seen[coord] {
+				seen[coord] = true
+				coords = append(coords, coord)
+			}
+		}
+		if !seen[dep] {
+			seen[dep] = true
+			coords = append(coords, dep)
+		}
+	}
+	return coords, nil
+}
+
+// prepareAARSet descarga y prepara cada coordenada (AAR o JAR) en dir.
+func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
+	pb := ui.NewProgressBar(len(coords), "Preparando ")
+	set := &aar.Set{Dir: dir}
+	client := aar.NewClient()
+	failures := 0
+	for i, coord := range coords {
+		pb.Current = i + 1
+		pb.Render()
+		s, err := client.Prepare([]string{coord}, dir)
+		if err != nil {
+			failures++
+			ui.Warn("No se pudo preparar %s: %v", coord, err)
+			continue
+		}
+		set.Libraries = append(set.Libraries, s.Libraries...)
+	}
+	pb.Finish()
+	if len(set.Libraries) == 0 {
+		return nil, fmt.Errorf("no se pudo preparar ninguna dependencia")
+	}
+	if failures > 0 {
+		ui.Warn("%d dependencias no se pudieron preparar", failures)
+	}
+	return set, nil
 }
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
@@ -200,70 +266,4 @@ func parseInt(value string, fallback int) int {
 		return fallback
 	}
 	return number
-}
-
-func needFetch(cfg config.Config) bool {
-	if len(cfg.Dependencies) == 0 {
-		return false
-	}
-
-	entries, _ := os.ReadDir("libs")
-	for _, dep := range cfg.Dependencies {
-		parts := strings.Split(dep, ":")
-		if len(parts) != 3 {
-			continue
-		}
-		artifact := parts[1]
-		found := false
-		for _, e := range entries {
-			if strings.Contains(e.Name(), artifact) && strings.HasSuffix(e.Name(), ".jar") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return true
-		}
-	}
-	return false
-}
-
-func resolveAndFetchWithProgress(cfg config.Config, libsDir string) error {
-	var allCoords []string
-	seen := make(map[string]bool)
-
-	for _, dep := range cfg.Dependencies {
-		if cfg.Mode == "completo" {
-			deps, err := pom.ResolveTransitive(dep, "cache")
-			if err != nil {
-				return fmt.Errorf("resolviendo %s: %w", dep, err)
-			}
-			for _, d := range deps {
-				coord := d.Coordinate()
-				if !seen[coord] {
-					seen[coord] = true
-					allCoords = append(allCoords, coord)
-				}
-			}
-		}
-		if !seen[dep] {
-			seen[dep] = true
-			allCoords = append(allCoords, dep)
-		}
-	}
-
-	if len(allCoords) == 0 {
-		return nil
-	}
-
-	pb := ui.NewProgressBar(len(allCoords), "Descargando ")
-	for i, coord := range allCoords {
-		pb.Current = i + 1
-		pb.Render()
-		if _, err := resolver.DownloadArtifact(coord, libsDir); err != nil {
-			ui.Warn("No se pudo descargar %s: %v", coord, err)
-		}
-	}
-	pb.Finish()
-	return nil
 }

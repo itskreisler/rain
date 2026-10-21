@@ -4,11 +4,15 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/itskreisler/rain/internal/httpx"
 )
+
+// httpClient es el cliente con reintentos para los repositorios Maven.
+var httpClient = httpx.NewClient()
 
 var repositories = []string{
 	"https://dl.google.com/dl/android/maven2",
@@ -29,14 +33,9 @@ func DownloadAAR(coordinate string, destDir string) (string, error) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.aar",
 			repo, groupPath, artifact, version, artifact, version)
 
-		resp, err := http.Get(url)
+		resp, err := httpClient.Get(url)
 		if err != nil {
-			lastErr = fmt.Errorf("error de red en %s: %w", repo, err)
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d en %s", resp.StatusCode, url)
+			lastErr = fmt.Errorf("%w en %s", err, url)
 			continue
 		}
 
@@ -130,14 +129,9 @@ func DownloadArtifact(coordinate string, destDir string) (string, error) {
 			url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.%s",
 				repo, groupPath, artifact, version, artifact, version, ext)
 
-			resp, err := http.Get(url)
+			resp, err := httpClient.Get(url)
 			if err != nil {
-				lastErr = fmt.Errorf("error de red: %w", err)
-				continue
-			}
-			if resp.StatusCode != http.StatusOK {
-				_ = resp.Body.Close()
-				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+				lastErr = err
 				continue
 			}
 

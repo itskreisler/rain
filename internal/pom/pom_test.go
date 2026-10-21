@@ -322,6 +322,26 @@ func TestVersionLess(t *testing.T) {
 	}
 }
 
+func TestModuleKey(t *testing.T) {
+	tests := []struct {
+		group, artifact, want string
+	}{
+		{"androidx.lifecycle", "lifecycle-runtime", "androidx.lifecycle:lifecycle-runtime"},
+		{"androidx.lifecycle", "lifecycle-runtime-android", "androidx.lifecycle:lifecycle-runtime"},
+		{"androidx.lifecycle", "lifecycle-runtime-jvm", "androidx.lifecycle:lifecycle-runtime"},
+		// -ktx es un módulo distinto (aporta clases propias).
+		{"androidx.lifecycle", "lifecycle-runtime-ktx", "androidx.lifecycle:lifecycle-runtime-ktx"},
+		{"androidx.lifecycle", "lifecycle-runtime-ktx-android", "androidx.lifecycle:lifecycle-runtime-ktx"},
+		// Un nombre que no es variante no se toca.
+		{"com.example", "myandroid", "com.example:myandroid"},
+	}
+	for _, tc := range tests {
+		if got := moduleKey(tc.group, tc.artifact); got != tc.want {
+			t.Errorf("moduleKey(%q, %q) = %q, quiero %q", tc.group, tc.artifact, got, tc.want)
+		}
+	}
+}
+
 func TestResolvedDepCoordinate(t *testing.T) {
 	dep := ResolvedDep{GroupID: "androidx.core", ArtifactID: "core", Version: "1.12.0"}
 	if got := dep.Coordinate(); got != "androidx.core:core:1.12.0" {

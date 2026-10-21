@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itskreisler/rain/internal/aar"
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/ui"
 )
@@ -32,6 +33,16 @@ type Config struct {
 	VersionCode int
 	VersionName string
 	AppName     string
+	// DepsDir contiene AAR/JAR preparados (classes.jar, res/, jni/) además de
+	// los .jar sueltos de LibsDir. Viene de androidx/compose en modo completo.
+	DepsDir string
+	// Libs es el set de AAR/JAR preparados (si DepsDir está definido).
+	Libs *aar.Set
+	// ComposePlugin es la ruta a compose-compiler-plugin.jar; si está vacía se
+	// autodetecta al compilar Kotlin.
+	ComposePlugin string
+	// JVMTarget es el target de bytecode (8 por defecto; 11 con Compose).
+	JVMTarget int
 }
 
 var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
@@ -259,6 +270,40 @@ func Run(cfg Config) error {
 		if assets := filepath.Join(sourceRoot(cfg.AppDir), "assets"); dirExists(assets) {
 			args = append(args, "-A", assets)
 		}
+
+		libRes, extraPackages, err := cfg.prepareLibraryResources(cfg.Libs)
+		if err != nil {
+			return fmt.Errorf("fusionando recursos de librerías: %w", err)
+		}
+		if libRes != "" {
+			ui.Info("compilando recursos de librerías...")
+			libFlat := filepath.Join(cfg.BuildDir, "libres-flat")
+			if err := os.RemoveAll(libFlat); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(libFlat, 0o755); err != nil {
+				return err
+			}
+			cmd := exec.Command("aapt2", "compile", "--dir", libRes, "-o", libFlat)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("aapt2 compile (librerías): %w", err)
+			}
+			entries, err := os.ReadDir(libFlat)
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".flat") {
+					flatFiles = append(flatFiles, filepath.Join(libFlat, e.Name()))
+				}
+			}
+		}
+		for _, pkg := range extraPackages {
+			args = append(args, "--extra-packages", pkg)
+		}
+
 		args = append(args, flatFiles...)
 
 		cmd := exec.Command("aapt2", args...)
@@ -337,20 +382,23 @@ public final class BuildConfig {
 		if len(kotlinSources) > 0 {
 			ui.Info("compilando Kotlin (%d archivos)...", len(kotlinSources))
 
+			jvmTarget := cfg.jvmTarget()
+
 			var kotlinClasspath []string
 			kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
-			libEntries, _ := os.ReadDir(cfg.LibsDir)
-			for _, e := range libEntries {
-				if strings.HasSuffix(e.Name(), ".jar") {
-					kotlinClasspath = append(kotlinClasspath, filepath.Join(cfg.LibsDir, e.Name()))
-				}
-			}
+			kotlinClasspath = append(kotlinClasspath, cfg.libraryJars()...)
 			kotlinClasspath = append(kotlinClasspath, genDir)
 
 			kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
 				"-d", objDir,
 				"-classpath", strings.Join(kotlinClasspath, ":"),
-				"-jvm-target", "1.8"}
+				"-jvm-target", kotlinJVMTarget(jvmTarget)}
+
+			if plugin := cfg.composePlugin(); plugin != "" {
+				ui.VerboseLog("plugin Compose: %s", plugin)
+				kotlincArgs = append(kotlincArgs, "-Xplugin="+plugin)
+			}
+
 			kotlincArgs = append(kotlincArgs, kotlinSources...)
 
 			var kotlinStderr bytes.Buffer
@@ -393,14 +441,9 @@ public final class BuildConfig {
 		var classpath []string
 		classpath = append(classpath, cfg.AndroidJar)
 		classpath = append(classpath, objDir) // Incluir clases de Kotlin ya compiladas
-		libEntries, _ := os.ReadDir(cfg.LibsDir)
-		for _, e := range libEntries {
-			if strings.HasSuffix(e.Name(), ".jar") {
-				classpath = append(classpath, filepath.Join(cfg.LibsDir, e.Name()))
-			}
-		}
+		classpath = append(classpath, cfg.libraryJars()...)
 
-		javacArgs := []string{"-d", objDir, "--release", "8", "-encoding", "UTF-8", "-Xlint:-options",
+		javacArgs := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
 			"-classpath", strings.Join(classpath, ":")}
 		javacArgs = append(javacArgs, sources...)
 
@@ -419,20 +462,32 @@ public final class BuildConfig {
 			if err != nil {
 				return err
 			}
-			if strings.HasSuffix(path, ".class") {
+			if strings.HasSuffix(path, ".class") && !info.IsDir() {
 				classFiles = append(classFiles, path)
 			}
 			return nil
 		}); err != nil {
 			return fmt.Errorf("buscando clases compiladas: %w", err)
 		}
+
+		// Las librerías de AndroidX/Compose deben entrar en el DEX: d8/R8 no
+		// resuelven dependencias transitivas por sí solos. Se aplican incluso
+		// en proyectos Java puros con dependencias.
+		deps := dedupeJarsByClass(cfg.libraryJars(), filepath.Join(cfg.BuildDir, "dedupe"))
+		if len(deps) > 0 {
+			ui.VerboseLog("dex: %d jars de dependencias", len(deps))
+		}
+
 		if len(kotlinSources) > 0 {
 			stdlib := findKotlinStdlib()
 			if stdlib == "" {
 				return fmt.Errorf("se compiló Kotlin pero no se encontró kotlin-stdlib.jar (revisa la instalación de kotlinc)")
 			}
+			// El stdlib debe ser el primero: si alguna dependencia lo duplica,
+			// dedupeJarsByClass conserva esta versión (la del toolchain).
 			classFiles = append(classFiles, stdlib)
 		}
+		classFiles = append(classFiles, deps...)
 
 		dexDir := filepath.Join(cfg.BuildDir, "dex")
 		if err := os.MkdirAll(dexDir, 0755); err != nil {
@@ -483,7 +538,16 @@ public final class BuildConfig {
 	sort.Slice(dexFiles, func(i, j int) bool {
 		return dexNumber(dexFiles[i]) < dexNumber(dexFiles[j])
 	})
-	if err := appendDex(baseApk, dexFiles); err != nil {
+
+	nativeLibs, err := collectNativeLibs(cfg.nativeDir(cfg.Libs))
+	if err != nil {
+		return err
+	}
+	if len(nativeLibs) > 0 {
+		ui.Info("empaquetando %d bibliotecas nativas...", len(nativeLibs))
+	}
+
+	if err := appendDex(baseApk, dexFiles, nativeLibs); err != nil {
 		return err
 	}
 
@@ -592,7 +656,8 @@ func dirExists(path string) bool {
 // appendDex añade todos los classes*.dex al APK base (multidex) preservando
 // el resto de entradas (manifest, resources.arsc...), igual que hace
 // android2apk. No usamos "zip" porque machacaría resources.arsc y su alineado.
-func appendDex(baseApk string, dexFiles []string) error {
+// nativeLibs mapea la ruta dentro del APK (lib/<abi>/x.so) al fichero origen.
+func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string) error {
 	src, err := zip.OpenReader(baseApk)
 	if err != nil {
 		return fmt.Errorf("abriendo APK base: %w", err)
@@ -606,40 +671,34 @@ func appendDex(baseApk string, dexFiles []string) error {
 	}
 
 	writer := zip.NewWriter(out)
+	fail := func(err error) error {
+		_ = writer.Close()
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+
 	for _, file := range src.File {
 		if err := copyZipEntry(writer, file); err != nil {
-			_ = writer.Close()
-			_ = out.Close()
-			_ = os.Remove(tmp)
-			return fmt.Errorf("copiando %s: %w", file.Name, err)
+			return fail(fmt.Errorf("copiando %s: %w", file.Name, err))
 		}
 	}
 
 	for _, dex := range dexFiles {
-		data, err := os.ReadFile(dex)
-		if err != nil {
-			_ = writer.Close()
-			_ = out.Close()
-			_ = os.Remove(tmp)
-			return fmt.Errorf("leyendo %s: %w", dex, err)
+		if err := addFileEntry(writer, filepath.Base(dex), dex); err != nil {
+			return fail(fmt.Errorf("añadiendo %s: %w", dex, err))
 		}
-		header := &zip.FileHeader{
-			Name:     filepath.Base(dex),
-			Method:   zip.Deflate,
-			Modified: time.Now(),
-		}
-		entry, err := writer.CreateHeader(header)
-		if err != nil {
-			_ = writer.Close()
-			_ = out.Close()
-			_ = os.Remove(tmp)
-			return fmt.Errorf("añadiendo %s: %w", dex, err)
-		}
-		if _, err := entry.Write(data); err != nil {
-			_ = writer.Close()
-			_ = out.Close()
-			_ = os.Remove(tmp)
-			return fmt.Errorf("escribiendo %s: %w", dex, err)
+	}
+
+	// Bibliotecas nativas de los AAR: lib/<abi>/x.so (orden determinista).
+	names := make([]string, 0, len(nativeLibs))
+	for name := range nativeLibs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := addFileEntry(writer, name, nativeLibs[name]); err != nil {
+			return fail(fmt.Errorf("añadiendo %s: %w", name, err))
 		}
 	}
 
@@ -653,6 +712,53 @@ func appendDex(baseApk string, dexFiles []string) error {
 		return fmt.Errorf("cerrando archivo APK: %w", err)
 	}
 	return os.Rename(tmp, baseApk)
+}
+
+// addFileEntry escribe un fichero del disco dentro del ZIP con la ruta dada.
+func addFileEntry(writer *zip.Writer, name, src string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	header := &zip.FileHeader{
+		Name:     name,
+		Method:   zip.Deflate,
+		Modified: time.Now(),
+	}
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = entry.Write(data)
+	return err
+}
+
+// collectNativeLibs recorre jni/<abi>/*.so y devuelve un mapa
+// lib/<abi>/<file>.so -> ruta de origen.
+func collectNativeLibs(nativeDir string) (map[string]string, error) {
+	libs := make(map[string]string)
+	if nativeDir == "" {
+		return libs, nil
+	}
+	abis, _ := os.ReadDir(nativeDir)
+	for _, abi := range abis {
+		if !abi.IsDir() {
+			continue
+		}
+		abiDir := filepath.Join(nativeDir, abi.Name())
+		files, err := os.ReadDir(abiDir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".so") {
+				continue
+			}
+			apkPath := filepath.ToSlash(filepath.Join("lib", abi.Name(), f.Name()))
+			libs[apkPath] = filepath.Join(abiDir, f.Name())
+		}
+	}
+	return libs, nil
 }
 
 func copyZipEntry(writer *zip.Writer, file *zip.File) error {
@@ -789,4 +895,68 @@ func findKotlinStdlib() string {
 		}
 	}
 	return ""
+}
+
+// jvmTarget devuelve el target de bytecode: 8 por defecto, 11 si hay Compose
+// (AndroidX Compose se publica con JVM 11 y usa inline de bytecode).
+func (c Config) jvmTarget() int {
+	if c.JVMTarget > 0 {
+		return c.JVMTarget
+	}
+	if c.hasDeps() && len(c.findKotlinSources()) > 0 && c.composePlugin() != "" {
+		return 11
+	}
+	return 8
+}
+
+// composePlugin localiza compose-compiler-plugin.jar (explícito, ~/.rain o la
+// instalación de kotlinc).
+func (c Config) composePlugin() string {
+	if c.ComposePlugin != "" {
+		if fileExists(c.ComposePlugin) {
+			return c.ComposePlugin
+		}
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		os.Getenv("COMPOSE_PLUGIN"),
+		filepath.Join(home, ".rain", "toolchain", "kotlinc", "lib", "compose-compiler-plugin.jar"),
+		filepath.Join(home, "kotlin", "kotlinc", "lib", "compose-compiler-plugin.jar"),
+	}
+	if kotlinc, err := exec.LookPath("kotlinc"); err == nil {
+		if real, err := filepath.EvalSymlinks(kotlinc); err == nil {
+			paths = append(paths, filepath.Join(filepath.Dir(real), "..", "lib", "compose-compiler-plugin.jar"))
+		}
+	}
+	for _, p := range paths {
+		if p != "" && fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// findKotlinSources lista las fuentes .kt del proyecto.
+func (c Config) findKotlinSources() []string {
+	var sources []string
+	_ = filepath.Walk(sourceRoot(c.AppDir), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() && strings.HasSuffix(path, ".kt") {
+			sources = append(sources, path)
+		}
+		return nil
+	})
+	return sources
+}
+
+// kotlinJVMTarget traduce el target numérico al formato de kotlinc: Kotlin 2.x
+// ya no acepta "8" (solo "1.8" y de "9" en adelante).
+func kotlinJVMTarget(target int) string {
+	if target <= 8 {
+		return "1.8"
+	}
+	return strconv.Itoa(target)
 }
