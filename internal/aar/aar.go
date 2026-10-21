@@ -18,6 +18,8 @@ import (
 
 	"github.com/itskreisler/rain/internal/httpx"
 	"github.com/itskreisler/rain/internal/mavenrepo"
+	"github.com/itskreisler/rain/internal/pom"
+	"github.com/itskreisler/rain/internal/ui"
 )
 
 // Repositorios Maven base en orden de prioridad. JitPack se añade por
@@ -33,6 +35,7 @@ type Library struct {
 	ClassJar      string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
 	ResDir        string // res/ del AAR, si tiene recursos
 	Package       string // package del AndroidManifest.xml del AAR (para --extra-packages)
+	ManifestPath  string // AndroidManifest.xml del AAR, extraído a disco para fusionarlo
 	NativeABIs    []string
 	ProguardRules string // ruta a las reglas R8/ProGuard del AAR (proguard.txt), si las trae
 }
@@ -77,6 +80,18 @@ func (s *Set) ExtraPackages() []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Manifests devuelve las rutas de los AndroidManifest.xml de las librerías,
+// para fusionarlos con el de la aplicación.
+func (s *Set) Manifests() []string {
+	var out []string
+	for _, lib := range s.Libraries {
+		if lib.ManifestPath != "" {
+			out = append(out, lib.ManifestPath)
+		}
+	}
 	return out
 }
 
@@ -144,9 +159,67 @@ func (c *Client) prepareOne(coord, dir string) (*Library, error) {
 		if ext == "jar" {
 			return c.prepareJAR(coord, dir, path)
 		}
-		return c.extractAAR(coord, artifact, version, path, dir)
+		lib, err := c.extractAAR(coord, artifact, version, path, dir)
+		if err != nil {
+			return nil, err
+		}
+		// Un AAR sin classes.jar ni res/ es la "cáscara" raíz de un módulo
+		// publicado como Kotlin Multiplatform (Compose 1.7+). El código real vive
+		// en la variante "-android", y el Gradle Module Metadata (.module) lo
+		// indica con "available-at". El POM no lo dice, por eso sin esto el
+		// classpath quedaba sin clases de Compose (errores "unresolved
+		// reference 'compose'" en tiempo de compilación Kotlin).
+		if lib.ClassJar == "" && lib.ResDir == "" {
+			if redirected, rerr := c.prepareAndroidVariant(coord, dir); rerr == nil {
+				return redirected, nil
+			} else {
+				ui.VerboseLog("sin variante Android para %s: %v", coord, rerr)
+			}
+		}
+		return lib, nil
 	}
 	return nil, fmt.Errorf("no se encontró AAR ni JAR para %s", coord)
+}
+
+// prepareAndroidVariant resuelve la variante Android real de un artefacto KMP
+// raíz (cáscara vacía) a partir del Gradle Module Metadata y la prepara como
+// una librería normal.
+func (c *Client) prepareAndroidVariant(coord, dir string) (*Library, error) {
+	target, err := c.androidVariantTarget(coord, dir)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(target, ":")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("coordenada de variante inválida: %s", target)
+	}
+	if path, err := c.download(target, dir, "aar"); err == nil {
+		return c.extractAAR(target, parts[1], parts[2], path, dir)
+	}
+	// Algunas variantes Android se publican como JAR plano.
+	path, err := c.download(target, dir, "jar")
+	if err != nil {
+		return nil, fmt.Errorf("no se encontró AAR ni JAR para la variante %s: %w", target, err)
+	}
+	return c.prepareJAR(target, dir, path)
+}
+
+// androidVariantTarget busca en el Gradle Module Metadata del artefacto la
+// variante Android y devuelve la coordenada real a la que apunta.
+func (c *Client) androidVariantTarget(coord, dir string) (string, error) {
+	mdPath, err := pom.DownloadModuleMetadata(coord, filepath.Join(dir, "metadata"))
+	if err != nil {
+		return "", err
+	}
+	md, err := pom.ParseModuleMetadata(mdPath)
+	if err != nil {
+		return "", err
+	}
+	target := md.AndroidTargetCoord()
+	if target == "" || target == coord {
+		return "", fmt.Errorf("el metadata de %s no apunta a otra variante", coord)
+	}
+	return target, nil
 }
 
 // prepareJAR prepara un JAR plano. Si el JAR es un stub de Kotlin Multiplatform
@@ -210,6 +283,11 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 			lastErr = err
 			continue
 		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("%s devolvió HTTP %d", url, resp.StatusCode)
+			continue
+		}
 		tmp := dest + ".tmp"
 		f, err := os.Create(tmp)
 		if err != nil {
@@ -242,6 +320,20 @@ func (c *Client) httpClient() *httpx.Client {
 		}
 	}
 	return c.client
+}
+
+// ExtractAAR extrae un AAR que ya está en disco (sin descargarlo) y devuelve
+// la librería preparada: clases, recursos, manifiesto, JNI y reglas de R8.
+//
+// Se exporta para poder ejercitar el pipeline completo con AAR de prueba sin
+// depender de la red (los tests de integración construyen una librería
+// sintética estilo AppCompat y la compilan dentro de un APK real).
+func ExtractAAR(aarPath, coord, dir string) (*Library, error) {
+	artifact, version := "lib", "0"
+	if parts := strings.SplitN(coord, ":", 3); len(parts) == 3 {
+		artifact, version = parts[1], parts[2]
+	}
+	return (&Client{}).extractAAR(coord, artifact, version, aarPath, dir)
 }
 
 func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Library, error) {
@@ -281,6 +373,13 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 				// Solo importa si el AAR trae código: su bytecode referencia su R.
 				lib.Package = string(match[1])
 			}
+			// Se extrae a disco para poder fusionar los permisos y los
+			// componentes que declara la librería con los de la app.
+			manifestDest := filepath.Join(dir, "manifests", artifact+"-"+version+".xml")
+			if err := extractFile(f, manifestDest); err != nil {
+				return nil, err
+			}
+			lib.ManifestPath = manifestDest
 		case strings.HasPrefix(f.Name, "jni/") && strings.HasSuffix(f.Name, ".so"):
 			rel := strings.TrimPrefix(f.Name, "jni/")
 			dest := filepath.Join(dir, "jni", rel)

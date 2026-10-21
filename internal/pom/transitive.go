@@ -26,8 +26,20 @@ func (d ResolvedDep) Coordinate() string {
 // grafo de AndroidX trae artefactos antiguos/no publicados que no aportan nada.
 func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error) {
 	resolved := make(map[string]ResolvedDep) // key: group:artifact
+	order := make([]string, 0, 16)           // claves en orden de descubrimiento
 	visited := make(map[string]bool)         // key: group:artifact:version
 	skipped := make(map[string]bool)         // coordenadas omitidas
+
+	// record guarda la dependencia conservando el orden de descubrimiento.
+	// Iterar el mapa directamente daría un orden aleatorio en cada ejecución:
+	// el classpath cambiaría de un build al siguiente y el DEX saldría
+	// distinto, rompiendo la reproducibilidad del APK.
+	record := func(key string, dep ResolvedDep) {
+		if _, ok := resolved[key]; !ok {
+			order = append(order, key)
+		}
+		resolved[key] = dep
+	}
 
 	var walk func(coord string, depth int) error
 	walk = func(coord string, depth int) error {
@@ -131,10 +143,10 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			// Highest wins: si ya existe, comparar versiones
 			if existing, ok := resolved[key]; ok {
 				if versionLess(existing.Version, dep.Version) {
-					resolved[key] = ResolvedDep{dep.GroupID, dep.ArtifactID, dep.Version}
+					record(key, ResolvedDep{dep.GroupID, dep.ArtifactID, dep.Version})
 				}
 			} else {
-				resolved[key] = ResolvedDep{dep.GroupID, dep.ArtifactID, dep.Version}
+				record(key, ResolvedDep{dep.GroupID, dep.ArtifactID, dep.Version})
 			}
 
 			// Recursión
@@ -147,7 +159,7 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		if coord != rootCoord {
 			key := moduleKey(group, artifact)
 			if existing, ok := resolved[key]; !ok || versionLess(existing.Version, version) {
-				resolved[key] = ResolvedDep{group, artifact, version}
+				record(key, ResolvedDep{group, artifact, version})
 			}
 		}
 
@@ -158,10 +170,10 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		return nil, err
 	}
 
-	// Convertir mapa a slice
-	var out []ResolvedDep
-	for _, d := range resolved {
-		out = append(out, d)
+	// Convertir a slice respetando el orden de descubrimiento.
+	out := make([]ResolvedDep, 0, len(order))
+	for _, key := range order {
+		out = append(out, resolved[key])
 	}
 	return out, nil
 }

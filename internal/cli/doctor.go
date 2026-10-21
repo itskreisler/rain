@@ -19,6 +19,7 @@ func newDoctorCmd() *cobra.Command {
 		jsonOut      bool
 		printInstall bool
 		fix          bool
+		lintTools    bool
 	)
 
 	cmd := &cobra.Command{
@@ -29,7 +30,9 @@ func newDoctorCmd() *cobra.Command {
 			"completar la instalación.\n\n" +
 			"Perfiles:\n" +
 			"  simple   Java + recursos, sin Kotlin ni AndroidX\n" +
-			"  complex  Kotlin + Compose + AndroidX (R8 y Kotlin modernos)",
+			"  complex  Kotlin + Compose + AndroidX (R8 y Kotlin modernos)\n\n" +
+			"ktlint y detekt aparecen como opcionales: no hacen falta para\n" +
+			"compilar, pero " + "\"rain lint\"" + " los usa si están instalados.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := doctor.ParseProfile(profile)
@@ -40,6 +43,11 @@ func newDoctorCmd() *cobra.Command {
 			if fix {
 				if err := runDoctorFix(cmd, p); err != nil {
 					return err
+				}
+				if lintTools {
+					if err := runDoctorFixLint(cmd); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -69,8 +77,25 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "salida en JSON")
 	cmd.Flags().BoolVar(&printInstall, "print-install", false, "mostrar solo los comandos de instalación")
 	cmd.Flags().BoolVar(&fix, "fix", false, "descargar el toolchain propio en ~/.rain (sin root)")
+	cmd.Flags().BoolVar(&lintTools, "lint", false, "con --fix, descargar también los analizadores estáticos (ktlint, detekt)")
 
 	return cmd
+}
+
+// runDoctorFixLint descarga los analizadores estáticos opcionales.
+func runDoctorFixLint(cmd *cobra.Command) error {
+	manager, err := toolchain.New()
+	if err != nil {
+		return err
+	}
+	manager.Out = cmd.OutOrStdout()
+
+	ui.Info("Descargando analizadores estáticos (ktlint, detekt)...")
+	if err := manager.EnsureLint(cmd.Context()); err != nil {
+		return fmt.Errorf("descargando analizadores estáticos: %w", err)
+	}
+	ui.Success("Analizadores estáticos listos")
+	return nil
 }
 
 func runDoctorFix(cmd *cobra.Command, profile doctor.Profile) error {

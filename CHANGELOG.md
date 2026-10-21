@@ -12,9 +12,96 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **`rain check`: comprobación de tipos sin generar APK.** Compila el código
+  (Kotlin y Java) con el mismo `android.jar`, el mismo classpath y el mismo
+  plugin de Compose que `rain build`, y se detiene ahí: sin DEX, sin
+  empaquetado y sin firma. Es la única forma de detectar errores como
+  `unresolved reference 'setContentTitle'` sin pagar un build completo, porque
+  esos errores son del compilador y ningún linter de estilo los ve.
+  - `rain check --fast` hace el chequeo incremental: solo recompila los
+    ficheros modificados desde la última compilación correcta (y los que
+    dependen de ellos, detectados por las declaraciones que mencionan)
+    contra las clases ya compiladas. Es más rápido, pero menos exhaustivo: un
+    error en un fichero que no se recompila puede no aparecer.
+- **`rain lint`: analizadores estáticos opcionales.** Ejecuta ktlint, detekt y
+  pmd sobre las fuentes y agrupa los avisos por fichero, con un resumen por
+  herramienta. Se configura con la sección `[lint]` de `rain.toml`
+  (`tools`, `fail_on`, `type_resolution`) o con los flags `--tools`,
+  `--fail-on` y `--type-resolution`. La resolución de tipos de detekt viene
+  desactivada por defecto: con el compilador de Kotlin embebido provoca un
+  `NullPointerException` interno (`PrimitiveTypeUtil.unsignedType`).
+- **ktlint y detekt en `rain doctor`.** Aparecen como comprobaciones
+  opcionales (no bloquean el estado `Ready`) y se descargan con
+  `rain doctor --fix --lint` o con `rain lint --install`; quedan en
+  `~/.rain/toolchain` (ktlint 1.8.0 y detekt 1.23.8).
+- **Caché de dependencias preparadas.** El conjunto de AAR/JAR ya extraídos se
+  guarda en `.rain-deps/.rain-deps.json` junto con el hash de sus
+  coordenadas. Si las dependencias no han cambiado, la siguiente ejecución los
+  reutiliza en lugar de volver a descargarlos y extraerlos: en un proyecto con
+  Compose son decenas de artefactos y se ahorran entre 8 y 14 s por
+  ejecución.
 - Repositorios Maven por coordenada: JitPack se consulta solo para grupos
   `com.github.*`/`io.github.*`, y `[repositories].extra` en `rain.toml` permite
   declarar repos de terceros sin afectar al resto de builds.
+- Test de integración que compila y firma un APK real con una librería AndroidX
+  sintética y verifica el manifiesto fusionado, la tabla de recursos y el dex
+  (`internal/build/integration_test.go`).
+
+### Corregido
+
+- **Un APK con `classes.dex` duplicado hacía fallar la firma.** El APK base se
+  reutiliza cuando los recursos no cambian, y tras empaquetarlo ya contenía
+  el `classes.dex` y las librerías nativas. Al empaquetar de nuevo, esas
+  entradas se copiaban *y* se añadían otra vez, así que el APK acababa con
+  dos `classes.dex` y `apksigner` lo rechazaba con `Multiple ZIP entries with
+  the same name: classes.dex` (reproducible con `examples/neko` al recompilar
+  sin tocar los recursos). Ahora `appendDex` omite del APK base las entradas
+  que va a añadir, de modo que el empaquetado es idempotente
+  (tests en `internal/build/packaging_test.go`).
+- **El classpath podía contaminarse con artefactos rancios del caché.** Al
+  resolver dependencias, `libraryJars()` metía en el classpath *todos* los jars
+  encontrados en el caché local, no solo los del conjunto resuelto. Bastaba un
+  jar antiguo con contenido distinto en el caché para que el APK cambiase entre
+  builds supposedamente idénticos. Ahora, cuando hay dependencias resueltas, el
+  classpath sale exclusivamente de ese conjunto. Con el fallo, el hash del APK
+  de `JetIsland_Dynamic-Island-Jetpack-Compose` pasaba de
+  `cac4405bc08276ded203550d1d7d3d027bec1810dc3637f011b7202109612323` a
+  `5ea858fe…`; con el arreglo, el hash vuelve a ser estable.
+- **La fusión de manifests dejaba prefijos sin enlazar.** Los fragmentos
+  copiados de las librerías conservaban sus atributos con prefijo (por ejemplo
+  `tools:node="merge"` de AndroidX Startup) pero no la declaración
+  `xmlns:tools`, que solo vivía en el manifest de la librería. El manifest
+  fusionado quedaba mal formado y **aapt2 rechazaba el build** con
+  `unbound prefix` (reproducible con `examples/compose` y `examples/neko`).
+  Ahora los namespaces que usan los fragmentos copiados se declaran en el
+  elemento raíz del manifest fusionado.
+- **Las variantes Android de los módulos KMP se perdían.** La búsqueda de la
+  variante Android en el Gradle Module Metadata (`.module`) solo aceptaba el
+  atributo `org.gradle.jvm.environment`, que no todos los módulos publican.
+  `androidx.compose.material:material-icons-core:1.7.8`, por ejemplo, identifica
+  su variante Android solo con `org.jetbrains.kotlin.platform.type=androidJvm`
+  y con el módulo al que apunta (`material-icons-core-android`). Resultado: la
+  raíz KMP se quedaba como AAR "cáscara" (sin clases) y kotlinc fallaba con
+  `unresolved reference 'Icons'`. Ahora la variante Android se reconoce por
+  cualquiera de los tres indicios, sin dejar de preferir la que declara el
+  entorno (tests en `internal/pom/module_test.go`).
+- `rain doctor` ya no mostraba la ruta de una versión como válida cuando el
+  comando fallaba al ejecutarse (`runVersion`).
+
+### Cambiado
+
+- El hash de las fuentes compiladas se guarda **después** de compilar, no
+  después de generar el DEX. Así un `rain check` posterior puede saltarse el
+  trabajo si el código no ha cambiado, y un `rain build` reutiliza la
+  compilación en lugar de repetirla.
+- `javaTarget` por defecto 17 (el mismo valor que usa AGP); se admiten 8, 11,
+  17 y 21.
+
+### Eliminado
+
+- Código muerto: el paquete `internal/resolver` (`DownloadAAR`/
+  `DownloadArtifact`, sin ningún importador) y `Project.EffectiveProperties`
+  (obsoleto frente a `MergeProperties`).
 
 ## [0.1.0] - 2026-10-21
 

@@ -21,6 +21,14 @@ const (
 
 	KotlinVersion = "2.4.21"
 	KotlinURL     = "https://github.com/JetBrains/kotlin/releases/download/v" + KotlinVersion + "/kotlin-compiler-" + KotlinVersion + ".zip"
+
+	// Analizadores estáticos opcionales para "rain lint". No hacen falta para
+	// compilar: ktlint revisa el estilo de Kotlin y detekt los "code smells".
+	KtlintVersion = "1.8.0"
+	KtlintURL     = "https://repo1.maven.org/maven2/com/pinterest/ktlint/ktlint-cli/" + KtlintVersion + "/ktlint-cli-" + KtlintVersion + "-all.jar"
+
+	DetektVersion = "1.23.8"
+	DetektURL     = "https://github.com/detekt/detekt/releases/download/v" + DetektVersion + "/detekt-cli-" + DetektVersion + "-all.jar"
 )
 
 // Manager gestiona el toolchain propio de Rain en ~/.rain, sin root.
@@ -50,6 +58,12 @@ func (m *Manager) ApksignerJar() string {
 	return filepath.Join(m.ToolDir(), "apksigner.jar")
 }
 func (m *Manager) Kotlinc() string { return filepath.Join(m.ToolDir(), "kotlinc", "bin", "kotlinc") }
+func (m *Manager) KtlintJar() string {
+	return filepath.Join(m.ToolDir(), "ktlint-cli.jar")
+}
+func (m *Manager) DetektJar() string {
+	return filepath.Join(m.ToolDir(), "detekt-cli.jar")
+}
 func (m *Manager) ComposePlugin() string {
 	return filepath.Join(m.ToolDir(), "kotlinc", "lib", "compose-compiler-plugin.jar")
 }
@@ -85,6 +99,36 @@ func (m *Manager) Ensure(ctx context.Context, complex bool) error {
 	}
 
 	return m.writeWrappers(complex)
+}
+
+// EnsureLint descarga los analizadores estáticos opcionales (ktlint y detekt)
+// en el toolchain de Rain. No son necesarios para compilar: solo los usa
+// "rain lint".
+func (m *Manager) EnsureLint(ctx context.Context) error {
+	if err := os.MkdirAll(m.ToolDir(), 0o755); err != nil {
+		return err
+	}
+	if err := m.ensureKtlint(ctx); err != nil {
+		return fmt.Errorf("ktlint: %w", err)
+	}
+	if err := m.ensureDetekt(ctx); err != nil {
+		return fmt.Errorf("detekt: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ensureKtlint(ctx context.Context) error {
+	if fileExists(m.KtlintJar()) {
+		return nil
+	}
+	return m.download(ctx, KtlintURL, m.KtlintJar(), "ktlint "+KtlintVersion)
+}
+
+func (m *Manager) ensureDetekt(ctx context.Context) error {
+	if fileExists(m.DetektJar()) {
+		return nil
+	}
+	return m.download(ctx, DetektURL, m.DetektJar(), "detekt "+DetektVersion)
 }
 
 func (m *Manager) ensureR8(ctx context.Context) error {
@@ -144,17 +188,59 @@ func (m *Manager) ensureKotlin(ctx context.Context) error {
 	return extractPrefix(tmp, "kotlinc/", dest)
 }
 
+// writeWrappers crea los scripts lanzadores de las herramientas de Java.
+//
+// El heap de la JVM se acota con RAIN_JAVA_MAX_HEAP porque, por defecto, la
+// JVM reserva 1/4 de la RAM física: en un contenedor con 2 GB libres y 12 GB de
+// máquina eso significa 3 GB reservados y un OOM killer del kernel.
+//
+//	RAIN_JAVA_MAX_HEAP=1g   fija el heap de todas las herramientas
+//	RAIN_JAVA_OPTS="..."    opciones extra (p. ej. -XX:+UseSerialGC)
+//
+// RefreshWrappers reescribe los lanzadores de ~/.rain/bin cuando su contenido
+// ha cambiado. Se llama en cada ejecución de Rain para que una actualización
+// aplique los nuevos ajustes (heap de la JVM, variables de entorno) sin
+// obligar a ejecutar "rain doctor --fix".
+func (m *Manager) RefreshWrappers() error {
+	return m.writeWrappers(true)
+}
+
 func (m *Manager) writeWrappers(complex bool) error {
 	wrappers := map[string]string{
-		"d8":        "#!/bin/sh\nexec java -Xmx1g -cp \"$HOME/.rain/toolchain/r8.jar\" com.android.tools.r8.D8 \"$@\"\n",
-		"apksigner": "#!/bin/sh\nexec java -Xmx512m -jar \"$HOME/.rain/toolchain/apksigner.jar\" \"$@\"\n",
+		"d8": "#!/bin/sh\n" +
+			"# Lanzador de Rain para d8 (R8).\n" +
+			"exec java -Xmx\"${RAIN_JAVA_MAX_HEAP:-1g}\" ${RAIN_JAVA_OPTS:-} " +
+			"-cp \"$HOME/.rain/toolchain/r8.jar\" com.android.tools.r8.D8 \"$@\"\n",
+		"apksigner": "#!/bin/sh\n" +
+			"# Lanzador de Rain para apksigner.\n" +
+			"exec java -Xmx\"${RAIN_JAVA_MAX_HEAP:-512m}\" ${RAIN_JAVA_OPTS:-} " +
+			"-jar \"$HOME/.rain/toolchain/apksigner.jar\" \"$@\"\n",
 	}
 	if complex {
-		wrappers["kotlinc"] = "#!/bin/sh\nexec \"$HOME/.rain/toolchain/kotlinc/bin/kotlinc\" \"$@\"\n"
+		// kotlinc ya respeta JAVA_OPTS y JAVA_TOOL_OPTIONS por su cuenta. Aquí
+		// solo se traducen las opciones propias de Rain al formato -J que
+		// espera el lanzador de Kotlin.
+		wrappers["kotlinc"] = "#!/bin/sh\n" +
+			"# Lanzador de Rain para kotlinc.\n" +
+			"opts=\"\"\n" +
+			"for opt in ${RAIN_JAVA_OPTS:-}; do\n" +
+			"\topts=\"$opts -J$opt\"\n" +
+			"done\n" +
+			"if [ -n \"${RAIN_JAVA_MAX_HEAP:-}\" ]; then\n" +
+			"\topts=\"$opts -J-Xmx$RAIN_JAVA_MAX_HEAP\"\n" +
+			"fi\n" +
+			"exec \"$HOME/.rain/toolchain/kotlinc/bin/kotlinc\" $opts \"$@\"\n"
+	}
+
+	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
+		return err
 	}
 
 	for name, content := range wrappers {
 		path := filepath.Join(m.BinDir(), name)
+		if current, err := os.ReadFile(path); err == nil && string(current) == content {
+			continue
+		}
 		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 			return err
 		}

@@ -69,6 +69,13 @@ func newBuildCmd() *cobra.Command {
 }
 
 func runBuild(androidJar string, release, allowDebugSigning bool) error {
+	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false)
+}
+
+// runBuildOrCheck compila el proyecto. Con checkOnly solo valida los tipos
+// (compile Kotlin y Java) y no genera DEX, APK ni firma. Con fast el chequeo
+// es incremental: solo recompila lo que ha cambiado.
+func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
@@ -116,6 +123,8 @@ func runBuild(androidJar string, release, allowDebugSigning bool) error {
 			JVMTarget:         bc.JavaTarget,
 			Libs:              libs,
 			AllowDebugSigning: allowDebugSigning,
+			CheckOnly:         checkOnly,
+			FastCheck:         fast,
 		}
 		if libs != nil {
 			bcfg.DepsDir = libs.Dir
@@ -237,6 +246,14 @@ func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
 
 // prepareAARSet descarga y prepara cada coordenada (AAR o JAR) en dir.
 func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
+	// Si las dependencias ya estaban preparadas y no han cambiado, se
+	// reutilizan: extraer decenas de AAR de Compose cuesta varios segundos
+	// en cada build y no aporta nada si el resultado es el mismo.
+	if set, ok := aar.LoadCache(dir, coords); ok {
+		ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
+		return set, nil
+	}
+
 	pb := ui.NewProgressBar(len(coords), "Preparando ")
 	set := &aar.Set{Dir: dir}
 	client := aar.NewClient()
@@ -259,12 +276,21 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	if failures > 0 {
 		ui.Warn("%d dependencias no se pudieron preparar", failures)
 	}
+	if err := aar.SaveCache(dir, set, coords); err != nil {
+		ui.VerboseLog("no se pudo guardar la caché de dependencias: %v", err)
+	}
 	return set, nil
 }
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
 func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error {
+	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false)
+}
+
+// runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
+// los tipos del código (y con fast, solo lo modificado).
+func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolviendo %s: %w", dir, err)
@@ -283,7 +309,7 @@ func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error 
 			return fmt.Errorf("entrando en %s: %w", absDir, err)
 		}
 		defer func() { _ = os.Chdir(previous) }()
-		return runBuild(androidJar, release, allowDebugSigning)
+		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast)
 	}
 
 	if _, err := os.Stat(filepath.Join(absDir, "src/main/AndroidManifest.xml")); err != nil {
@@ -326,6 +352,8 @@ func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error 
 		JVMTarget:         s.JavaTarget,
 		AppName:           name,
 		AllowDebugSigning: allowDebugSigning,
+		CheckOnly:         checkOnly,
+		FastCheck:         fast,
 	}
 	return build.Run(bcfg)
 }

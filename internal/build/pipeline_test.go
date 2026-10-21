@@ -403,18 +403,40 @@ func TestAppliesComposePluginRequiresPluginAndUsage(t *testing.T) {
 	if cfg.appliesComposePlugin() {
 		t.Error("appliesComposePlugin() = true con Kotlin sin Compose")
 	}
-	if got := cfg.jvmTarget(); got != 8 {
-		t.Errorf("jvmTarget() = %d, quiero 8 sin Compose", got)
-	}
 
-	// Con Compose y plugin presente: se aplica y sube a 11.
+	// Con Compose y plugin presente: se aplica.
 	writeFile(t, filepath.Join(app, "java", "com", "x", "Ui.kt"),
 		"package com.x\nimport androidx.compose.runtime.Composable\n@Composable fun Ui() {}\n")
 	if !cfg.appliesComposePlugin() {
 		t.Error("appliesComposePlugin() = false con Compose y plugin presente")
 	}
-	if got := cfg.jvmTarget(); got != 11 {
-		t.Errorf("jvmTarget() = %d, quiero 11 con Compose", got)
+}
+
+func TestJVMTargetPorDefectoEs17(t *testing.T) {
+	// AGP moderno compila a Java 17: ese es el nivel por defecto de Rain,
+	// tanto para proyectos Java como para los de Compose.
+	cfg := Config{}
+	if got := cfg.jvmTarget(); got != 17 {
+		t.Errorf("jvmTarget() = %d, quiero 17 por defecto", got)
+	}
+
+	// java_target explícito manda.
+	cfg = Config{JVMTarget: 8}
+	if got := cfg.jvmTarget(); got != 8 {
+		t.Errorf("jvmTarget() = %d, quiero 8 con java_target=8", got)
+	}
+}
+
+func TestValidateJVMTarget(t *testing.T) {
+	for _, valid := range []int{0, 8, 11, 17, 21} {
+		if err := ValidateJVMTarget(valid); err != nil {
+			t.Errorf("ValidateJVMTarget(%d) = %v, quiero nil", valid, err)
+		}
+	}
+	for _, invalid := range []int{1, 9, 16, 25, 100} {
+		if err := ValidateJVMTarget(invalid); err == nil {
+			t.Errorf("ValidateJVMTarget(%d) = nil, quiero error", invalid)
+		}
 	}
 }
 

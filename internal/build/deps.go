@@ -15,6 +15,11 @@ import (
 // JAR sueltos preparados en DepsDir, más los .jar de LibsDir. Cuando hay un set
 // de dependencias (Libs) se usa su lista explícita, que incluye tanto los
 // classes.jar (en jars/) como los .jar que van directamente en aars/.
+//
+// Cuando hay set, NO se recorre DepsDir: el caché conserva artefactos de
+// resoluciones anteriores (versiones viejas que ya no están en el grafo) y
+// metarlos en el classpath haría que el APK dependiera del historial de la
+// caché y no solo de las dependencias resueltas.
 func (c Config) libraryJars() []string {
 	jars := make(map[string]bool)
 	var out []string
@@ -41,7 +46,9 @@ func (c Config) libraryJars() []string {
 		}
 	}
 
-	if c.DepsDir != "" {
+	// Sin set explícito solo queda el directorio de dependencias como fuente
+	// de jars (modo simple con un libs/ prepopulado).
+	if c.Libs == nil && c.DepsDir != "" {
 		jarDir := filepath.Join(c.DepsDir, "jars")
 		if entries, err := os.ReadDir(jarDir); err == nil {
 			for _, e := range entries {
@@ -80,6 +87,18 @@ func (c Config) prepareLibraryResources(libs *aar.Set) (string, []string, error)
 		return "", nil, err
 	}
 	return merged, libs.ExtraPackages(), nil
+}
+
+// libraryResourceInputs devuelve las rutas de los recursos y de los manifests
+// de las librerías. Entran en el hash incremental de recursos: si cambian,
+// el APK base (resources.arsc y manifest fusionado) debe rehacerse.
+func (c Config) libraryResourceInputs() []string {
+	if c.Libs == nil {
+		return nil
+	}
+	out := c.Libs.ResDirs()
+	out = append(out, c.Libs.Manifests()...)
+	return out
 }
 
 // nativeDir devuelve el directorio con lib/<abi>/*.so de los AAR, o "".
