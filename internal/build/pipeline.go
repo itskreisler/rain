@@ -134,6 +134,28 @@ func computeResourceHash(appDir string) (string, error) {
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
 }
 
+// collectJavaSources devuelve todas las rutas .java bajo root (recursivo).
+// Un root inexistente devuelve (nil, nil): no tener fuentes es válido.
+func collectJavaSources(root string) ([]string, error) {
+	var sources []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".java") {
+			sources = append(sources, path)
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
 func computeJavaHash(appDir, libsDir, genDir string, release bool) (string, error) {
 	var files []string
 	if err := filepath.Walk(sourceRoot(appDir), func(path string, info os.FileInfo, err error) error {
@@ -371,6 +393,33 @@ public final class BuildConfig {
 			return fmt.Errorf("creando directorio de objetos: %w", err)
 		}
 
+		// --- Compilar el Java generado (R.java, BuildConfig.java) primero ---
+		// Así las clases generadas quedan en objDir y son visibles tanto desde
+		// el código Kotlin (que se compila después con objDir en el classpath)
+		// como desde el Java de la app.
+		generatedSources, err := collectJavaSources(genDir)
+		if err != nil {
+			return fmt.Errorf("buscando fuentes generadas: %w", err)
+		}
+		if len(generatedSources) > 0 {
+			var genClasspath []string
+			genClasspath = append(genClasspath, cfg.AndroidJar)
+			genClasspath = append(genClasspath, cfg.libraryJars()...)
+			genArgs := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
+				"-classpath", strings.Join(genClasspath, ":")}
+			genArgs = append(genArgs, generatedSources...)
+
+			var genErr bytes.Buffer
+			genCmd := exec.Command("javac", genArgs...)
+			genCmd.Stdout = os.Stdout
+			genCmd.Stderr = &genErr
+			if err := genCmd.Run(); err != nil {
+				ui.Error("Errores de compilación Java (generado):")
+				fmt.Println(genErr.String())
+				return fmt.Errorf("javac falló")
+			}
+		}
+
 		// --- Compilar Kotlin (si hay archivos .kt) ---
 		var kotlinSources []string
 		if err := filepath.Walk(sourceRoot(cfg.AppDir), func(path string, info os.FileInfo, err error) error {
@@ -393,6 +442,9 @@ public final class BuildConfig {
 			var kotlinClasspath []string
 			kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
 			kotlinClasspath = append(kotlinClasspath, cfg.libraryJars()...)
+			// objDir contiene R.class/BuildConfig.class ya compilados, para que
+			// el código Kotlin pueda referenciar R y BuildConfig.
+			kotlinClasspath = append(kotlinClasspath, objDir)
 			kotlinClasspath = append(kotlinClasspath, genDir)
 
 			kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
@@ -422,47 +474,31 @@ public final class BuildConfig {
 		}
 
 		ui.Info("compilando Java...")
-		var sources []string
-		if err := filepath.Walk(sourceRoot(cfg.AppDir), func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if strings.HasSuffix(path, ".java") {
-				sources = append(sources, path)
-			}
-			return nil
-		}); err != nil && !os.IsNotExist(err) {
+		appSources, err := collectJavaSources(sourceRoot(cfg.AppDir))
+		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("buscando fuentes Java: %w", err)
 		}
-		if err := filepath.Walk(genDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
+
+		// Fuentes de la app. objDir ya contiene las clases generadas y las de
+		// Kotlin, así que Java puede referenciarlas (y viceversa).
+		if len(appSources) > 0 {
+			var classpath []string
+			classpath = append(classpath, cfg.AndroidJar)
+			classpath = append(classpath, objDir)
+			classpath = append(classpath, cfg.libraryJars()...)
+			args := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
+				"-classpath", strings.Join(classpath, ":")}
+			args = append(args, appSources...)
+
+			var stderrBuf bytes.Buffer
+			cmd := exec.Command("javac", args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = &stderrBuf
+			if err := cmd.Run(); err != nil {
+				ui.Error("Errores de compilación Java:")
+				fmt.Println(stderrBuf.String())
+				return fmt.Errorf("javac falló")
 			}
-			if strings.HasSuffix(path, ".java") {
-				sources = append(sources, path)
-			}
-			return nil
-		}); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("buscando fuentes generadas: %w", err)
-		}
-
-		var classpath []string
-		classpath = append(classpath, cfg.AndroidJar)
-		classpath = append(classpath, objDir) // Incluir clases de Kotlin ya compiladas
-		classpath = append(classpath, cfg.libraryJars()...)
-
-		javacArgs := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
-			"-classpath", strings.Join(classpath, ":")}
-		javacArgs = append(javacArgs, sources...)
-
-		var stderrBuf bytes.Buffer
-		cmd := exec.Command("javac", javacArgs...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = &stderrBuf
-		if err := cmd.Run(); err != nil {
-			ui.Error("Errores de compilación Java:")
-			fmt.Println(stderrBuf.String())
-			return fmt.Errorf("javac falló")
 		}
 
 		var classFiles []string
@@ -502,6 +538,7 @@ public final class BuildConfig {
 			return fmt.Errorf("creando directorio dex: %w", err)
 		}
 
+		var cmd *exec.Cmd
 		if cfg.Release {
 			ui.Info("generando DEX con R8 (release)...")
 			d8Jar := findD8Jar()

@@ -398,3 +398,56 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestDedupeCoordinates(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "highest wins conserva orden",
+			in: []string{
+				"androidx.core:core:1.7.0",
+				"androidx.lifecycle:lifecycle-runtime:2.3.1",
+				"androidx.core:core:1.13.1",
+				"androidx.lifecycle:lifecycle-runtime:2.6.2",
+				"androidx.viewpager2:viewpager2:1.1.0",
+			},
+			want: []string{
+				"androidx.core:core:1.13.1",
+				"androidx.lifecycle:lifecycle-runtime:2.6.2",
+				"androidx.viewpager2:viewpager2:1.1.0",
+			},
+		},
+		{
+			name: "variantes -android/-jvm colapsan",
+			in: []string{
+				"androidx.lifecycle:lifecycle-runtime-android:2.6.1",
+				"androidx.lifecycle:lifecycle-runtime-jvm:2.6.2",
+			},
+			want: []string{
+				"androidx.lifecycle:lifecycle-runtime-jvm:2.6.2",
+			},
+		},
+		{
+			name: "formato inesperado se conserva",
+			in:   []string{"paquete-raro", "androidx.core:core:1.9.0"},
+			want: []string{"paquete-raro", "androidx.core:core:1.9.0"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DedupeCoordinates(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("DedupeCoordinates() = %v, quiero %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] = %q, quiero %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}

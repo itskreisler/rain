@@ -166,6 +166,50 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 	return out, nil
 }
 
+// DedupeCoordinates reduce una lista de coordenadas "grupo:artefacto:versión"
+// a una sola versión por módulo, conservando la más alta. Es el paso de
+// "highest wins" global: cada dependencia declarada se resuelve por separado,
+// así que la unión puede traer varias versiones del mismo artefacto (p. ej.
+// androidx.core 1.7.0/1.9.0/1.12.0/1.13.1). Dejar todas en el classpath hace
+// que kotlinc/javac vean clases contradictorias y fallen, así que se colapsan
+// aquí. Se conserva el orden de primera aparición de cada módulo.
+func DedupeCoordinates(coords []string) []string {
+	best := make(map[string]string) // moduleKey -> coordenada ganadora
+	order := make([]string, 0, len(coords))
+	for _, coord := range coords {
+		parts := strings.SplitN(coord, ":", 3)
+		if len(parts) != 3 {
+			// Coordenada con formato inesperado: se conserva sin tocar.
+			order = append(order, coord)
+			continue
+		}
+		group, artifact, version := parts[0], parts[1], parts[2]
+		key := moduleKey(group, artifact)
+		existing, ok := best[key]
+		if !ok {
+			best[key] = coord
+			order = append(order, key)
+			continue
+		}
+		existingParts := strings.SplitN(existing, ":", 3)
+		if len(existingParts) == 3 && versionLess(existingParts[2], version) {
+			best[key] = coord
+		}
+	}
+
+	out := make([]string, 0, len(order))
+	for _, key := range order {
+		if coord, ok := best[key]; ok {
+			out = append(out, coord)
+			delete(best, key)
+		} else {
+			// Caso de formato inesperado conservado tal cual.
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
 // moduleKey normaliza el nombre de artefacto de un módulo a su forma base,
 // eliminando el sufijo de variante de publicación de AndroidX/Maven
 // (-android, -jvm). Así `lifecycle-runtime`, `lifecycle-runtime-android` y

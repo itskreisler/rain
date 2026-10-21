@@ -13,6 +13,7 @@ import (
 	"github.com/itskreisler/rain/internal/build"
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/doctor"
+	"github.com/itskreisler/rain/internal/mavenrepo"
 	"github.com/itskreisler/rain/internal/pom"
 	"github.com/itskreisler/rain/internal/ui"
 )
@@ -73,6 +74,8 @@ func runBuild(androidJar string, release, allowDebugSigning bool) error {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
 	}
 
+	mavenrepo.ExtraRepositories = cfg.Repositories.Extra
+
 	var libs *aar.Set
 	if len(cfg.Dependencies) > 0 {
 		ui.Info("Resolviendo y descargando dependencias...")
@@ -96,19 +99,21 @@ func runBuild(androidJar string, release, allowDebugSigning bool) error {
 
 	for _, mod := range modules {
 		ui.Info("=== Compilando módulo: %s ===", mod.Name)
+		bc := resolveModuleBuildConfig(cfg, mod.Path)
 		bcfg := build.Config{
 			AppDir:            mod.Path,
 			BuildDir:          filepath.Join(mod.Path, "build"),
 			LibsDir:           "libs",
 			AndroidJar:        androidJar,
-			Package:           cfg.Project.Package,
+			Package:           bc.Package,
 			Release:           release,
 			Signing:           cfg.Signing,
-			MinSdk:            21,
-			TargetSdk:         36,
-			VersionCode:       1,
-			VersionName:       cfg.Project.Version,
+			MinSdk:            bc.MinSdk,
+			TargetSdk:         bc.TargetSdk,
+			VersionCode:       bc.VersionCode,
+			VersionName:       bc.VersionName,
 			AppName:           cfg.Project.Name,
+			JVMTarget:         bc.JavaTarget,
 			Libs:              libs,
 			AllowDebugSigning: allowDebugSigning,
 		}
@@ -120,6 +125,85 @@ func runBuild(androidJar string, release, allowDebugSigning bool) error {
 		}
 	}
 	return nil
+}
+
+// defaults de Rain cuando ni rain.toml ni app.properties definen un valor.
+const (
+	defaultMinSdk    = 21
+	defaultTargetSdk = 36
+	defaultVersion   = "1.0"
+)
+
+// moduleBuildSettings son los valores efectivos de build de un módulo, ya
+// resueltos con la precedencia: rain.toml > app.properties del módulo > default.
+type moduleBuildSettings struct {
+	Package     string
+	MinSdk      int
+	TargetSdk   int
+	VersionCode int
+	VersionName string
+	JavaTarget  int
+}
+
+// resolveModuleBuildConfig combina la sección [build] de rain.toml con un
+// app.properties (estilo android2apk) situado en la raíz del módulo, para que
+// los ejemplos planos se configuren sin rain.toml y los proyectos con rain.toml
+// tengan la última palabra.
+func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildSettings {
+	props := readProperties(filepath.Join(modulePath, "app.properties"))
+	s := moduleBuildSettings{
+		Package:     cfg.Project.Package,
+		MinSdk:      cfg.Build.MinSdk,
+		TargetSdk:   cfg.Build.TargetSdk,
+		VersionCode: cfg.Build.VersionCode,
+		VersionName: cfg.Build.VersionName,
+		JavaTarget:  cfg.Build.JavaTarget,
+	}
+
+	if s.Package == "" && cfg.Build.ApplicationID != "" {
+		s.Package = cfg.Build.ApplicationID
+	}
+	if s.Package == "" {
+		s.Package = props["package"]
+	}
+
+	// app.properties como fallback.
+	if s.MinSdk == 0 {
+		s.MinSdk = parseInt(props["minSdk"], 0)
+	}
+	if s.TargetSdk == 0 {
+		s.TargetSdk = parseInt(props["targetSdk"], 0)
+	}
+	if s.VersionCode == 0 {
+		s.VersionCode = parseInt(props["versionCode"], 0)
+	}
+	if s.VersionName == "" {
+		s.VersionName = props["versionName"]
+	}
+	if s.JavaTarget == 0 {
+		s.JavaTarget = parseInt(props["javaTarget"], 0)
+	}
+
+	// Defaults finales.
+	if s.MinSdk <= 0 {
+		s.MinSdk = defaultMinSdk
+	}
+	if s.TargetSdk <= 0 {
+		s.TargetSdk = defaultTargetSdk
+	}
+	if s.TargetSdk < s.MinSdk {
+		s.TargetSdk = s.MinSdk
+	}
+	if s.VersionCode <= 0 {
+		s.VersionCode = 1
+	}
+	if s.VersionName == "" {
+		s.VersionName = cfg.Project.Version
+	}
+	if s.VersionName == "" {
+		s.VersionName = defaultVersion
+	}
+	return s
 }
 
 // resolveTransitiveCoordinates resuelve el cierre transitivo de las
@@ -145,7 +229,10 @@ func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
 			coords = append(coords, dep)
 		}
 	}
-	return coords, nil
+	// "Highest wins" global: cada dependencia declarada se resolvió por
+	// separado, así que la unión puede traer varias versiones del mismo
+	// artefacto. Dejarlas todas en el classpath rompe kotlinc/javac.
+	return pom.DedupeCoordinates(coords), nil
 }
 
 // prepareAARSet descarga y prepara cada coordenada (AAR o JAR) en dir.
@@ -206,21 +293,22 @@ func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error 
 	}
 
 	props := readProperties(filepath.Join(absDir, "app.properties"))
-	versionCode := parseInt(props["versionCode"], 1)
-	if versionCode <= 0 {
-		versionCode = 1
-	}
-	versionName := props["versionName"]
-	if versionName == "" {
-		versionName = "1.0"
-	}
-	minSdk := parseInt(props["minSdk"], 26)
-	if minSdk <= 0 {
-		minSdk = 26
-	}
 	name := props["name"]
 	if name == "" {
 		name = filepath.Base(absDir)
+	}
+	// Repos extra (opción A) también en layout plano, si hay rain.toml.
+	if cfg, err := config.Read(filepath.Join(absDir, "rain.toml")); err == nil {
+		mavenrepo.ExtraRepositories = cfg.Repositories.Extra
+	} else {
+		mavenrepo.ExtraRepositories = nil
+	}
+	s := resolveModuleBuildConfig(config.Config{}, absDir)
+	if s.Package == "" {
+		s.Package = build.PackageFromManifest(absDir)
+	}
+	if s.Package == "" {
+		return fmt.Errorf("no se pudo leer package=\"...\" de AndroidManifest.xml")
 	}
 
 	ui.Info("=== Compilando %s (layout plano) ===", name)
@@ -229,17 +317,15 @@ func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error 
 		BuildDir:          filepath.Join(absDir, "build"),
 		LibsDir:           filepath.Join(absDir, "libs"),
 		AndroidJar:        androidJar,
-		Package:           build.PackageFromManifest(absDir),
+		Package:           s.Package,
 		Release:           release,
-		MinSdk:            minSdk,
-		TargetSdk:         36,
-		VersionCode:       versionCode,
-		VersionName:       versionName,
+		MinSdk:            s.MinSdk,
+		TargetSdk:         s.TargetSdk,
+		VersionCode:       s.VersionCode,
+		VersionName:       s.VersionName,
+		JVMTarget:         s.JavaTarget,
 		AppName:           name,
 		AllowDebugSigning: allowDebugSigning,
-	}
-	if bcfg.Package == "" {
-		return fmt.Errorf("no se pudo leer package=\"...\" de AndroidManifest.xml")
 	}
 	return build.Run(bcfg)
 }

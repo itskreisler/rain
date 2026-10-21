@@ -7,13 +7,13 @@ import (
 	"strings"
 
 	"github.com/itskreisler/rain/internal/httpx"
+	"github.com/itskreisler/rain/internal/mavenrepo"
 )
 
-// Repositorios en orden de prioridad
-var repositories = []string{
-	"https://dl.google.com/dl/android/maven2",
-	"https://repo1.maven.org/maven2",
-}
+// Repositorios base en orden de prioridad. JitPack se añade por coordenada
+// (solo grupos com.github.*/io.github.*) vía mavenrepo.For, y los extras de
+// rain.toml se añaden al final.
+var repositories = mavenrepo.Base
 
 // Project representa la estructura relevante de un POM de Maven.
 type Project struct {
@@ -101,7 +101,7 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 
 	client := httpx.NewClient()
 	var lastErr error
-	for _, repo := range repositories {
+	for _, repo := range mavenrepo.For(repositories, group) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.pom",
 			repo, groupPath, artifact, version, artifact, version)
 

@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/itskreisler/rain/internal/httpx"
+	"github.com/itskreisler/rain/internal/mavenrepo"
 )
 
-// Repositorios Maven en orden de prioridad.
-var repositories = []string{
-	"https://dl.google.com/dl/android/maven2",
-	"https://repo1.maven.org/maven2",
-}
+// Repositorios Maven base en orden de prioridad. JitPack se añade por
+// coordenada (solo para grupos com.github.*/io.github.*) vía mavenrepo.For,
+// y los extras declarados en rain.toml se añaden al final.
+var repositories = mavenrepo.Base
 
 var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
 
@@ -203,7 +203,7 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 	}
 
 	var lastErr error
-	for _, repo := range repositories {
+	for _, repo := range mavenrepo.For(repositories, group) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.%s", repo, groupPath, artifact, version, artifact, version, ext)
 		resp, err := c.httpClient().Get(url)
 		if err != nil {

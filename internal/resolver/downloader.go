@@ -9,15 +9,16 @@ import (
 	"strings"
 
 	"github.com/itskreisler/rain/internal/httpx"
+	"github.com/itskreisler/rain/internal/mavenrepo"
 )
 
 // httpClient es el cliente con reintentos para los repositorios Maven.
 var httpClient = httpx.NewClient()
 
-var repositories = []string{
-	"https://dl.google.com/dl/android/maven2",
-	"https://repo1.maven.org/maven2",
-}
+// Repositorios Maven base en orden de prioridad. JitPack se añade por
+// coordenada (solo para grupos com.github.*/io.github.*) vía mavenrepo.For,
+// y los extras declarados en rain.toml se añaden al final.
+var repositories = mavenrepo.Base
 
 // DownloadAAR descarga un AAR de los repositorios y extrae classes.jar.
 func DownloadAAR(coordinate string, destDir string) (string, error) {
@@ -29,7 +30,7 @@ func DownloadAAR(coordinate string, destDir string) (string, error) {
 	groupPath := strings.ReplaceAll(group, ".", "/")
 
 	var lastErr error
-	for _, repo := range repositories {
+	for _, repo := range mavenrepo.For(repositories, group) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.aar",
 			repo, groupPath, artifact, version, artifact, version)
 
@@ -125,7 +126,7 @@ func DownloadArtifact(coordinate string, destDir string) (string, error) {
 	// Probar primero AAR, luego JAR
 	var lastErr error
 	for _, ext := range []string{"aar", "jar"} {
-		for _, repo := range repositories {
+		for _, repo := range mavenrepo.For(repositories, group) {
 			url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.%s",
 				repo, groupPath, artifact, version, artifact, version, ext)
 

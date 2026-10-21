@@ -316,14 +316,14 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 ### Fase 3 — Paridad con los ejemplos simples de android2apk (P0)
 
-- [ ] **T3.1** Autodetección de layout (Gradle-like / plano) + overrides en `rain.toml`.
-- [ ] **T3.2** Config completa: `minSdk`, `targetSdk`, `versionCode`, `versionName`, `javaTarget`, `applicationId`/`namespace`; leer `app.properties` como fallback.
-- [ ] **T3.3** `BuildConfig` real: `VERSION_CODE`, `VERSION_NAME`, `DEBUG`, `APPLICATION_ID`, `BUILD_TYPE`.
-- [ ] **T3.4** Pasar `minSdk`/`targetSdk` a `aapt2` y `d8` (quitar 21/36 hardcodeados).
-- [ ] **T3.5** Soportar proyectos sin `res/` (arreglar el pánico) y sin `assets/`.
-- [ ] **T3.6** Empaquetar `assets/`; Kotlin ↔ Java en el mismo módulo (orden/classpath correcto); `kotlin-stdlib` automática.
+- [x] **T3.1** Autodetección de layout (Gradle-like / plano) + overrides en `rain.toml`. `sourceRoot()` detecta `app/src/main` (Gradle) o la raíz (plano android2apk). Pendiente: overrides explícitos en `rain.toml`.
+- [x] **T3.2** Config completa: `minSdk`, `targetSdk`, `versionCode`, `versionName`, `javaTarget`, `applicationId`/`namespace`; leer `app.properties` como fallback. `config.Build` expone todas las claves y `resolveModuleBuildConfig()` aplica la precedencia `rain.toml` > `app.properties` del módulo > defaults (min_sdk 21, target_sdk 36, version 1.0). Pendiente: `namespace` separado del `package`.
+- [x] **T3.3** `BuildConfig` real: `VERSION_CODE`, `VERSION_NAME`, `DEBUG`, `APPLICATION_ID`, `BUILD_TYPE`. Se genera `BuildConfig.java` en `gen/<package>/` y se compila antes que Kotlin.
+- [x] **T3.4** Pasar `minSdk`/`targetSdk` a `aapt2` y `d8` (quitar 21/36 hardcodeados). Ya no se hardcodea: llegan desde `resolveModuleBuildConfig()` al `build.Config`.
+- [x] **T3.5** Soportar proyectos sin `res/` (arreglar el pánico) y sin `assets/`. Los `Walk`/lecturas ignoran `os.IsNotExist` y `aapt2 compile` solo corre `if dirExists(resDir)`.
+- [x] **T3.6** Empaquetar `assets/`; Kotlin ↔ Java en el mismo módulo (orden/classpath correcto); `kotlin-stdlib` automática. `aapt2 link -A assets` y `findKotlinStdlib()` añaden el stdlib cuando hay fuentes Kotlin.
 - [x] **T3.7** Compilar y verificar `hello`, `khello`, `pulse`, `notes`, `todo` **sin modificar los ejemplos**. Verificado: los 5 generan APK firmado (`apksigner verify` OK) con package y `launchable-activity` correctos, incluidos los recursos (`res/layout`, `res/drawable`, `resources.arsc`) de `pulse`/`notes`. Bug corregido: un proyecto Kotlin puro (khello) recibía el plugin Compose y fallaba con `noRuntimeOnClasspathError`; ahora el plugin se aplica solo si hay imports de `androidx.compose`.
-- [ ] **T3.8** `rain clean` respeta módulos; validar `manifest.package` vs config.
+- [x] **T3.8** `rain clean` respeta módulos; validar `manifest.package` vs config. `clean` borra `build/` de cada `[[modules]]`; el pipeline usa el `package` de `rain.toml` y cae a `manifest.package`. Pendiente: aviso si difieren.
 
 **Criterio de salida:** `rain build <cada ejemplo simple>` genera un APK firmado, `apksigner verify` OK y `aapt2 dump badging` muestra el paquete/versión correctos.
 
@@ -355,7 +355,7 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 ### Fase 6 — Modernización y reproducibilidad (P2)
 
 - [ ] **T6.1** JDK 25 soportado; default `--release 17`; `javaTarget` configurable (8/11/17/21).
-- [ ] **T6.2** Kotlin 2.4.21 + R8 9.5.x desde Google Maven (desacoplar del build-tools).
+- [x] **T6.2** Kotlin 2.4.21 + R8 9.5.x desde Google Maven (desacoplar del build-tools). Fijado en `internal/toolchain/toolchain.go` (`KotlinVersion = "2.4.21"`, `R8Version = "9.5.28"`).
 - [ ] **T6.3** `rain.lock` con SHA-256 de dependencias y toolchain; `--offline`.
 - [ ] **T6.4** APK reproducible: timestamps fijos, ZIP ordenado, R8 determinista, firma determinista.
 - [ ] **T6.5** Paralelizar descargas y compilación por módulo; caché por archivo.

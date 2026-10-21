@@ -105,6 +105,12 @@ key_password = "tu_key_password"   # opcional: si se omite, se usa store_passwor
 [[modules]]
 name = "app"
 path = "app"
+
+# Opcional: repositorios Maven adicionales (Google Maven y Maven Central
+# siempre se consultan, y JitPack se añade solo para dependencias
+# com.github.* / io.github.*). Útil para un Nexus propio o repos de terceros.
+[repositories]
+extra = ["https://mi-nexus.local/repository/maven"]
 ```
 
 3. Compila tu APK
