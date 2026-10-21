@@ -85,6 +85,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newBuildCmd(),
 		newDoctorCmd(),
 		newCleanCmd(),
+		newDepsCmd(),
 		newVersionCmd(info),
 	)
 

@@ -87,3 +87,33 @@ func TestSigningRoundTrip(t *testing.T) {
 		t.Errorf("Signing = %+v, quiero %+v", *got.Signing, *original.Signing)
 	}
 }
+
+func TestConfigBuildFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+
+	original := Config{
+		Project: Project{Name: "Demo", Package: "com.demo.app", Version: "2.1"},
+		Build: Build{
+			Debug:         true,
+			MinSdk:        24,
+			TargetSdk:     34,
+			VersionCode:   2,
+			VersionName:   "2.1",
+			ApplicationID: "com.demo.app.id",
+			JavaTarget:    17,
+		},
+	}
+	if err := Write(path, original); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	if got.Build != original.Build {
+		t.Errorf("Build = %+v, quiero %+v", got.Build, original.Build)
+	}
+}

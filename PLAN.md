@@ -283,12 +283,12 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 ### Fase 0 — Red de seguridad y deuda técnica (P0)
 
 - [x] **T0.1** Pasar `gofmt`/`go vet`; arreglar imports de `main.go` y estilo.
-- [ ] **T0.2** Tests unitarios: `pom` (parser, parents, versiones, transitivas), `config`, hashes, `needFetch`.
+- [x] **T0.2** Tests unitarios: `pom` (parser, parents, versiones, transitivas), `config`, hashes, `needFetch`.
 - [x] **T0.3** CI en GitHub Actions: `go test ./...`, `go vet`, `golangci-lint`, build para linux/amd64 y linux/arm64.
   > Incluye `.golangci.yml` (v2) y `Makefile` con `fmt`, `lint`, `test`, `build`, `tools`.
   > Equivalente a Ruff para Go: **`golangci-lint`** como meta-linter + `gofmt`/`goimports` como formatters.
 - [x] **T0.4** Eliminar pánicos y errores ignorados: `res/` ausente, `filepath.Walk`, `MkdirAll`, `WriteFile`, `keytool`, `RemoveAll`.
-- [ ] **T0.5** Cambiar `module rain` → `github.com/lucassogarayDA/rain`; añadir `--version` con `ldflags`.
+- [x] **T0.5** Cambiar `module rain` → `github.com/lucassogarayDA/rain`; añadir `--version` con `ldflags`.
 - [x] **T0.6** Borrar código muerto (`DownloadAAR`, `EffectiveProperties`, `VerboseLog`) y el `DEBUG` de `main.go`; unificar repositorios Maven.
 
 **Criterio de salida:** `go test ./...` verde en CI y ningún pánico con proyectos sin `res/`.
@@ -331,12 +331,12 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 - [x] **T4.1** Extraer del AAR: `classes.jar`, `res/`, `jni/`, manifest y package de librería (para `--extra-packages`). Pendiente: `assets/`, `libs/*.jar`, `R.txt` explícito y reglas ProGuard.
 - [x] **T4.2** Fusionar recursos de librerías (`--extra-packages`, duplicados/overlays tipo AGP). Pendiente: `R.txt` → `R.java`.
-- [ ] **T4.3** Fusión de manifests (subconjunto): permisos, `uses-sdk`, `application`, `activity/service/receiver/provider`; documentar lo no soportado.
+- [x] **T4.3** Fusión de manifests (subconjunto): permisos, `uses-sdk`, `application`, `activity/service/receiver/provider`; documentar lo no soportado.
 - [x] **T4.4** Multidex: se empaquetan `classes*.dex` en orden (verificado en Compose: `classes.dex` + `classes2.dex`).
 - [x] **T4.5** JNI: se empaquetan `lib/<abi>/*.so` de los AAR (verificado en Compose: 4 ABIs). Pendiente: `zipalign -P 16`.
-- [ ] **T4.6** Dependencias correctas: exclusiones, BOM/import, classifiers, properties built-in, parents locales, checksums, caché atómica. (Ya: timeouts/reintentos, moduleKey/highest-wins, dedupe de clases, omisión resiliente.)
+- [x] **T4.6** Dependencias correctas: exclusiones, BOM/import, classifiers, properties built-in, parents locales, checksums, caché atómica. (Ya: timeouts/reintentos, moduleKey/highest-wins, dedupe de clases, omisión resiliente.)
 - [x] **T4.7** Release: R8 con reglas del usuario + `consumer-rules.pro`, mapping, **nunca** caer a debug en silencio, `apksigner verify`, contraseñas por env/archivo. Implementado: reglas base en `build/r8-rain.pro` (nunca pisan las del usuario) + `proguard-rules.pro`/`proguard.pro` del proyecto + `proguard.txt` de cada AAR; `--pg-map-output` → `build/mapping.txt`; aviso explícito (o `--allow-debug-signing`) si falta keystore de release; `apksigner verify` tras firmar; `-dontwarn` para paquetes AndroidX opcionales/ausentes (emoji2, window, profileinstaller, tracing, startup) que R8 valida y D8 no.
-- [ ] **T4.8** Test de integración con una app AndroidX/AppCompat real y verificación de recursos en runtime.
+- [x] **T4.8** Test de integración con una app AndroidX/AppCompat real y verificación de recursos en runtime.
 
 **Criterio de salida:** una app con AndroidX compila, arranca y no lanza `Resources$NotFoundException`.
 
@@ -344,9 +344,9 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 - [x] **T5.1** Plugin Compose de Kotlin 2.4 + `-jvm-target` compatible (11 en Compose).
 - [x] **T5.2** Cierre de dependencias Compose/Material3 (resolver transitivo estable). Pendiente: `rain.lock`.
-- [ ] **T5.3** Compilar `examples/compose` y verificar arranque.
-- [ ] **T5.4** Compilar `examples/neko` y verificar arranque + persistencia.
-- [ ] **T5.5** Test de CI que compile Compose (sin emulador) y, opcional, smoke test en emulador.
+- [x] **T5.3** Compilar `examples/compose` y verificar arranque.
+- [x] **T5.4** Compilar `examples/neko` y verificar arranque + persistencia.
+- [x] **T5.5** Test de CI que compile Compose (sin emulador) y, opcional, smoke test en emulador.
 
 **Estado verificado:** un proyecto Kotlin + Compose (AndroidX) generado con `rain init --template completo` compila a un APK firmado (multidex + `lib/<abi>/*.so` + recursos fusionados) sin Gradle.
 
@@ -354,22 +354,22 @@ Y empaquetar **todos** los `classes*.dex`, no solo `classes.dex`.
 
 ### Fase 6 — Modernización y reproducibilidad (P2)
 
-- [ ] **T6.1** JDK 25 soportado; default `--release 17`; `javaTarget` configurable (8/11/17/21).
+- [x] **T6.1** JDK 25 soportado; default `--release 17`; `javaTarget` configurable (8/11/17/21).
 - [x] **T6.2** Kotlin 2.4.21 + R8 9.5.x desde Google Maven (desacoplar del build-tools). Fijado en `internal/toolchain/toolchain.go` (`KotlinVersion = "2.4.21"`, `R8Version = "9.5.28"`).
-- [ ] **T6.3** `rain.lock` con SHA-256 de dependencias y toolchain; `--offline`.
-- [ ] **T6.4** APK reproducible: timestamps fijos, ZIP ordenado, R8 determinista, firma determinista.
-- [ ] **T6.5** Paralelizar descargas y compilación por módulo; caché por archivo.
-- [ ] **T6.6** Matriz CI Alpine 3.24 / Termux (o contenedor equivalente) / amd64 + arm64.
+- [x] **T6.3** `rain.lock` con SHA-256 de dependencias y toolchain; `--offline`.
+- [x] **T6.4** APK reproducible: timestamps fijos, ZIP ordenado, R8 determinista, firma determinista.
+- [x] **T6.5** Paralelizar descargas y compilación por módulo; caché por archivo.
+- [x] **T6.6** Matriz CI Alpine 3.24 / Termux (o contenedor equivalente) / amd64 + arm64.
 
 **Criterio de salida:** dos builds del mismo commit producen el mismo APK (o diferencias justificadas y documentadas).
 
 ### Fase 7 — Producto y documentación (P2)
 
-- [ ] **T7.1** README nuevo + `docs/doctor.md`, `docs/toolchain.md`, `docs/compatibilidad.md`, guía de migración desde android2apk.
+- [x] **T7.1** README nuevo + `docs/doctor.md`, `docs/toolchain.md`, `docs/compatibilidad.md`, guía de migración desde android2apk.
 - [x] **T7.2** `CHANGELOG`, versionado semver, releases con binarios linux/amd64 y linux/arm64. Hecho: `scripts/next-version.sh` calcula la siguiente versión desde Conventional Commits; `.github/workflows/release.yml` crea tag anotado + release (binarios amd64/arm64 + SHA256SUMS) en cada push a `main` con `feat`/`fix`; `Makefile` inyecta versión/commit/fecha vía `-ldflags`; `CHANGELOG.md` añadido; primer tag `v0.1.0`.
 - [x] **T7.3** `rain init` con scaffolding real (manifest, `MainActivity`, `res/`, plantillas Java/Kotlin/Compose).
-- [ ] **T7.4** `rain deps tree`, `rain doctor --json`, salida amigable para agentes.
-- [ ] **T7.5** `SECURITY.md`, NOTICE de terceros, cabeceras de licencia.
+- [x] **T7.4** `rain deps tree`, `rain doctor --json`, salida amigable para agentes.
+- [x] **T7.5** `SECURITY.md`, NOTICE de terceros, cabeceras de licencia.
 
 ---
 
