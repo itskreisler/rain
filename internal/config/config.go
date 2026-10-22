@@ -13,10 +13,27 @@ type Config struct {
 	Build        Build        `toml:"build"`
 	Mode         string       `toml:"mode"`
 	Dependencies []string     `toml:"dependencies"`
+	Kapt         Kapt         `toml:"kapt"`
 	Signing      *Signing     `toml:"signing"`
 	Modules      []Module     `toml:"modules"`
 	Repositories Repositories `toml:"repositories"`
 	Lint         Lint         `toml:"lint"`
+}
+
+// Kapt configura los annotation processors que se ejecutan antes de compilar
+// (el mecanismo kapt de Kotlin).
+//
+// Sirve para processors que generan código a partir del código Kotlin:
+// Dagger/Hilt, Room, AutoValue...
+type Kapt struct {
+	// Processors lista los artefactos de los annotation processors, en
+	// formato "grupo:artifacto:version" (p. ej.
+	// "com.google.dagger:hilt-compiler:2.60.1"). Se resuelven igual que las
+	// dependencias normales, con su cierre transitivo.
+	Processors []string `toml:"processors"`
+	// Options son opciones para los processors, en formato "clave=valor"
+	// (se pasan al processor como -Aclave=valor).
+	Options []string `toml:"options"`
 }
 
 // Lint configura "rain lint", el comando que ejecuta los analizadores

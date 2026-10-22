@@ -90,6 +90,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newDoctorCmd(),
 		newCleanCmd(),
 		newDepsCmd(),
+		newGradleCmd(),
 		newVersionCmd(info),
 	)
 

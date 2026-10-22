@@ -104,6 +104,26 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 		modules = []config.Module{{Name: "app", Path: "app"}}
 	}
 
+	// Los annotation processors (kapt) se resuelven aparte: no van en el
+	// APK, solo en el classpath de la ronda de annotation processing.
+	var kapt *build.KaptConfig
+	if len(cfg.Kapt.Processors) > 0 {
+		ui.Info("Resolviendo annotation processors (kapt)...")
+		coords, err := resolveCoordinates(cfg.Kapt.Processors)
+		if err != nil {
+			return fmt.Errorf("resolviendo annotation processors: %w", err)
+		}
+		set, err := prepareAARSet(coords, ".rain-kapt")
+		if err != nil {
+			return fmt.Errorf("preparando annotation processors: %w", err)
+		}
+		kapt = &build.KaptConfig{
+			ProcessorJars: set.ClassJars(),
+			Options:       cfg.Kapt.Options,
+		}
+		ui.VerboseLog("processors de kapt: %d jars", len(kapt.ProcessorJars))
+	}
+
 	for _, mod := range modules {
 		ui.Info("=== Compilando módulo: %s ===", mod.Name)
 		bc := resolveModuleBuildConfig(cfg, mod.Path)
@@ -125,6 +145,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			AllowDebugSigning: allowDebugSigning,
 			CheckOnly:         checkOnly,
 			FastCheck:         fast,
+			Kapt:              kapt,
 		}
 		if libs != nil {
 			bcfg.DepsDir = libs.Dir
@@ -218,15 +239,22 @@ func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildS
 // resolveTransitiveCoordinates resuelve el cierre transitivo de las
 // dependencias declaradas (modo completo).
 func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
+	return resolveCoordinates(cfg.Dependencies)
+}
+
+// resolveCoordinates resuelve el cierre transitivo de una lista de
+// coordenadas y devuelve la lista final, sin duplicados y con la versión más
+// alta cuando hay conflicto.
+func resolveCoordinates(deps []string) ([]string, error) {
 	var coords []string
 	seen := make(map[string]bool)
 
-	for _, dep := range cfg.Dependencies {
-		deps, err := pom.ResolveTransitive(dep, "cache")
+	for _, dep := range deps {
+		resolved, err := pom.ResolveTransitive(dep, "cache")
 		if err != nil {
 			return nil, fmt.Errorf("resolviendo %s: %w", dep, err)
 		}
-		for _, d := range deps {
+		for _, d := range resolved {
 			coord := d.Coordinate()
 			if !seen[coord] {
 				seen[coord] = true

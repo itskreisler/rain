@@ -48,6 +48,15 @@ func ResolveParentChain(child *Project, cacheDir string) ([]*Project, error) {
 
 // MergeProperties fusiona las propiedades de la cadena de parents.
 // El hijo sobrescribe al padre (el primero en la cadena tiene prioridad).
+//
+// Además añade las propiedades integradas de Maven (project.version,
+// project.groupId, project.artifactId y sus alias pom.*), que no aparecen en
+// <properties> pero se usan en muchos POMs reales. Por ejemplo el
+// dependencyManagement de dagger-parent declara sus módulos con
+// ${project.version}: sin resolverlo, la coordenada queda literally
+// "com.google.dagger:dagger:${project.version}" y la dependencia no se puede
+// descargar. Como en Maven, estas propiedades se evalúan en el contexto del
+// POM hijo (chain[0]), que es quien hereda ese dependencyManagement.
 func MergeProperties(chain []*Project) map[string]string {
 	props := make(map[string]string)
 	// Recorrer de raíz a hijo para que el hijo sobrescriba
@@ -55,6 +64,27 @@ func MergeProperties(chain []*Project) map[string]string {
 		for _, prop := range chain[i].Properties {
 			props[prop.XMLName.Local] = prop.Value
 		}
+	}
+
+	// Propiedades integradas del POM hijo de la cadena.
+	if len(chain) > 0 {
+		child := chain[0]
+		version := child.Version
+		groupID := child.GroupID
+		if child.Parent != nil {
+			if version == "" {
+				version = child.Parent.Version
+			}
+			if groupID == "" {
+				groupID = child.Parent.GroupID
+			}
+		}
+		props["project.version"] = version
+		props["project.groupId"] = groupID
+		props["project.artifactId"] = child.ArtifactID
+		props["pom.version"] = version
+		props["pom.groupId"] = groupID
+		props["pom.artifactId"] = child.ArtifactID
 	}
 	return props
 }

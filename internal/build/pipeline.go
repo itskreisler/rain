@@ -17,6 +17,7 @@ import (
 
 	"github.com/itskreisler/rain/internal/aar"
 	"github.com/itskreisler/rain/internal/config"
+	"github.com/itskreisler/rain/internal/hilt"
 	"github.com/itskreisler/rain/internal/memenv"
 	"github.com/itskreisler/rain/internal/ui"
 )
@@ -60,6 +61,9 @@ type Config struct {
 	// exhaustivo: un error en un fichero que no se recompila puede no
 	// aparecer.
 	FastCheck bool
+	// Kapt son los annotation processors que se ejecutan antes de compilar
+	// (Dagger, Hilt...). Si está vacío, el proyecto no usa kapt.
+	Kapt *KaptConfig
 }
 
 var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
@@ -102,6 +106,70 @@ func manifestPackage(path string) string {
 // PackageFromManifest devuelve el package declarado en AndroidManifest.xml.
 func PackageFromManifest(appDir string) string {
 	return manifestPackage(manifestPath(appDir))
+}
+
+// reManifestPlaceholder busca los marcadores sin resolver del manifest.
+var reManifestPlaceholder = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// reManifestTag busca la etiqueta de apertura del <manifest>.
+var reManifestTag = regexp.MustCompile(`<manifest(\s[^>]*)?>`)
+
+// substituteManifestPlaceholders sustituye los marcadores del manifest que
+// Gradle resuelve al fusionarlo ("${applicationId}", "${versionName}"...).
+//
+// Gradle lo hace porque los manifests de un proyecto pueden usar el id de la
+// app sin conocerlo de antemano. aapt2 no entiende los marcadores: si se
+// quedan sin sustituir, el enlazado falla.
+//
+// También añade el atributo "package" al <manifest> si falta: desde AGP 7 el
+// namespace va en el build.gradle.kts y el manifest ya no lo lleva, pero aapt2
+// lo exige para compilar los recursos.
+//
+// Devuelve la ruta del manifest procesado, que es la original si no había
+// ningún marcador ni faltaba el package.
+func substituteManifestPlaceholders(src, dst string, cfg Config) (string, error) {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return src, err
+	}
+	content := string(data)
+	needsPackage := false
+	if m := reManifestTag.FindStringSubmatch(content); m != nil {
+		needsPackage = !strings.Contains(m[1], "package=")
+	}
+	if !strings.Contains(content, "${") && !needsPackage {
+		return src, nil
+	}
+
+	replacer := strings.NewReplacer(
+		"${applicationId}", cfg.Package,
+		"${applicationIdSuffix}", "",
+		"${namespace}", cfg.Package,
+		"${versionName}", cfg.VersionName,
+		"${versionCode}", strconv.Itoa(cfg.VersionCode),
+		"${minSdkVersion}", strconv.Itoa(cfg.MinSdk),
+		"${targetSdkVersion}", strconv.Itoa(cfg.TargetSdk),
+	)
+	content = replacer.Replace(content)
+
+	// Los marcadores que no se conocen se avisan: aapt2 fallaría con un
+	// error poco descriptivo.
+	if left := reManifestPlaceholder.FindAllStringSubmatch(content, -1); len(left) > 0 {
+		names := make([]string, 0, len(left))
+		for _, m := range left {
+			names = append(names, m[1])
+		}
+		ui.Warn("marcadores sin sustituir en el manifest: %s", strings.Join(names, ", "))
+	}
+
+	if needsPackage {
+		content = reManifestTag.ReplaceAllString(content, `<manifest package="`+cfg.Package+`"$1>`)
+	}
+
+	if err := os.WriteFile(dst, []byte(content), 0o644); err != nil {
+		return src, err
+	}
+	return dst, nil
 }
 
 func hashFile(path string) ([]byte, error) {
@@ -370,10 +438,19 @@ func Run(cfg Config) error {
 		// app revienta en tiempo de ejecución con el ClassNotFoundException del
 		// provider que faltaba.
 		linkManifest := manifest
+
+		// Un manifest de proyecto Gradle puede llevar marcadores ("${applicationId}")
+		// que Gradle sustituye al fusionar. Rain hace lo mismo.
+		if processed, err := substituteManifestPlaceholders(manifest, filepath.Join(cfg.BuildDir, "manifest.xml"), cfg); err != nil {
+			ui.Warn("no se pudieron sustituir los marcadores del manifest: %v", err)
+		} else if processed != manifest {
+			linkManifest = processed
+		}
+
 		if cfg.Libs != nil {
 			if libManifests := cfg.Libs.Manifests(); len(libManifests) > 0 {
 				mergedPath := filepath.Join(cfg.BuildDir, "merged-manifest.xml")
-				if err := aar.MergeManifests(manifest, libManifests, mergedPath); err != nil {
+				if err := aar.MergeManifests(linkManifest, libManifests, mergedPath); err != nil {
 					ui.Warn("no se pudieron fusionar los manifests de las librerías: %v", err)
 				} else {
 					linkManifest = mergedPath
@@ -838,54 +915,33 @@ func compileSourceSet(cfg Config, genDir, objDir string, kotlinFiles, javaFiles 
 		}
 	}
 
+	// Con kapt hay una ronda de annotation processing antes de compilar: se
+	// generan los stubs de las clases Kotlin y se pasan por los processors
+	// (Dagger, Hilt...), que generan código Java. Ese Java se compila
+	// después, con las clases Kotlin ya en el classpath.
+	var kaptSources []string
+	if len(kotlinFiles) > 0 && cfg.Kapt != nil && len(cfg.Kapt.ProcessorJars) > 0 {
+		kaptDir := filepath.Join(cfg.BuildDir, "kapt")
+		generated, err := runKapt(cfg, kotlinFiles, objDir, kaptDir)
+		if err != nil {
+			return nil, err
+		}
+		kaptSources, err = collectJavaSources(generated)
+		if err != nil {
+			return nil, fmt.Errorf("buscando el Java generado por kapt: %w", err)
+		}
+	}
+
 	if len(kotlinFiles) > 0 {
-		ui.Info("compilando Kotlin (%d archivos)...", len(kotlinFiles))
-
-		jvmTarget := cfg.jvmTarget()
-
-		var kotlinClasspath []string
-		kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
-		kotlinClasspath = append(kotlinClasspath, cfg.libraryJars()...)
-		// objDir contiene R.class/BuildConfig.class ya compilados, para que
-		// el código Kotlin pueda referenciar R y BuildConfig.
-		kotlinClasspath = append(kotlinClasspath, objDir)
-		kotlinClasspath = append(kotlinClasspath, genDir)
-
-		kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
-			"-d", objDir,
-			"-classpath", strings.Join(kotlinClasspath, ":"),
-			"-jvm-target", kotlinJVMTarget(jvmTarget)}
-
-		// La JVM de kotlinc reserva por defecto 1/4 de la RAM física. En
-		// un contenedor con poca memoria libre eso es un OOM asegurado,
-		// así que se acota al presupuesto real (detectado o indicado por
-		// RAIN_JAVA_MAX_HEAP). Si el usuario ya fijó un heap con las
-		// variables estándar, no se toca nada.
-		if !memenv.UserHeapOverride() {
-			heap := memenv.HeapLimit(memenv.DefaultKotlincHeap)
-			ui.VerboseLog("heap de kotlinc: %s", heap)
-			kotlincArgs = append(kotlincArgs, "-J-Xmx"+heap)
+		if err := compileKotlin(cfg, objDir, kotlinFiles); err != nil {
+			return nil, err
 		}
+	}
 
-		if cfg.appliesComposePlugin() {
-			if plugin := cfg.composePlugin(); plugin != "" {
-				ui.VerboseLog("plugin Compose: %s", plugin)
-				kotlincArgs = append(kotlincArgs, "-Xplugin="+plugin)
-			}
+	if len(kaptSources) > 0 {
+		if err := compileJavaSources(cfg, objDir, kaptSources, "generado por kapt"); err != nil {
+			return nil, err
 		}
-
-		kotlincArgs = append(kotlincArgs, kotlinFiles...)
-
-		var kotlinStderr bytes.Buffer
-		cmd := exec.Command("kotlinc", kotlincArgs...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = &kotlinStderr
-		if err := cmd.Run(); err != nil {
-			ui.Error("Errores de compilación Kotlin:")
-			fmt.Println(kotlinStderr.String())
-			return nil, fmt.Errorf("kotlinc falló")
-		}
-		ui.Info("Kotlin compilado")
 	}
 
 	if len(javaFiles) > 0 {
@@ -895,26 +951,103 @@ func compileSourceSet(cfg Config, genDir, objDir string, kotlinFiles, javaFiles 
 	// Fuentes de la app. objDir ya contiene las clases generadas y las de
 	// Kotlin, así que Java puede referenciarlas (y viceversa).
 	if len(javaFiles) > 0 {
-		var classpath []string
-		classpath = append(classpath, cfg.AndroidJar)
-		classpath = append(classpath, objDir)
-		classpath = append(classpath, cfg.libraryJars()...)
-		args := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
-			"-classpath", strings.Join(classpath, ":")}
-		args = append(args, javaFiles...)
+		if err := compileJavaSources(cfg, objDir, javaFiles, "Java"); err != nil {
+			return nil, err
+		}
+	}
 
-		var stderrBuf bytes.Buffer
-		cmd := exec.Command("javac", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = &stderrBuf
-		if err := cmd.Run(); err != nil {
-			ui.Error("Errores de compilación Java:")
-			fmt.Println(stderrBuf.String())
-			return nil, fmt.Errorf("javac falló")
+	// El transform de Hilt: las clases anotadas con @AndroidEntryPoint o
+	// @HiltAndroidApp tienen que heredar de la clase base que genera el
+	// processor (Hilt_MainActivity, Hilt_MyApp...). El plugin de Gradle lo
+	// hace con ASM después de compilar; aquí se hace con el mismo efecto.
+	if cfg.Kapt != nil && cfg.Kapt.isHiltProcessor() {
+		count, err := hilt.TransformDir(objDir)
+		if err != nil {
+			return nil, fmt.Errorf("transformando las clases de Hilt: %w", err)
+		}
+		if count > 0 {
+			ui.Info("Hilt: %d clases reescritas para heredar de su clase base", count)
 		}
 	}
 
 	return kotlinFiles, nil
+}
+
+// compileKotlin compila las fuentes Kotlin del proyecto dentro de objDir.
+func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
+	ui.Info("compilando Kotlin (%d archivos)...", len(kotlinFiles))
+
+	jvmTarget := cfg.jvmTarget()
+
+	var kotlinClasspath []string
+	kotlinClasspath = append(kotlinClasspath, cfg.AndroidJar)
+	kotlinClasspath = append(kotlinClasspath, cfg.libraryJars()...)
+	// objDir contiene R.class/BuildConfig.class ya compilados, para que
+	// el código Kotlin pueda referenciar R y BuildConfig.
+	kotlinClasspath = append(kotlinClasspath, objDir)
+
+	kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
+		"-d", objDir,
+		"-classpath", strings.Join(kotlinClasspath, ":"),
+		"-jvm-target", kotlinJVMTarget(jvmTarget)}
+
+	// La JVM de kotlinc reserva por defecto 1/4 de la RAM física. En
+	// un contenedor con poca memoria libre eso es un OOM asegurado,
+	// así que se acota al presupuesto real (detectado o indicado por
+	// RAIN_JAVA_MAX_HEAP). Si el usuario ya fijó un heap con las
+	// variables estándar, no se toca nada.
+	if !memenv.UserHeapOverride() {
+		heap := memenv.HeapLimit(memenv.DefaultKotlincHeap)
+		ui.VerboseLog("heap de kotlinc: %s", heap)
+		kotlincArgs = append(kotlincArgs, "-J-Xmx"+heap)
+	}
+
+	if cfg.appliesComposePlugin() {
+		if plugin := cfg.composePlugin(); plugin != "" {
+			ui.VerboseLog("plugin Compose: %s", plugin)
+			kotlincArgs = append(kotlincArgs, "-Xplugin="+plugin)
+		}
+	}
+
+	kotlincArgs = append(kotlincArgs, kotlinFiles...)
+
+	var kotlinStderr bytes.Buffer
+	cmd := exec.Command("kotlinc", kotlincArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = &kotlinStderr
+	if err := cmd.Run(); err != nil {
+		ui.Error("Errores de compilación Kotlin:")
+		fmt.Println(kotlinStderr.String())
+		return fmt.Errorf("kotlinc falló")
+	}
+	ui.Info("Kotlin compilado")
+	return nil
+}
+
+// compileJavaSources compila un conjunto de fuentes Java dentro de objDir.
+// El label solo se usa en los mensajes de error.
+func compileJavaSources(cfg Config, objDir string, sources []string, label string) error {
+	if len(sources) == 0 {
+		return nil
+	}
+	var classpath []string
+	classpath = append(classpath, cfg.AndroidJar)
+	classpath = append(classpath, objDir)
+	classpath = append(classpath, cfg.libraryJars()...)
+	args := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
+		"-classpath", strings.Join(classpath, ":")}
+	args = append(args, sources...)
+
+	var stderrBuf bytes.Buffer
+	cmd := exec.Command("javac", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = &stderrBuf
+	if err := cmd.Run(); err != nil {
+		ui.Error("Errores de compilación Java (%s):", label)
+		fmt.Println(stderrBuf.String())
+		return fmt.Errorf("javac falló")
+	}
+	return nil
 }
 
 func humanSize(path string) string {
