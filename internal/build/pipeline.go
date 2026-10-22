@@ -201,6 +201,34 @@ func collectJavaSources(root string) ([]string, error) {
 	return sources, nil
 }
 
+// Nombre de las marcas de compilación dentro del directorio de build.
+//
+// Son dos ficheros distintos a propósito: ver la nota de la fase de Java/DEX
+// en el pipeline.
+const (
+	// javaHashFile marca que las fuentes actuales compilan sin errores.
+	javaHashFile = ".rain-java-hash"
+	// dexHashFile marca que el classes.dex corresponde a esas fuentes.
+	dexHashFile = ".rain-dex-hash"
+)
+
+// dexIsUpToDate indica si el classes.dex que hay en el directorio de build
+// se puede reutilizar.
+//
+// Solo se reutiliza si su marca coincide con el hash de las fuentes actuales
+// y el fichero existe: un "rain check" no genera DEX, así que la marca de
+// compilación no sirve aquí (si se usara, el APK llevaría código viejo).
+func dexIsUpToDate(buildDir, currentHash string) bool {
+	prev, err := os.ReadFile(filepath.Join(buildDir, dexHashFile))
+	if err != nil {
+		return false
+	}
+	if string(prev) != currentHash {
+		return false
+	}
+	return fileExists(filepath.Join(buildDir, "dex", "classes.dex"))
+}
+
 func computeJavaHash(appDir, libsDir, genDir string, release bool) (string, error) {
 	var files []string
 	if err := filepath.Walk(sourceRoot(appDir), func(path string, info os.FileInfo, err error) error {
@@ -442,8 +470,19 @@ public final class BuildConfig {
 	}
 
 	// --- Java / DEX ---
-	javaHashPath := filepath.Join(cfg.BuildDir, ".rain-java-hash")
-	dexPath := filepath.Join(cfg.BuildDir, "dex", "classes.dex")
+	//
+	// Hay dos marcas distintas y no se pueden mezclar:
+	//
+	//   - `.rain-java-hash`: las fuentes actuales compilan sin errores. La
+	//     escribe cualquier compilación, también la de `rain check`.
+	//   - `.rain-dex-hash`: el `classes.dex` de `build/dex` corresponde a esas
+	//     mismas fuentes. Solo la escribe un build que llegó a generar el DEX.
+	//
+	// Si una sola marca sirviera para las dos cosas, un `rain check` seguido
+	// de `rain build` reutilizaría el DEX de la compilación anterior y el APK
+	// llevaría código que ya no está en el disco.
+	javaHashPath := filepath.Join(cfg.BuildDir, javaHashFile)
+	dexHashPath := filepath.Join(cfg.BuildDir, dexHashFile)
 
 	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release)
 	if err != nil {
@@ -467,7 +506,7 @@ public final class BuildConfig {
 		return fastCheck(cfg, genDir)
 	}
 
-	javaUpToDate := sourcesUpToDate && fileExists(dexPath)
+	javaUpToDate := dexIsUpToDate(cfg.BuildDir, currentJavaHash)
 
 	if javaUpToDate {
 		ui.Info("java sin cambios, reutilizando classes.dex")
@@ -488,9 +527,10 @@ public final class BuildConfig {
 			ui.VerboseLog("no se pudo guardar la marca de compilación: %v", err)
 		}
 
-		// El hash se guarda al terminar la compilación (no el DEX): a partir de
-		// aquí las fuentes ya son válidas, y un "rain check" posterior puede
-		// saltarse el trabajo. El DEX se comprueba aparte (debe existir).
+		// Las fuentes ya son válidas: a partir de aquí un "rain check"
+		// posterior puede saltarse el trabajo. Ojo: esta marca NO dice que el
+		// DEX esté al día (eso lo lleva `.rain-dex-hash`), porque un "check"
+		// no genera DEX.
 		if err := os.WriteFile(javaHashPath, []byte(currentJavaHash), 0644); err != nil {
 			return fmt.Errorf("guardando hash de java: %w", err)
 		}
@@ -582,8 +622,10 @@ public final class BuildConfig {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("dex: %w", err)
 		}
-		if err := os.WriteFile(javaHashPath, []byte(currentJavaHash), 0644); err != nil {
-			return fmt.Errorf("guardando hash de Java: %w", err)
+		// Solo ahora el DEX corresponde a estas fuentes: se guarda su marca
+		// para que el siguiente build pueda reutilizarlo.
+		if err := os.WriteFile(dexHashPath, []byte(currentJavaHash), 0644); err != nil {
+			return fmt.Errorf("guardando hash del DEX: %w", err)
 		}
 	}
 	// --- Empaquetado ---
@@ -721,6 +763,15 @@ public final class BuildConfig {
 // compileSources compila todas las fuentes del proyecto (Java generado,
 // Kotlin y Java de la app) dentro de objDir.
 func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
+	// La compilación completa empieza de cero: si se ha borrado o renombrado
+	// un fichero, sus clases viejas no deben quedarse en el DEX.
+	if err := os.RemoveAll(objDir); err != nil {
+		return nil, fmt.Errorf("limpiando el directorio de objetos: %w", err)
+	}
+	if err := os.MkdirAll(objDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creando el directorio de objetos: %w", err)
+	}
+
 	kotlinFiles, err := collectKotlinFiles(sourceRoot(cfg.AppDir))
 	if err != nil {
 		return nil, err

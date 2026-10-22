@@ -453,6 +453,21 @@ simples de `android2apk` y de `examples/compose` / `examples/neko`.
   > Aparecen como checks **opcionales** (no bloquean `Ready`) y se descargan con
   > `rain doctor --fix --lint` o `rain lint --install` (ktlint 1.8.0 y detekt
   > 1.23.8 en `~/.rain/toolchain`).
+- [x] **T5b.6** `rain check` ya no envenena el `rain build` siguiente.
+  > El estado de compilación se guardaba en una sola marca (`.rain-java-hash`)
+  > que servía para dos cosas: saber si las fuentes compilan (necesario para
+  > `check`) y decidir si el `classes.dex` se puede reutilizar (necesario para
+  > `build`). Como `check` no genera DEX, al terminar escribía la marca y el
+  > `build` siguiente reutilizaba el **DEX viejo**: el APK salía con código
+  > que ya no estaba en el disco.
+  > **Cómo se reproducir**: editar una fuente → `rain check` (compila bien) →
+  > `rain build` (reutiliza el DEX anterior, 5 s) → instalar → la app se
+  > comporta como si el cambio no existiera.
+  > Ahora hay dos marcas: `.rain-java-hash` (las fuentes compilan) y
+  > `.rain-dex-hash` (el DEX corresponde a esas fuentes), y solo un build que
+  > llega a generar el DEX escribe la segunda. De paso, la compilación completa
+  > limpia `build/obj`, para que las clases de los ficheros borrados no sigan
+  > en el APK (`internal/build/dexcache_test.go`).
 
 **Criterio de salida:** `rain check` detecta un error de tipos en segundos y
 `rain lint` informa de estilo y "code smells" sin tocar el pipeline de build.

@@ -49,6 +49,23 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **Un `rain check` envenenaba el `rain build` siguiente, que empaquetaba el
+  DEX viejo.** El estado de compilación se guardaba en un único fichero de
+  marca (`.rain-java-hash`) que servía para dos cosas distintas: saber si las
+  fuentes compilan (lo necesita `check`) y decidir si el `classes.dex` se puede
+  reutilizar (lo necesita `build`). Pero `check` no genera DEX: al terminar
+  escribía la marca y el `build` siguiente veía "las fuentes no han cambiado",
+  reutilizaba el `classes.dex` de la compilación anterior y generaba un APK
+  **con código que ya no estaba en el disco**. Se hacía visible al compilar,
+  instalar y ver en el dispositivo un comportamiento antiguo sin haber
+  tocado el código. Ahora hay dos marcas: `.rain-java-hash` (las fuentes
+  compilan) y `.rain-dex-hash` (el DEX corresponde a esas fuentes), y solo un
+  build que llega a generar el DEX escribe la segunda
+  (tests en `internal/build/dexcache_test.go`).
+- **Las clases de los ficheros borrados se quedaban en el DEX.** La
+  compilación completa no limpiaba el directorio de objetos, así que al
+  borrar o renombrar un fichero, sus clases viejas seguían ahí y se
+  empaquetaban en el APK. Ahora la compilación completa empieza de cero.
 - **Un APK con `classes.dex` duplicado hacía fallar la firma.** El APK base se
   reutiliza cuando los recursos no cambian, y tras empaquetarlo ya contenía
   el `classes.dex` y las librerías nativas. Al empaquetar de nuevo, esas
