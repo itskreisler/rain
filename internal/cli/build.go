@@ -84,11 +84,21 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 	mavenrepo.ExtraRepositories = cfg.Repositories.Extra
 
 	var libs *aar.Set
-	if len(cfg.Dependencies) > 0 {
+	// Las dependencias por variante: en un release no entran las de debug
+	// (debugImplementation) y sí las de release; en un debug, al revés. Es lo
+	// que hace Gradle, y importa: una dependencia de depuración referencia
+	// clases opcionales que R8 no encuentra y aborta la compilación.
+	deps := cfg.Dependencies
+	if release {
+		deps = append(append([]string{}, deps...), cfg.Build.ReleaseDependencies...)
+	} else {
+		deps = append(append([]string{}, deps...), cfg.Build.DebugDependencies...)
+	}
+	if len(deps) > 0 {
 		ui.Info("Resolviendo y descargando dependencias...")
-		coords := cfg.Dependencies
+		coords := deps
 		if cfg.Mode == "completo" {
-			coords, err = resolveTransitiveCoordinates(cfg)
+			coords, err = resolveTransitiveCoordinates(deps)
 			if err != nil {
 				return fmt.Errorf("resolviendo dependencias: %w", err)
 			}
@@ -146,6 +156,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			CheckOnly:         checkOnly,
 			FastCheck:         fast,
 			Kapt:              kapt,
+			ProguardFiles:     cfg.Build.ProguardFiles,
 		}
 		if libs != nil {
 			bcfg.DepsDir = libs.Dir
@@ -236,10 +247,11 @@ func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildS
 	return s
 }
 
-// resolveTransitiveCoordinates resuelve el cierre transitivo de las
-// dependencias declaradas (modo completo).
-func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
-	return resolveCoordinates(cfg.Dependencies)
+// resolveTransitiveCoordinates resuelve el cierre transitivo de una lista de
+// coordenadas y devuelve la lista final, sin duplicados y con la versión más
+// alta cuando hay conflicto.
+func resolveTransitiveCoordinates(deps []string) ([]string, error) {
+	return resolveCoordinates(deps)
 }
 
 // resolveCoordinates resuelve el cierre transitivo de una lista de

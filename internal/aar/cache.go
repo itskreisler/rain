@@ -70,6 +70,11 @@ func LoadCache(dir string, coords []string) (*Set, bool) {
 				return nil, false
 			}
 		}
+		for _, path := range lib.ServiceFiles {
+			if st, err := os.Stat(path); err != nil || st.IsDir() {
+				return nil, false
+			}
+		}
 		if lib.ResDir != "" {
 			if st, err := os.Stat(lib.ResDir); err != nil || !st.IsDir() {
 				return nil, false

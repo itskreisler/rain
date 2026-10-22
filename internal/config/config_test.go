@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -113,7 +114,19 @@ func TestConfigBuildFields(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	if got.Build != original.Build {
+	// El TOML no distingue la lista vacía de la ausente: al leer, las listas
+	// vacías vienen como [] y no como nil. Se comparan como iguales.
+	gotBuild, wantBuild := got.Build, original.Build
+	for _, p := range []*[]string{
+		&gotBuild.ProguardFiles, &wantBuild.ProguardFiles,
+		&gotBuild.DebugDependencies, &wantBuild.DebugDependencies,
+		&gotBuild.ReleaseDependencies, &wantBuild.ReleaseDependencies,
+	} {
+		if len(*p) == 0 {
+			*p = nil
+		}
+	}
+	if !reflect.DeepEqual(gotBuild, wantBuild) {
 		t.Errorf("Build = %+v, quiero %+v", got.Build, original.Build)
 	}
 }

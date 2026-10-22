@@ -285,15 +285,25 @@ const defaultProguardRules = `# Reglas base de Rain (generadas; no editar).
 -dontwarn org.jetbrains.annotations.**
 `
 
-// proguardFiles reúne las reglas que R8 debe aplicar además de las base: el
-// proguard.pro del proyecto (si existe) y los consumer-rules de los AAR.
+// proguardFiles reúne las reglas que R8 debe aplicar además de las base: las
+// del proyecto (si existen), las que se indiquen en la configuración y los
+// consumer-rules de los AAR.
+//
+// Las reglas se buscan en dos sitios: en el directorio del módulo y en su
+// src/main. En un proyecto Gradle viven en el directorio del módulo
+// (app/proguard-rules.pro), no en src/main, así que buscar solo en src/main
+// las dejaría fuera. Sin ellas, un release construido con rain se quedaría
+// sin los -keep de los accesos por reflexión ni con el -dontoptimize que
+// algunos proyectos necesitan (R8 optimiza de forma distinta a AGP).
 func (c Config) proguardFiles() []string {
 	var files []string
 
-	for _, name := range []string{"proguard-rules.pro", "proguard.pro"} {
-		path := filepath.Join(sourceRoot(c.AppDir), name)
-		if fileExists(path) {
-			files = append(files, path)
+	for _, dir := range []string{sourceRoot(c.AppDir), c.AppDir} {
+		for _, name := range []string{"proguard-rules.pro", "proguard.pro"} {
+			path := filepath.Join(dir, name)
+			if fileExists(path) {
+				files = append(files, path)
+			}
 		}
 	}
 	files = append(files, c.ProguardFiles...)

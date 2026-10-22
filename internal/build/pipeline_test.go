@@ -219,7 +219,7 @@ func TestAppendDexPreservesEntries(t *testing.T) {
 	writeFile(t, dex1, "dex-uno")
 	writeFile(t, dex2, "dex-dos")
 
-	if err := appendDex(baseApk, []string{dex1, dex2}, nil); err != nil {
+	if err := appendDex(baseApk, []string{dex1, dex2}, nil, nil); err != nil {
 		t.Fatalf("appendDex: %v", err)
 	}
 

@@ -16,14 +16,38 @@ var reDependencyLine = regexp.MustCompile(`^(?:"([^"]+)"|([A-Za-z_]\w*))\s*\((.*
 // reQuotedString extrae la primera cadena entre comillas del texto.
 var reQuotedString = regexp.MustCompile(`"([^"]*)"`)
 
+// dependencySets son las dependencias de un módulo, separadas por la variante
+// en la que aplican.
+//
+// En Gradle, una dependencia declarada como debugImplementation solo existe en
+// la variante debug: en un release no está en el classpath. Rain necesita
+// distinguirlo, porque si una dependencia de debug se colase en un release,
+// R8 abortaría al no encontrar las clases opcionales que esa dependencia
+// referencia. El caso típico es androidx.compose.ui:ui-tooling, que referencia
+// androidx.compose.animation.tooling.*, un artefacto opcional que no está en
+// el classpath. d8 no valida referencias (el debug compila sin problema), pero
+// R8 sí y aborta con "Missing class".
+type dependencySets struct {
+	// Common son las de implementation/api: van en todas las variantes.
+	Common []Dependency
+	// Debug son las de debugImplementation/debugApi.
+	Debug []Dependency
+	// Release son las de releaseImplementation/releaseApi.
+	Release []Dependency
+	// Kapt son los annotation processors.
+	Kapt []Dependency
+	// Local son las dependencias que apuntan a otro módulo del proyecto.
+	Local []string
+}
+
 // parseDependencies parsea el bloque "dependencies" de un módulo.
 //
-// Devuelve las dependencias de compilación/runtime, los annotation processors
-// (kapt) y las referencias a otros módulos del proyecto.
-//
-// Se ignoran las configuraciones de test (testImplementation,
-// androidTestImplementation...): no forman parte de la app.
-func parseDependencies(body string) (deps []Dependency, kapt []Dependency, local []string) {
+// Devuelve las dependencias de compilación y runtime separadas por variante,
+// los annotation processors de kapt y las dependencias que apuntan a otro
+// módulo del proyecto.
+func parseDependencies(body string) dependencySets {
+	var sets dependencySets
+
 	// Primero los val locales del propio bloque: las dependencias sin versión
 	// suelen referenciar un BOM declarado así.
 	vals := map[string]Dependency{}
@@ -65,18 +89,22 @@ func parseDependencies(body string) (deps []Dependency, kapt []Dependency, local
 
 		switch {
 		case dep.Local:
-			local = append(local, dep.Coordinate)
+			sets.Local = append(sets.Local, dep.Coordinate)
 		case scope == "kapt":
-			kapt = append(kapt, dep)
+			sets.Kapt = append(sets.Kapt, dep)
 		case scope == "ksp":
 			// rain no soporta KSP: los processors de KSP no se ejecutan.
 		case strings.HasPrefix(scope, "test") || strings.HasPrefix(scope, "androidTest"):
 			// Configuraciones de test: no van en la app.
+		case strings.HasPrefix(scope, "debug"):
+			sets.Debug = append(sets.Debug, dep)
+		case strings.HasPrefix(scope, "release"):
+			sets.Release = append(sets.Release, dep)
 		default:
-			deps = append(deps, dep)
+			sets.Common = append(sets.Common, dep)
 		}
 	}
-	return deps, kapt, local
+	return sets
 }
 
 // parseDependencyValue interpreta el argumento de una dependencia.

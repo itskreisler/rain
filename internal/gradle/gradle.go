@@ -53,11 +53,20 @@ type Module struct {
 	JavaTarget int
 	// Dependencies son las dependencias de compilación y runtime.
 	Dependencies []Dependency
+	// DebugDependencies son las que solo van en la variante debug
+	// (debugImplementation). En un release no están en el classpath.
+	DebugDependencies []Dependency
+	// ReleaseDependencies son las que solo van en la variante release
+	// (releaseImplementation).
+	ReleaseDependencies []Dependency
 	// Kapt son los annotation processors (kapt).
 	Kapt []Dependency
 	// LocalProjects son las dependencias que apuntan a otro módulo del
 	// proyecto ("project(":baselineprofile")").
 	LocalProjects []string
+	// ProguardFiles son las reglas de R8/ProGuard del módulo, con la ruta
+	// relativa a la raíz del proyecto ("app/proguard-rules.pro").
+	ProguardFiles []string
 }
 
 // Dependency es una dependencia declarada en el bloque dependencies.
@@ -206,7 +215,12 @@ func ParseModule(dir string) (*Module, error) {
 
 	// El bloque dependencies.
 	if deps, ok := findBlock(src, "dependencies"); ok {
-		mod.Dependencies, mod.Kapt, mod.LocalProjects = parseDependencies(deps)
+		sets := parseDependencies(deps)
+		mod.Dependencies = sets.Common
+		mod.DebugDependencies = sets.Debug
+		mod.ReleaseDependencies = sets.Release
+		mod.Kapt = sets.Kapt
+		mod.LocalProjects = sets.Local
 	}
 
 	// El target de Java también puede estar fuera del bloque android
@@ -215,6 +229,16 @@ func ParseModule(dir string) (*Module, error) {
 		if kotlin, ok := findBlock(src, "kotlin"); ok {
 			mod.JavaTarget = javaVersion(kotlin)
 		}
+	}
+
+	// Las reglas de R8 del módulo. Solo se importan las que están dentro del
+	// proyecto: las que salen de getDefaultProguardFile() viven en el SDK de
+	// Android y rain las sustituye por sus propias reglas base.
+	for _, p := range parseProguardFiles(src) {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			continue
+		}
+		mod.ProguardFiles = append(mod.ProguardFiles, filepath.Join(mod.Path, p))
 	}
 
 	return mod, nil

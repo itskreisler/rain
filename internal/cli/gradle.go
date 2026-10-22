@@ -115,6 +115,7 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 			VersionName:   app.VersionName,
 			ApplicationID: app.ApplicationID,
 			JavaTarget:    app.JavaTarget,
+			ProguardFiles: app.ProguardFiles,
 		},
 		Modules: []config.Module{{Name: "app", Path: app.Path}},
 	}
@@ -123,11 +124,39 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 		cfg.Project.Package = app.ApplicationID
 	}
 
-	deps, err := expandDependencies(app.Dependencies)
+	// Las versiones gestionadas por los BOM se leen de todos los artefactos
+	// (los BOM suelen estar en las dependencias comunes, pero las de una
+	// variante pueden declarar la versión sin ella).
+	all := make([]gradle.Dependency, 0, len(app.Dependencies)+len(app.DebugDependencies)+len(app.ReleaseDependencies))
+	all = append(all, app.Dependencies...)
+	all = append(all, app.DebugDependencies...)
+	all = append(all, app.ReleaseDependencies...)
+	managed, err := managedVersions(all)
+	if err != nil {
+		return config.Config{}, err
+	}
+
+	deps, err := expandDependencies(app.Dependencies, managed)
 	if err != nil {
 		return config.Config{}, err
 	}
 	cfg.Dependencies = deps
+
+	// Las dependencias por variante: en Gradle, debugImplementation solo está
+	// en el debug y releaseImplementation solo en el release. Rain lo respeta
+	// para que un release no lleve dependencias de depuración, que además
+	// referencian clases opcionales y rompen R8.
+	debugDeps, err := expandDependencies(app.DebugDependencies, managed)
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.Build.DebugDependencies = debugDeps
+
+	releaseDeps, err := expandDependencies(app.ReleaseDependencies, managed)
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.Build.ReleaseDependencies = releaseDeps
 
 	for _, k := range app.Kapt {
 		if k.Platform {
@@ -146,13 +175,12 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 	return cfg, nil
 }
 
-// expandDependencies resuelve las versiones que faltan en las dependencias.
+// managedVersions lee de los BOM declarados las versiones que gestionan.
 //
-// Las dependencias declaradas sin versión heredan la que fija un BOM
-// (platform(...)). El BOM no es un artefacto que se pueda descargar: solo
-// declara versiones en su dependencyManagement, así que se lee su POM y se
-// usa como tabla de versiones.
-func expandDependencies(deps []gradle.Dependency) ([]string, error) {
+// El BOM no es un artefacto que se pueda descargar: solo declara versiones en
+// su dependencyManagement, así que se lee su POM y se usa como tabla de
+// versiones.
+func managedVersions(deps []gradle.Dependency) (map[string]string, error) {
 	managed := map[string]string{}
 	for _, d := range deps {
 		if !d.Platform {
@@ -166,7 +194,14 @@ func expandDependencies(deps []gradle.Dependency) ([]string, error) {
 			managed[k] = v
 		}
 	}
+	return managed, nil
+}
 
+// expandDependencies resuelve las versiones que faltan en las dependencias.
+//
+// Las dependencias declaradas sin versión heredan la que fija un BOM
+// (platform(...)).
+func expandDependencies(deps []gradle.Dependency, managed map[string]string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	for _, d := range deps {

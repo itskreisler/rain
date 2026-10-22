@@ -38,6 +38,13 @@ type Library struct {
 	ManifestPath  string // AndroidManifest.xml del AAR, extraído a disco para fusionarlo
 	NativeABIs    []string
 	ProguardRules string // ruta a las reglas R8/ProGuard del AAR (proguard.txt), si las trae
+
+	// ServiceFiles son los ficheros META-INF/services que traía el AAR en su
+	// raíz, indexados por nombre de servicio y con la ruta del fichero ya
+	// extraído a disco. Los AAR los guardan fuera de classes.jar, así que sin
+	// esto se perderían por el camino: el ServiceLoader no encontraría al
+	// proveedor y la app fallaría al arrancar.
+	ServiceFiles map[string]string
 }
 
 // Set es el conjunto de dependencias preparadas para compilar.
@@ -114,6 +121,118 @@ func (s *Set) ProguardFiles() []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// ServiceFiles devuelve los proveedores de java.util.ServiceLoader que
+// declaran las dependencias, indexados por nombre de servicio.
+//
+// Cada servicio es el nombre de una interfaz y sus valores son las clases que
+// la implementan. Se fusionan los ficheros META-INF/services de los JAR y de la
+// raíz de los AAR: sin esto el ServiceLoader no encuentra nada y la app
+// revienta al arrancar (por ejemplo, sin el dispatcher principal de las
+// coroutines: "Module with the Main dispatcher is missing").
+func (s *Set) ServiceFiles() (map[string][]string, error) {
+	jars := make([]string, 0, len(s.Libraries))
+	for _, lib := range s.Libraries {
+		// JAR plano (o el classes.jar de un AAR): los servicios están dentro.
+		if lib.ClassJar != "" {
+			jars = append(jars, lib.ClassJar)
+		}
+	}
+	out, err := ServiceFilesFromJars(jars)
+	if err != nil {
+		return nil, err
+	}
+
+	// AAR: los servicios están en la raíz del AAR, no en classes.jar.
+	for _, lib := range s.Libraries {
+		for service, path := range lib.ServiceFiles {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, impl := range parseServiceFile(string(data)) {
+				addServiceImpl(out, service, impl)
+			}
+		}
+	}
+	return out, nil
+}
+
+// ServiceFilesFromJars lee los META-INF/services de un conjunto de jars y
+// devuelve los proveedores indexados por nombre de servicio.
+func ServiceFilesFromJars(jars []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, jar := range jars {
+		fromJar, err := serviceFilesFromJar(jar)
+		if err != nil {
+			return nil, err
+		}
+		for service, impls := range fromJar {
+			for _, impl := range impls {
+				addServiceImpl(out, service, impl)
+			}
+		}
+	}
+	return out, nil
+}
+
+// addServiceImpl añade una implementación al servicio, ignorando vacíos,
+// comentarios y duplicados.
+func addServiceImpl(out map[string][]string, service, impl string) {
+	service = strings.TrimSpace(service)
+	impl = strings.TrimSpace(impl)
+	if service == "" || impl == "" || strings.HasPrefix(impl, "#") {
+		return
+	}
+	for _, existing := range out[service] {
+		if existing == impl {
+			return
+		}
+	}
+	out[service] = append(out[service], impl)
+}
+
+// serviceFilesFromJar lee los META-INF/services de un jar.
+func serviceFilesFromJar(path string) (map[string][]string, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = zr.Close() }()
+
+	out := map[string][]string{}
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(f.Name, "META-INF/services/")
+		if name == f.Name || name == "" || strings.HasSuffix(f.Name, "/") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			continue
+		}
+		out[name] = append(out[name], parseServiceFile(string(data))...)
+	}
+	return out, nil
+}
+
+// parseServiceFile devuelve las implementaciones declaradas en un fichero
+// META-INF/services, ignorando líneas vacías y comentarios.
+func parseServiceFile(content string) []string {
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
 	return out
 }
 
@@ -395,6 +514,22 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 				return nil, err
 			}
 			lib.ProguardRules = dest
+		case strings.HasPrefix(f.Name, "META-INF/services/"):
+			// Los AAR guardan los servicios de ServiceLoader en su raíz, fuera
+			// de classes.jar. Sin extractarlos se pierden y la app no
+			// encuentra al proveedor en tiempo de ejecución.
+			name := strings.TrimPrefix(f.Name, "META-INF/services/")
+			if name == "" || strings.HasSuffix(f.Name, "/") {
+				continue
+			}
+			dest := filepath.Join(dir, "services", artifact+"-"+version, name)
+			if err := extractFile(f, dest); err != nil {
+				return nil, err
+			}
+			if lib.ServiceFiles == nil {
+				lib.ServiceFiles = map[string]string{}
+			}
+			lib.ServiceFiles[name] = dest
 		}
 	}
 

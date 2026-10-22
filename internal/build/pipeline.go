@@ -459,6 +459,26 @@ func Run(cfg Config) error {
 			}
 		}
 
+		// AGP inyecta permisos según el targetSdk (hoy POST_NOTIFICATIONS a
+		// partir de API 33). Rain los añade igual para que el APK se comporte
+		// como el de Gradle: sin ellos el sistema descarta las notificaciones
+		// en silencio y la app parece no hacer nada. El resultado se escribe en
+		// un fichero nuevo: el manifest del proyecto no se toca nunca.
+		if manifestText, err := os.ReadFile(linkManifest); err == nil {
+			withPerms, err := aar.WithImplicitPermissions(string(manifestText), cfg.TargetSdk)
+			if err != nil {
+				ui.Warn("no se pudieron añadir los permisos implícitos: %v", err)
+			} else if withPerms != string(manifestText) {
+				permsPath := filepath.Join(cfg.BuildDir, "manifest-with-permissions.xml")
+				if err := os.WriteFile(permsPath, []byte(withPerms), 0644); err != nil {
+					ui.Warn("no se pudo escribir el manifest con permisos implícitos: %v", err)
+				} else {
+					linkManifest = permsPath
+					ui.VerboseLog("permisos implícitos añadidos al manifest")
+				}
+			}
+		}
+
 		args := []string{
 			"link", "-o", baseApk, "-I", cfg.AndroidJar,
 			"--manifest", linkManifest, "--java", genDir,
@@ -585,6 +605,15 @@ public final class BuildConfig {
 
 	javaUpToDate := dexIsUpToDate(cfg.BuildDir, currentJavaHash)
 
+	// Proveedores de java.util.ServiceLoader declarados por las dependencias.
+	// Los ficheros META-INF/services van dentro del APK (el ServiceLoader los
+	// busca ahí en tiempo de ejecución) y hay que mantener vivos a los
+	// proveedores: R8 no reescribe esos ficheros y los eliminaría.
+	serviceProviders, err := cfg.serviceProviders()
+	if err != nil {
+		return fmt.Errorf("leyendo los servicios de las dependencias: %w", err)
+	}
+
 	if javaUpToDate {
 		ui.Info("java sin cambios, reutilizando classes.dex")
 	} else {
@@ -682,6 +711,19 @@ public final class BuildConfig {
 				r8Args = append(r8Args, "--pg-conf", pg)
 			}
 
+			// R8 no sabe que las clases de los proveedores de servicio están
+			// vivas por el fichero META-INF/services: si no se le dice, las
+			// elimina y la app falla al arrancar ("Module with the Main
+			// dispatcher is missing").
+			if len(serviceProviders) > 0 {
+				svcRules := filepath.Join(cfg.BuildDir, "r8-services.pro")
+				if err := os.WriteFile(svcRules, serviceKeepRules(serviceProviders), 0644); err != nil {
+					return fmt.Errorf("escribiendo reglas R8 de servicios: %w", err)
+				}
+				ui.VerboseLog("reglas R8 de servicios: %s (%d servicios)", svcRules, len(serviceProviders))
+				r8Args = append(r8Args, "--pg-conf", svcRules)
+			}
+
 			// mapping.txt para desofuscar crashes (nombre estable tras el build).
 			mappingPath := filepath.Join(cfg.BuildDir, "mapping.txt")
 			r8Args = append(r8Args, "--pg-map-output", mappingPath)
@@ -726,7 +768,18 @@ public final class BuildConfig {
 		ui.Info("empaquetando %d bibliotecas nativas...", len(nativeLibs))
 	}
 
-	if err := appendDex(baseApk, dexFiles, nativeLibs); err != nil {
+	// Los recursos Java de las dependencias (META-INF/services) van dentro del
+	// APK: el ServiceLoader los busca en el classpath y, sin ellos, la app no
+	// encuentra al proveedor y revienta al arrancar.
+	javaResources, err := writeServiceFiles(filepath.Join(cfg.BuildDir, "javares"), serviceProviders)
+	if err != nil {
+		return err
+	}
+	if len(javaResources) > 0 {
+		ui.Info("empaquetando %d ficheros de servicio...", len(javaResources))
+	}
+
+	if err := appendDex(baseApk, dexFiles, nativeLibs, javaResources); err != nil {
 		return err
 	}
 
@@ -1110,7 +1163,10 @@ func dirExists(path string) bool {
 // el resto de entradas (manifest, resources.arsc...), igual que hace
 // android2apk. No usamos "zip" porque machacaría resources.arsc y su alineado.
 // nativeLibs mapea la ruta dentro del APK (lib/<abi>/x.so) al fichero origen.
-func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string) error {
+// javaResources mapea la ruta dentro del APK (META-INF/services/...) al
+// fichero origen: son los recursos Java de las dependencias, que el
+// ServiceLoader busca en el APK en tiempo de ejecución.
+func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string, javaResources map[string]string) error {
 	src, err := zip.OpenReader(baseApk)
 	if err != nil {
 		return fmt.Errorf("abriendo APK base: %w", err)
@@ -1143,6 +1199,9 @@ func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string) 
 	for name := range nativeLibs {
 		skip[name] = true
 	}
+	for name := range javaResources {
+		skip[name] = true
+	}
 
 	for _, file := range src.File {
 		if skip[file.Name] {
@@ -1167,6 +1226,19 @@ func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string) 
 	sort.Strings(names)
 	for _, name := range names {
 		if err := addFileEntry(writer, name, nativeLibs[name]); err != nil {
+			return fail(fmt.Errorf("añadiendo %s: %w", name, err))
+		}
+	}
+
+	// Recursos Java de las dependencias: META-INF/services/... (orden
+	// determinista).
+	resNames := make([]string, 0, len(javaResources))
+	for name := range javaResources {
+		resNames = append(resNames, name)
+	}
+	sort.Strings(resNames)
+	for _, name := range resNames {
+		if err := addFileEntry(writer, name, javaResources[name]); err != nil {
 			return fail(fmt.Errorf("añadiendo %s: %w", name, err))
 		}
 	}
@@ -1296,7 +1368,13 @@ func apkNameFor(cfg Config) string {
 	if version == "" {
 		version = "1.0"
 	}
-	return fmt.Sprintf("%s-%s-%s.apk", name, version, detectABI(cfg.AppDir))
+	apk := fmt.Sprintf("%s-%s-%s.apk", name, version, detectABI(cfg.AppDir))
+	if cfg.Release {
+		// El release lleva sufijo: si no, el nombre descriptivo del release
+		// pisaría al del debug y solo quedaría una de las dos variantes.
+		apk = strings.TrimSuffix(apk, ".apk") + "-release.apk"
+	}
+	return apk
 }
 
 func sanitizeTag(value string) string {

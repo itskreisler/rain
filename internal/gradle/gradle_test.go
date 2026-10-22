@@ -112,13 +112,19 @@ dependencies {
 	}
 
 	// Dependencias: se ignoran las de test.
-	if len(app.Dependencies) != 5 {
-		t.Errorf("Dependencies = %d, se esperaban 5: %+v", len(app.Dependencies), app.Dependencies)
+	if len(app.Dependencies) != 4 {
+		t.Errorf("Dependencies = %d, se esperaban 4: %+v", len(app.Dependencies), app.Dependencies)
 	}
 	for _, d := range app.Dependencies {
 		if d.Scope == "testImplementation" || d.Scope == "androidTestImplementation" {
 			t.Errorf("no debería estar la dependencia de test %q", d.Coordinate)
 		}
+	}
+
+	// Las de debug van aparte: en un release no están en el classpath.
+	if len(app.DebugDependencies) != 1 ||
+		app.DebugDependencies[0].Coordinate != "androidx.compose.ui:ui-tooling" {
+		t.Errorf("DebugDependencies = %+v", app.DebugDependencies)
 	}
 
 	// El BOM es una platform, no una dependencia normal.
@@ -150,7 +156,7 @@ dependencies {
 }
 
 func TestParseDependenciesIgnoresTestScopes(t *testing.T) {
-	deps, kapt, local := parseDependencies(`
+	sets := parseDependencies(`
     implementation("a:b:1.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
@@ -158,14 +164,50 @@ func TestParseDependenciesIgnoresTestScopes(t *testing.T) {
     "baselineProfile"(project(":baselineprofile"))
 `)
 
-	if len(deps) != 1 || deps[0].Coordinate != "a:b:1.0" {
-		t.Errorf("deps = %+v", deps)
+	if len(sets.Common) != 1 || sets.Common[0].Coordinate != "a:b:1.0" {
+		t.Errorf("Common = %+v", sets.Common)
 	}
-	if len(kapt) != 1 {
-		t.Errorf("kapt = %+v", kapt)
+	if len(sets.Kapt) != 1 {
+		t.Errorf("Kapt = %+v", sets.Kapt)
 	}
-	if len(local) != 1 || local[0] != ":baselineprofile" {
-		t.Errorf("local = %v", local)
+	if len(sets.Local) != 1 || sets.Local[0] != ":baselineprofile" {
+		t.Errorf("Local = %v", sets.Local)
+	}
+}
+
+// TestParseDependenciesSeparatesVariants comprueba que las dependencias de
+// debug y de release no se mezclan con las comunes: en Gradle,
+// debugImplementation solo está en la variante debug.
+func TestParseDependenciesSeparatesVariants(t *testing.T) {
+	sets := parseDependencies(`
+    implementation("a:b:1.0")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    releaseImplementation("com.example:only-in-release:1.0")
+`)
+
+	if len(sets.Common) != 1 || sets.Common[0].Coordinate != "a:b:1.0" {
+		t.Errorf("Common = %+v", sets.Common)
+	}
+	if len(sets.Debug) != 1 || sets.Debug[0].Coordinate != "androidx.compose.ui:ui-tooling" {
+		t.Errorf("Debug = %+v", sets.Debug)
+	}
+	if len(sets.Release) != 1 || sets.Release[0].Coordinate != "com.example:only-in-release:1.0" {
+		t.Errorf("Release = %+v", sets.Release)
+	}
+}
+
+// TestParseProguardFilesIgnoresSDKDefaults comprueba que solo se importan las
+// reglas que están en el proyecto: las que trae getDefaultProguardFile viven
+// en el SDK y rain usa las suyas.
+func TestParseProguardFilesIgnoresSDKDefaults(t *testing.T) {
+	files := parseProguardFiles(`
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+`)
+	if len(files) != 1 || files[0] != "proguard-rules.pro" {
+		t.Errorf("files = %v", files)
 	}
 }
 

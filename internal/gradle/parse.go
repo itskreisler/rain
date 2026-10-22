@@ -158,6 +158,73 @@ func isIdentChar(c byte) bool {
 		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
+// parseProguardFiles extrae las rutas de archivos de reglas que aparecen en
+// las llamadas proguardFiles(...) del archivo de build.
+//
+// Se ignoran las que no son rutas (las que trae getDefaultProguardFile,
+// que apuntan al SDK de Android): rain tiene sus propias reglas base.
+func parseProguardFiles(src string) []string {
+	var out []string
+	for _, args := range findCalls(src, "proguardFiles") {
+		for _, arg := range splitStrings(args) {
+			if !strings.HasSuffix(arg, ".pro") && !strings.HasSuffix(arg, ".txt") {
+				continue
+			}
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+// findCalls devuelve el texto de los argumentos de cada llamada a name(...) que
+// aparece en src.
+//
+// A diferencia de un regex, tiene en cuenta los paréntesis anidados: una
+// llamada puede ser proguardFiles(getDefaultProguardFile("x.txt"), "y.pro") y
+// el regex se pararía en el primer ")".
+func findCalls(src, name string) []string {
+	var out []string
+	for i := 0; i < len(src); {
+		j := strings.Index(src[i:], name)
+		if j < 0 {
+			break
+		}
+		pos := i + j
+		i = pos + len(name)
+
+		// El nombre debe ir solo: no vale "misproguardFiles(".
+		if pos > 0 && isIdentChar(src[pos-1]) {
+			continue
+		}
+		// Debe seguir un "(".
+		k := i
+		for k < len(src) && (src[k] == ' ' || src[k] == '\t' || src[k] == '\r' || src[k] == '\n') {
+			k++
+		}
+		if k >= len(src) || src[k] != '(' {
+			continue
+		}
+		depth := 0
+		end := k
+		for ; end < len(src); end++ {
+			switch src[end] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			if depth == 0 {
+				break
+			}
+		}
+		if end < len(src) {
+			out = append(out, src[k+1:end])
+			i = end + 1
+		}
+	}
+	return out
+}
+
 // stringValue busca la primera asignación de cadena de una clave.
 func stringValue(src, key string) string {
 	re := regexp.MustCompile(`(?m)` + regexp.QuoteMeta(key) + `\s*=\s*"([^"]*)"`)

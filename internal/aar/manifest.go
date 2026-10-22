@@ -361,6 +361,55 @@ func isComponentTag(tag string) bool {
 	return false
 }
 
+// postNotificationsPermission es el permiso que AGP inyecta por su cuenta a
+// partir de API 33.
+const postNotificationsPermission = "android.permission.POST_NOTIFICATIONS"
+
+// WithImplicitPermissions devuelve el manifest con los permisos que el merger
+// de AGP añade implícitamente según el targetSdk.
+//
+// Hoy solo POST_NOTIFICATIONS: desde Android 13 (API 33) una app necesita
+// declararlo para poder publicar notificaciones. AGP lo inyecta solo, así que
+// una app que no lo declara en su manifest funciona con Gradle y con Rain no:
+// el sistema descarta las notificaciones en silencio y la app parece no hacer
+// nada. Rain lo añade igual que AGP para que ambos builds se comporten igual.
+func WithImplicitPermissions(manifestText string, targetSdk int) (string, error) {
+	if targetSdk < 33 {
+		return manifestText, nil
+	}
+	if strings.Contains(manifestText, postNotificationsPermission) {
+		return manifestText, nil
+	}
+
+	idx := strings.Index(manifestText, "<manifest")
+	if idx < 0 {
+		return manifestText, fmt.Errorf("el manifest no parece válido: no se encuentra <manifest>")
+	}
+	// Se busca el cierre de la etiqueta de apertura respetando las comillas
+	// de los atributos: un ">" dentro de un valor no cierra la etiqueta.
+	end := -1
+	inQuotes := false
+	for i := idx; i < len(manifestText); i++ {
+		switch manifestText[i] {
+		case '"':
+			inQuotes = !inQuotes
+		case '>':
+			if !inQuotes {
+				end = i
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		return manifestText, fmt.Errorf("el manifest no parece válido: <manifest> sin cerrar")
+	}
+
+	perm := fmt.Sprintf("\n    <uses-permission android:name=%q />", postNotificationsPermission)
+	return manifestText[:end+1] + perm + manifestText[end+1:], nil
+}
+
 // androidAttr devuelve el valor de un atributo, tenga o no el prefijo
 // android: (el namespace por defecto de un manifest).
 func androidAttr(attrs []xml.Attr, local string) string {

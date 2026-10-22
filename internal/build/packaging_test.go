@@ -68,7 +68,7 @@ func TestAppendDexNoDuplicaLasEntradasDelApkBase(t *testing.T) {
 	}
 
 	nativeLibs := map[string]string{"lib/arm64-v8a/a.so": so}
-	if err := appendDex(baseApk, []string{dex}, nativeLibs); err != nil {
+	if err := appendDex(baseApk, []string{dex}, nativeLibs, nil); err != nil {
 		t.Fatalf("appendDex: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestAppendDexAñadeElDexNuevo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := appendDex(baseApk, []string{dex}, nil); err != nil {
+	if err := appendDex(baseApk, []string{dex}, nil, nil); err != nil {
 		t.Fatalf("appendDex: %v", err)
 	}
 
@@ -129,4 +129,57 @@ func TestAppendDexAñadeElDexNuevo(t *testing.T) {
 		return
 	}
 	t.Fatal("classes.dex no está en el APK")
+}
+
+// TestAppendDexAñadeLosRecursosJava comprueba que los ficheros
+// META-INF/services de las dependencias acaban dentro del APK (ahí los busca
+// el ServiceLoader en tiempo de ejecución) y que no se duplican cuando el APK
+// base viene de un build anterior.
+func TestAppendDexAñadeLosRecursosJava(t *testing.T) {
+	dir := t.TempDir()
+
+	baseApk := filepath.Join(dir, "base.apk")
+	writeZip(t, baseApk, map[string]string{
+		"AndroidManifest.xml":                   "manifest",
+		"META-INF/services/com.example.Service": "viejo",
+	})
+
+	service := filepath.Join(dir, "service.txt")
+	if err := os.WriteFile(service, []byte("com.example.A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	javaResources := map[string]string{"META-INF/services/com.example.Service": service}
+	if err := appendDex(baseApk, nil, nil, javaResources); err != nil {
+		t.Fatalf("appendDex: %v", err)
+	}
+
+	names := zipEntries(t, baseApk)
+	if n := countEntry(names, "META-INF/services/com.example.Service"); n != 1 {
+		t.Errorf("el fichero de servicio aparece %d veces, quiero 1: %v", n, names)
+	}
+
+	r, err := zip.OpenReader(baseApk)
+	if err != nil {
+		t.Fatalf("abriendo %s: %v", baseApk, err)
+	}
+	defer func() { _ = r.Close() }()
+
+	for _, f := range r.File {
+		if f.Name != "META-INF/services/com.example.Service" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, len("com.example.A\n"))
+		n, _ := rc.Read(buf)
+		_ = rc.Close()
+		if string(buf[:n]) != "com.example.A\n" {
+			t.Errorf("el fichero de servicio = %q, quiero el nuevo", string(buf[:n]))
+		}
+		return
+	}
+	t.Fatal("el fichero de servicio no está en el APK")
 }
