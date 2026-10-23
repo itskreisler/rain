@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Descargar módulos
@@ -58,7 +58,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Instalar JDK 17
@@ -138,7 +138,7 @@ jobs:
       - uses: actions/setup-go@v5
         if: steps.ver.outputs.bump == 'true'
         with:
-          go-version: "stable"
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Compilar binarios estáticos (linux amd64/arm64)
