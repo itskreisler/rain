@@ -110,7 +110,7 @@ jobs:
   release:
     name: Publicación de Release
     needs: build-and-test-examples
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip release]')
+    if: (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') && !contains(github.event.head_commit.message, '[skip release]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -132,7 +132,7 @@ jobs:
             echo "Siguiente versión: ${version}"
           else
             echo "bump=false" >> "$GITHUB_OUTPUT"
-            echo "Sin feat/fix desde el último tag: no se crea release."
+            echo "Sin cambios desde el último tag: no se crea release."
           fi
 
       - uses: actions/setup-go@v5
