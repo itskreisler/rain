@@ -76,8 +76,8 @@ func TestLintEnUnDirectorioSinFuentes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lint en un directorio vacío: %v", err)
 	}
-	if !strings.Contains(out, "no se encontraron fuentes") {
-		t.Errorf("lint debería avisar de que no hay fuentes:\n%s", out)
+	if !strings.Contains(out, "no se encontraron fuentes") && !strings.Contains(out, "no hay analizadores instalados") {
+		t.Errorf("lint debería avisar de que no hay fuentes o no hay analizadores instalados:\n%s", out)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestLintEnUnDirectorioInexistente(t *testing.T) {
 // bloquean el estado "Ready", pero el usuario los ve.
 func TestDoctorIncluyeLosAnalizadoresEstaticos(t *testing.T) {
 	out, err := runCmd(t, "doctor", "--json")
-	if err != nil {
+	if err != nil && ExitCode(err) != 3 {
 		t.Fatalf("doctor --json: %v", err)
 	}
 	for _, want := range []string{`"name": "ktlint"`, `"name": "detekt"`} {

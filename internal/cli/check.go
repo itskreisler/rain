@@ -18,6 +18,7 @@ import (
 // así que la única forma de detectarlos sin empaquetar es compilar. El check
 // hace exactamente eso y se salta el resto del pipeline.
 func newCheckCmd() *cobra.Command {
+	devlog("newCheckCmd", "", "Crea el subcomando check para verificar tipos sin generar APK")
 	var (
 		androidJar string
 		release    bool

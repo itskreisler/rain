@@ -15,6 +15,7 @@ import (
 )
 
 func newGradleCmd() *cobra.Command {
+	devlog("newGradleCmd", "", "Crea el subcomando gradle para importar proyectos Gradle")
 	var (
 		output string
 		force  bool
@@ -88,6 +89,7 @@ var importWarnings []string
 
 // gradleConfig traduce un proyecto Gradle a la configuración de rain.
 func gradleConfig(proj *gradle.Project) (config.Config, error) {
+	devlog("gradleConfig", fmt.Sprintf("proj=%+v", proj), "Traduce la configuración de un proyecto Gradle a una estructura de rain")
 	importWarnings = nil
 
 	app := proj.App
@@ -181,6 +183,7 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 // su dependencyManagement, así que se lee su POM y se usa como tabla de
 // versiones.
 func managedVersions(deps []gradle.Dependency) (map[string]string, error) {
+	devlog("managedVersions", fmt.Sprintf("deps=%v", deps), "Obtiene las versiones gestionadas por BOMs")
 	managed := map[string]string{}
 	for _, d := range deps {
 		if !d.Platform {
@@ -202,6 +205,7 @@ func managedVersions(deps []gradle.Dependency) (map[string]string, error) {
 // Las dependencias declaradas sin versión heredan la que fija un BOM
 // (platform(...)).
 func expandDependencies(deps []gradle.Dependency, managed map[string]string) ([]string, error) {
+	devlog("expandDependencies", fmt.Sprintf("deps=%v, managed=%+v", deps, managed), "Expande y resuelve las versiones faltantes en dependencias")
 	var out []string
 	seen := map[string]bool{}
 	for _, d := range deps {

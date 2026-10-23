@@ -6,8 +6,8 @@ dependencies = [
 ]
 
 [project]
-name = "ComposeLabDemo"
-package = "com.example.composelab"
+name = "LiquidGlassMusicPlayer"
+package = "com.kyant.liquidglass.music"
 version = "1.0"
 
 [build]

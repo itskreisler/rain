@@ -41,6 +41,7 @@ type Platform string
 const (
 	Alpine  Platform = "alpine"
 	Termux  Platform = "termux"
+	Ubuntu  Platform = "ubuntu"
 	Generic Platform = "generic"
 )
 
@@ -310,10 +311,26 @@ func DetectPlatform() Platform {
 	if strings.Contains(os.Getenv("PREFIX"), "com.termux") {
 		return Termux
 	}
+	if _, err := exec.LookPath("pkg"); err == nil {
+		return Termux
+	}
 	if data, err := os.ReadFile("/etc/os-release"); err == nil {
-		if strings.Contains(strings.ToLower(string(data)), "alpine") {
+		content := strings.ToLower(string(data))
+		if strings.Contains(content, "alpine") {
 			return Alpine
 		}
+		if strings.Contains(content, "ubuntu") || strings.Contains(content, "debian") {
+			return Ubuntu
+		}
+	}
+	if _, err := exec.LookPath("apk"); err == nil {
+		return Alpine
+	}
+	if _, err := exec.LookPath("apt"); err == nil {
+		return Ubuntu
+	}
+	if _, err := exec.LookPath("apt-get"); err == nil {
+		return Ubuntu
 	}
 	return Generic
 }
@@ -336,10 +353,17 @@ func Recommendations(platform Platform, profile Profile) []string {
 		}
 		return append(commands, "rain doctor --fix --profile "+string(profile))
 
+	case Ubuntu:
+		commands := []string{
+			"sudo apt update && sudo apt install -y openjdk-17-jdk zip zipalign aapt",
+		}
+		return append(commands, "rain doctor --fix --profile "+string(profile))
+
 	default:
 		commands := []string{
-			"# Debian/Ubuntu: sudo apt install openjdk-17-jdk zip",
-			"# aapt2/zipalign: instala Android build-tools 36 o el paquete de tu distro",
+			"# Termux: pkg install openjdk-17 aapt2 d8 apksigner zipalign zip",
+			"# Ubuntu/Debian: sudo apt update && sudo apt install -y openjdk-17-jdk zip zipalign aapt",
+			"# Alpine: apk add openjdk17-jdk zip",
 			"rain doctor --fix --profile " + string(profile),
 		}
 		return commands

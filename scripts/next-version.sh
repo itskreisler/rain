@@ -5,7 +5,7 @@
 #   BREAKING CHANGE / feat!:  -> major
 #   feat:                     -> minor
 #   fix:/perf:/refactor:/...  -> patch
-#   docs/test/chore/ci/style  -> no sube versión (salvo que no exista tag)
+#   cualquier otro commit     -> patch (si hay commits desde el último tag)
 #
 # Uso:
 #   scripts/next-version.sh            # imprime la siguiente versión (vX.Y.Z)
@@ -38,6 +38,8 @@ if grep -qE '^[a-z]+(\([^)]*\))?!:|BREAKING[ -]CHANGE' <<<"${log}"; then
 elif grep -qE '^feat(\([^)]*\))?:' <<<"${log}"; then
   bump="minor"
 elif grep -qE '^(fix|perf|refactor|revert|build|deps)(\([^)]*\))?:' <<<"${log}"; then
+  bump="patch"
+elif [[ -n "${log}" ]]; then
   bump="patch"
 fi
 

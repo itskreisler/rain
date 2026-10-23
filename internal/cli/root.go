@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -31,6 +32,7 @@ func (e *exitError) Unwrap() error { return e.err }
 
 // ExitCode devuelve el código de salida asociado a err (1 por defecto).
 func ExitCode(err error) int {
+	devlog("ExitCode", fmt.Sprintf("err=%v", err), "Devuelve el código de salida asociado a un error")
 	var e *exitError
 	if errors.As(err, &e) {
 		return e.code
@@ -39,12 +41,14 @@ func ExitCode(err error) int {
 }
 
 func usageErr(format string, a ...any) error {
+	devlog("usageErr", fmt.Sprintf("format=%s, a=%v", format, a), "Crea un error de uso con código de salida 2")
 	return &exitError{code: 2, err: fmt.Errorf(format, a...)}
 }
 
 // Execute construye y ejecuta el CLI. Los errores se imprimen una sola vez y
 // terminan el proceso con el código correspondiente.
 func Execute(info BuildInfo) {
+	devlog("Execute", fmt.Sprintf("info=%+v", info), "Ejecuta el CLI de Rain con la información de compilación proporcionada")
 	root := NewRootCmd(info)
 	root.SetArgs(normalizeLegacyArgs(os.Args[1:]))
 	if err := root.Execute(); err != nil {
@@ -56,6 +60,7 @@ func Execute(info BuildInfo) {
 // NewRootCmd construye el árbol de comandos. Se exporta para poder testearlo
 // con cmd.SetArgs(...) sin ejecutar os.Exit.
 func NewRootCmd(info BuildInfo) *cobra.Command {
+	devlog("NewRootCmd", fmt.Sprintf("info=%+v", info), "Construye el comando raíz y define las opciones globales y subcomandos")
 	opts := &globalOptions{}
 
 	root := &cobra.Command{
@@ -70,6 +75,8 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 			ui.Verbose = opts.verbose
 			ui.Quiet = opts.quiet
 			ui.NoColor = opts.noColor || os.Getenv("NO_COLOR") != ""
+			DevlogEnabled = opts.devlog
+			DevlogOut = cmd.OutOrStdout()
 			ui.SetOutput(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			addManagedBinToPath()
 			refreshManagedWrappers()
@@ -81,6 +88,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "mostrar detalles de ejecución")
 	root.PersistentFlags().BoolVarP(&opts.quiet, "quiet", "q", false, "solo mostrar errores")
 	root.PersistentFlags().BoolVar(&opts.noColor, "no-color", false, "desactivar colores ANSI")
+	root.PersistentFlags().BoolVar(&opts.devlog, "devlog", false, "mostrar logs de desarrollo de funciones CLI")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -101,17 +109,20 @@ type globalOptions struct {
 	verbose bool
 	quiet   bool
 	noColor bool
+	devlog  bool
 }
 
 // normalizeLegacyArgs acepta la forma antigua de un guion (-release,
 // -android-jar) además de la forma POSIX (--release, --android-jar).
 func normalizeLegacyArgs(args []string) []string {
+	devlog("normalizeLegacyArgs", fmt.Sprintf("args=%v", args), "Normaliza los argumentos de la línea de comandos de un guion a dos guiones")
 	known := map[string]bool{
 		"android-jar":     true,
 		"release":         true,
 		"verbose":         true,
 		"quiet":           true,
 		"no-color":        true,
+		"devlog":          true,
 		"mode":            true,
 		"name":            true,
 		"package":         true,
@@ -143,20 +154,57 @@ func normalizeLegacyArgs(args []string) []string {
 	return out
 }
 
-// addManagedBinToPath antepone ~/.rain/bin al PATH para que los wrappers
-// creados por "rain doctor --fix" estén disponibles sin tocar el shell.
+// addManagedBinToPath antepone ~/.rain/bin y SDKs de Android al PATH para que los
+// wrappers y herramientas de compilación estén disponibles sin tocar el shell.
 func addManagedBinToPath() {
+	devlog("addManagedBinToPath", "", "Antepone ~/.rain/bin y directorios de SDK al PATH de ejecución")
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	bin := filepath.Join(home, ".rain", "bin")
-	for _, part := range filepath.SplitList(os.Getenv("PATH")) {
-		if part == bin {
-			return
+	if err == nil {
+		bin := filepath.Join(home, ".rain", "bin")
+		inPath := false
+		for _, part := range filepath.SplitList(os.Getenv("PATH")) {
+			if part == bin {
+				inPath = true
+				break
+			}
+		}
+		if !inPath {
+			_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 	}
-	_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := exec.LookPath("aapt2"); err != nil {
+		sdkRoots := []string{
+			os.Getenv("ANDROID_HOME"),
+			os.Getenv("ANDROID_SDK_ROOT"),
+			"/opt/android-sdk",
+		}
+		if home != "" {
+			sdkRoots = append(sdkRoots, filepath.Join(home, "Android/Sdk"))
+		}
+		for _, root := range sdkRoots {
+			if root == "" {
+				continue
+			}
+			btDir := filepath.Join(root, "build-tools")
+			entries, err := os.ReadDir(btDir)
+			if err != nil {
+				continue
+			}
+			var newest string
+			for _, e := range entries {
+				if e.IsDir() {
+					if _, err := os.Stat(filepath.Join(btDir, e.Name(), "aapt2")); err == nil {
+						newest = filepath.Join(btDir, e.Name())
+					}
+				}
+			}
+			if newest != "" {
+				_ = os.Setenv("PATH", newest+string(os.PathListSeparator)+os.Getenv("PATH"))
+				break
+			}
+		}
+	}
 }
 
 // refreshManagedWrappers reescribe los lanzadores de ~/.rain/bin si su
@@ -165,6 +213,7 @@ func addManagedBinToPath() {
 // "rain doctor --fix". Los errores se ignoran: son ficheros auxiliares y no
 // deben impedir compilar.
 func refreshManagedWrappers() {
+	devlog("refreshManagedWrappers", "", "Actualiza los wrappers ejecutables administrados en ~/.rain/bin")
 	manager, err := toolchain.New()
 	if err != nil {
 		return

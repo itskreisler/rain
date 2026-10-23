@@ -9,6 +9,7 @@ import (
 )
 
 func newDepsCmd() *cobra.Command {
+	devlog("newDepsCmd", "", "Crea el subcomando deps para la gestión e inspección de dependencias")
 	depsCmd := &cobra.Command{
 		Use:   "deps",
 		Short: "Comandos de gestión de dependencias",

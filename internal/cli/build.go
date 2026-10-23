@@ -19,6 +19,7 @@ import (
 )
 
 func newBuildCmd() *cobra.Command {
+	devlog("newBuildCmd", "", "Crea el subcomando build para compilar y firmar un APK")
 	var (
 		androidJar        string
 		release           bool
@@ -69,6 +70,7 @@ func newBuildCmd() *cobra.Command {
 }
 
 func runBuild(androidJar string, release, allowDebugSigning bool) error {
+	devlog("runBuild", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t", androidJar, release, allowDebugSigning), "Ejecuta la compilación de un proyecto configurado con rain.toml")
 	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false)
 }
 
@@ -76,6 +78,7 @@ func runBuild(androidJar string, release, allowDebugSigning bool) error {
 // (compile Kotlin y Java) y no genera DEX, APK ni firma. Con fast el chequeo
 // es incremental: solo recompila lo que ha cambiado.
 func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
+	devlog("runBuildOrCheck", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta el flujo de compilación o verificación de tipos para un proyecto rain")
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
@@ -191,6 +194,7 @@ type moduleBuildSettings struct {
 // los ejemplos planos se configuren sin rain.toml y los proyectos con rain.toml
 // tengan la última palabra.
 func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildSettings {
+	devlog("resolveModuleBuildConfig", fmt.Sprintf("cfg=%+v, modulePath=%s", cfg, modulePath), "Resuelve la configuración de compilación de un módulo según rain.toml y app.properties")
 	props := readProperties(filepath.Join(modulePath, "app.properties"))
 	s := moduleBuildSettings{
 		Package:     cfg.Project.Package,
@@ -251,6 +255,7 @@ func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildS
 // coordenadas y devuelve la lista final, sin duplicados y con la versión más
 // alta cuando hay conflicto.
 func resolveTransitiveCoordinates(deps []string) ([]string, error) {
+	devlog("resolveTransitiveCoordinates", fmt.Sprintf("deps=%v", deps), "Resuelve transitivamente las coordenadas de dependencias")
 	return resolveCoordinates(deps)
 }
 
@@ -258,6 +263,7 @@ func resolveTransitiveCoordinates(deps []string) ([]string, error) {
 // coordenadas y devuelve la lista final, sin duplicados y con la versión más
 // alta cuando hay conflicto.
 func resolveCoordinates(deps []string) ([]string, error) {
+	devlog("resolveCoordinates", fmt.Sprintf("deps=%v", deps), "Resuelve y desduplica coordenadas de dependencias")
 	var coords []string
 	seen := make(map[string]bool)
 
@@ -286,6 +292,7 @@ func resolveCoordinates(deps []string) ([]string, error) {
 
 // prepareAARSet descarga y prepara cada coordenada (AAR o JAR) en dir.
 func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
+	devlog("prepareAARSet", fmt.Sprintf("coords=%v, dir=%s", coords, dir), "Descarga y prepara el conjunto de AARs y JARs de dependencias")
 	// Si las dependencias ya estaban preparadas y no han cambiado, se
 	// reutilizan: extraer decenas de AAR de Compose cuesta varios segundos
 	// en cada build y no aporta nada si el resultado es el mismo.
@@ -325,12 +332,14 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
 func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error {
+	devlog("runBuildDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t", dir, androidJar, release, allowDebugSigning), "Compila un proyecto desde un directorio o layout plano")
 	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false)
 }
 
 // runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
 // los tipos del código (y con fast, solo lo modificado).
 func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
+	devlog("runBuildOrCheckDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", dir, androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta la compilación o verificación para un directorio específico")
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolviendo %s: %w", dir, err)
@@ -399,6 +408,7 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 }
 
 func readProperties(path string) map[string]string {
+	devlog("readProperties", fmt.Sprintf("path=%s", path), "Lee un archivo de propiedades key=value")
 	props := make(map[string]string)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -419,6 +429,7 @@ func readProperties(path string) map[string]string {
 }
 
 func parseInt(value string, fallback int) int {
+	devlog("parseInt", fmt.Sprintf("value=%s, fallback=%d", value, fallback), "Convierte una cadena a entero con un valor de respaldo")
 	number, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
 		return fallback

@@ -167,7 +167,7 @@ func TestFindAndroidJarInvalidReturnsPath(t *testing.T) {
 func TestDetectPlatform(t *testing.T) {
 	got := DetectPlatform()
 	switch got {
-	case Alpine, Termux, Generic:
+	case Alpine, Termux, Ubuntu, Generic:
 	default:
 		t.Errorf("DetectPlatform devolvió %q, que no es una plataforma conocida", got)
 	}
@@ -195,6 +195,13 @@ func TestRecommendations(t *testing.T) {
 		cmds := Recommendations(Alpine, Complex)
 		if !containsSubstring(cmds, "--profile complex") {
 			t.Errorf("se esperaba --profile complex, got %v", cmds)
+		}
+	})
+
+	t.Run("ubuntu simple", func(t *testing.T) {
+		cmds := Recommendations(Ubuntu, Simple)
+		if !containsSubstring(cmds, "apt") {
+			t.Errorf("se esperaba un comando apt, got %v", cmds)
 		}
 	})
 
