@@ -15,11 +15,6 @@ import (
 // JAR sueltos preparados en DepsDir, más los .jar de LibsDir. Cuando hay un set
 // de dependencias (Libs) se usa su lista explícita, que incluye tanto los
 // classes.jar (en jars/) como los .jar que van directamente en aars/.
-//
-// Cuando hay set, NO se recorre DepsDir: el caché conserva artefactos de
-// resoluciones anteriores (versiones viejas que ya no están en el grafo) y
-// metarlos en el classpath haría que el APK dependiera del historial de la
-// caché y no solo de las dependencias resueltas.
 func (c Config) libraryJars() []string {
 	jars := make(map[string]bool)
 	var out []string
@@ -46,9 +41,7 @@ func (c Config) libraryJars() []string {
 		}
 	}
 
-	// Sin set explícito solo queda el directorio de dependencias como fuente
-	// de jars (modo simple con un libs/ prepopulado).
-	if c.Libs == nil && c.DepsDir != "" {
+	if c.DepsDir != "" {
 		jarDir := filepath.Join(c.DepsDir, "jars")
 		if entries, err := os.ReadDir(jarDir); err == nil {
 			for _, e := range entries {
@@ -87,18 +80,6 @@ func (c Config) prepareLibraryResources(libs *aar.Set) (string, []string, error)
 		return "", nil, err
 	}
 	return merged, libs.ExtraPackages(), nil
-}
-
-// libraryResourceInputs devuelve las rutas de los recursos y de los manifests
-// de las librerías. Entran en el hash incremental de recursos: si cambian,
-// el APK base (resources.arsc y manifest fusionado) debe rehacerse.
-func (c Config) libraryResourceInputs() []string {
-	if c.Libs == nil {
-		return nil
-	}
-	out := c.Libs.ResDirs()
-	out = append(out, c.Libs.Manifests()...)
-	return out
 }
 
 // nativeDir devuelve el directorio con lib/<abi>/*.so de los AAR, o "".
@@ -285,25 +266,15 @@ const defaultProguardRules = `# Reglas base de Rain (generadas; no editar).
 -dontwarn org.jetbrains.annotations.**
 `
 
-// proguardFiles reúne las reglas que R8 debe aplicar además de las base: las
-// del proyecto (si existen), las que se indiquen en la configuración y los
-// consumer-rules de los AAR.
-//
-// Las reglas se buscan en dos sitios: en el directorio del módulo y en su
-// src/main. En un proyecto Gradle viven en el directorio del módulo
-// (app/proguard-rules.pro), no en src/main, así que buscar solo en src/main
-// las dejaría fuera. Sin ellas, un release construido con rain se quedaría
-// sin los -keep de los accesos por reflexión ni con el -dontoptimize que
-// algunos proyectos necesitan (R8 optimiza de forma distinta a AGP).
+// proguardFiles reúne las reglas que R8 debe aplicar además de las base: el
+// proguard.pro del proyecto (si existe) y los consumer-rules de los AAR.
 func (c Config) proguardFiles() []string {
 	var files []string
 
-	for _, dir := range []string{sourceRoot(c.AppDir), c.AppDir} {
-		for _, name := range []string{"proguard-rules.pro", "proguard.pro"} {
-			path := filepath.Join(dir, name)
-			if fileExists(path) {
-				files = append(files, path)
-			}
+	for _, name := range []string{"proguard-rules.pro", "proguard.pro"} {
+		path := filepath.Join(sourceRoot(c.AppDir), name)
+		if fileExists(path) {
+			files = append(files, path)
 		}
 	}
 	files = append(files, c.ProguardFiles...)

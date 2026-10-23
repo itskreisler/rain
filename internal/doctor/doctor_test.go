@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -237,71 +236,6 @@ func TestJarCandidatesIncludesEnv(t *testing.T) {
 	}
 	if !containsSubstring(candidates, filepath.Join("/tmp/sdk", "platforms", "android-36", "android.jar")) {
 		t.Errorf("androidJarCandidates no incluye ANDROID_HOME: %v", candidates)
-	}
-}
-
-// fakeCommand crea un ejecutable en un directorio temporal.
-func fakeCommand(t *testing.T, dir, name, body string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("escribiendo %s: %v", path, err)
-	}
-	return path
-}
-
-func TestRunVersionIgnoraLosComandosQueFallan(t *testing.T) {
-	dir := t.TempDir()
-	fakeCommand(t, dir, "falso", "#!/bin/sh\nexit 1\n")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	path, _ := runVersion("falso", "--version")
-	if path != "" {
-		t.Errorf("runVersion con un comando que falla = %q, want \"\"", path)
-	}
-}
-
-func TestRunVersionAceptaLosComandosQueFuncionan(t *testing.T) {
-	dir := t.TempDir()
-	fakeCommand(t, dir, "bueno", "#!/bin/sh\necho 1.2.3\n")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	path, out := runVersion("bueno", "--version")
-	if path == "" {
-		t.Fatal("runVersion devolvió una ruta vacía para un comando que funciona")
-	}
-	if out != "1.2.3" {
-		t.Errorf("runVersion devolvió %q, want %q", out, "1.2.3")
-	}
-}
-
-func TestDiagnoseNoCuentaUnLanzadorRotoComoDisponible(t *testing.T) {
-	// Rain antepone ~/.rain/bin al PATH. Si el toolchain no está descargado,
-	// los lanzadores existen pero fallan al ejecutarse: d8 y apksigner no
-	// deben aparecer como disponibles.
-	//
-	// Se aísla el HOME para que el toolchain gestionado (~/.rain/toolchain)
-	// no acted como fallback: sin él, el único d8 es el lanzador roto.
-	dir := t.TempDir()
-	fakeCommand(t, dir, "d8", "#!/bin/sh\nexit 1\n")
-	fakeCommand(t, dir, "apksigner", "#!/bin/sh\nexit 127\n")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HOME", t.TempDir())
-
-	report := Diagnose(Complex)
-	for _, check := range report.Checks {
-		switch check.Name {
-		case "d8", "apksigner":
-			if check.OK {
-				t.Errorf("el check %q aparece como disponible con un lanzador roto", check.Name)
-			}
-		}
-	}
-	if report.Ready {
-		t.Error("el informe dice que está listo con d8 y apksigner rotos")
-	}
-	if !strings.Contains(strings.Join(report.Missing, ","), "d8") {
-		t.Errorf("Missing = %v, se esperaba d8", report.Missing)
 	}
 }
 

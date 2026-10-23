@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/itskreisler/rain/internal/toolchain"
 	"github.com/itskreisler/rain/internal/ui"
 )
 
@@ -72,7 +71,6 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 			ui.NoColor = opts.noColor || os.Getenv("NO_COLOR") != ""
 			ui.SetOutput(cmd.OutOrStdout(), cmd.ErrOrStderr())
 			addManagedBinToPath()
-			refreshManagedWrappers()
 			return nil
 		},
 	}
@@ -85,12 +83,9 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	root.AddCommand(
 		newInitCmd(),
 		newBuildCmd(),
-		newCheckCmd(),
-		newLintCmd(),
 		newDoctorCmd(),
 		newCleanCmd(),
 		newDepsCmd(),
-		newGradleCmd(),
 		newVersionCmd(info),
 	)
 
@@ -157,17 +152,4 @@ func addManagedBinToPath() {
 		}
 	}
 	_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
-// refreshManagedWrappers reescribe los lanzadores de ~/.rain/bin si su
-// contenido cambió, para que una actualización de Rain aplique los nuevos
-// ajustes (límite de heap de la JVM, variables de entorno) sin pedir
-// "rain doctor --fix". Los errores se ignoran: son ficheros auxiliares y no
-// deben impedir compilar.
-func refreshManagedWrappers() {
-	manager, err := toolchain.New()
-	if err != nil {
-		return
-	}
-	_ = manager.RefreshWrappers()
 }

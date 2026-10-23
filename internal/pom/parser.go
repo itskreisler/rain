@@ -80,13 +80,6 @@ type Dependency struct {
 	Optional   string `xml:"optional"`
 }
 
-// needFetch indica si un artefacto hay que descargarlo o si ya está en la
-// caché. Se separa del resto para poder testearlo sin red.
-func needFetch(path string) bool {
-	_, err := os.Stat(path)
-	return err != nil
-}
-
 // DownloadPOM intenta descargar el POM desde cada repositorio hasta encontrarlo.
 func DownloadPOM(coordinate string, destDir string) (string, error) {
 	parts := strings.Split(coordinate, ":")
@@ -98,7 +91,7 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 
 	// Verificar caché primero
 	path := fmt.Sprintf("%s/%s-%s.pom", destDir, artifact, version)
-	if !needFetch(path) {
+	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
 
@@ -118,11 +111,7 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 			continue
 		}
 
-		// Descarga atómica: se escribe a un .part y se renombra al final.
-		// Así una descarga interrumpida no deja un POM corrupto en la caché,
-		// que es exactamente lo que pasa al matar el proceso a mitad.
-		part := path + ".part"
-		f, err := os.Create(part)
+		f, err := os.Create(path)
 		if err != nil {
 			_ = resp.Body.Close()
 			return "", err
@@ -132,14 +121,9 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 		_ = f.Close()
 
 		if copyErr != nil {
-			_ = os.Remove(part)
+			_ = os.Remove(path)
 			lastErr = copyErr
 			continue
-		}
-
-		if err := os.Rename(part, path); err != nil {
-			_ = os.Remove(part)
-			return "", err
 		}
 
 		return path, nil
@@ -151,7 +135,7 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 	return "", fmt.Errorf("no se encontró POM para %s en ningún repositorio", coordinate)
 }
 
-// ParsePOM lee un POM y devuelve el proyecto.
+// ParsePOM lee y parsea un archivo POM.
 func ParsePOM(path string) (*Project, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -162,4 +146,18 @@ func ParsePOM(path string) (*Project, error) {
 		return nil, fmt.Errorf("parseando POM: %w", err)
 	}
 	return &p, nil
+}
+
+// EffectiveProperties devuelve el mapa de propiedades fusionadas (hijo sobrescribe padre).
+func (p *Project) EffectiveProperties(parent *Project) map[string]string {
+	props := make(map[string]string)
+	if parent != nil {
+		for _, prop := range parent.Properties {
+			props[prop.XMLName.Local] = strings.TrimSpace(prop.Value)
+		}
+	}
+	for _, prop := range p.Properties {
+		props[prop.XMLName.Local] = strings.TrimSpace(prop.Value)
+	}
+	return props
 }

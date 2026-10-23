@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -114,89 +113,7 @@ func TestConfigBuildFields(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	// El TOML no distingue la lista vacía de la ausente: al leer, las listas
-	// vacías vienen como [] y no como nil. Se comparan como iguales.
-	gotBuild, wantBuild := got.Build, original.Build
-	for _, p := range []*[]string{
-		&gotBuild.ProguardFiles, &wantBuild.ProguardFiles,
-		&gotBuild.DebugDependencies, &wantBuild.DebugDependencies,
-		&gotBuild.ReleaseDependencies, &wantBuild.ReleaseDependencies,
-	} {
-		if len(*p) == 0 {
-			*p = nil
-		}
-	}
-	if !reflect.DeepEqual(gotBuild, wantBuild) {
+	if got.Build != original.Build {
 		t.Errorf("Build = %+v, quiero %+v", got.Build, original.Build)
-	}
-}
-
-// TestReadRejectsMisplacedRootKeys comprueba que una clave raíz colocada DESPUÉS
-// de una cabecera de tabla falla en lugar de ignorarse en silencio. En TOML todo
-// lo que sigue a [build] pertenece a [build]; "dependencies" se perdía y el build
-// continuaba sin dependencias.
-func TestReadRejectsMisplacedRootKeys(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rain.toml")
-
-	content := `[project]
-name = "Demo"
-package = "com.demo.app"
-version = "1.0"
-
-[build]
-debug = true
-
-mode = "completo"
-
-dependencies = [
-    "androidx.activity:activity-compose:1.8.2",
-]
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("escribiendo rain.toml: %v", err)
-	}
-
-	if _, err := Read(path); err == nil {
-		t.Fatal("Read aceptó claves raíz situadas dentro de [build]; quiero error")
-	}
-}
-
-// TestReadAcceptsRootKeysBeforeTables es el caso correcto: las claves raíz van
-// antes de cualquier cabecera de tabla.
-func TestReadAcceptsRootKeysBeforeTables(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rain.toml")
-
-	content := `mode = "completo"
-
-dependencies = [
-    "androidx.activity:activity-compose:1.8.2",
-]
-
-[project]
-name = "Demo"
-package = "com.demo.app"
-version = "1.0"
-
-[build]
-debug = true
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("escribiendo rain.toml: %v", err)
-	}
-
-	cfg, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if cfg.Mode != "completo" {
-		t.Errorf("Mode = %q, quiero %q", cfg.Mode, "completo")
-	}
-	if len(cfg.Dependencies) != 1 {
-		t.Fatalf("Dependencies = %v, quiero 1 dependencia", cfg.Dependencies)
-	}
-	if cfg.Project.Name != "Demo" {
-		t.Errorf("Project.Name = %q, quiero %q", cfg.Project.Name, "Demo")
 	}
 }

@@ -69,13 +69,6 @@ func newBuildCmd() *cobra.Command {
 }
 
 func runBuild(androidJar string, release, allowDebugSigning bool) error {
-	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false)
-}
-
-// runBuildOrCheck compila el proyecto. Con checkOnly solo valida los tipos
-// (compile Kotlin y Java) y no genera DEX, APK ni firma. Con fast el chequeo
-// es incremental: solo recompila lo que ha cambiado.
-func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
@@ -84,21 +77,11 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 	mavenrepo.ExtraRepositories = cfg.Repositories.Extra
 
 	var libs *aar.Set
-	// Las dependencias por variante: en un release no entran las de debug
-	// (debugImplementation) y sí las de release; en un debug, al revés. Es lo
-	// que hace Gradle, y importa: una dependencia de depuración referencia
-	// clases opcionales que R8 no encuentra y aborta la compilación.
-	deps := cfg.Dependencies
-	if release {
-		deps = append(append([]string{}, deps...), cfg.Build.ReleaseDependencies...)
-	} else {
-		deps = append(append([]string{}, deps...), cfg.Build.DebugDependencies...)
-	}
-	if len(deps) > 0 {
+	if len(cfg.Dependencies) > 0 {
 		ui.Info("Resolviendo y descargando dependencias...")
-		coords := deps
+		coords := cfg.Dependencies
 		if cfg.Mode == "completo" {
-			coords, err = resolveTransitiveCoordinates(deps)
+			coords, err = resolveTransitiveCoordinates(cfg)
 			if err != nil {
 				return fmt.Errorf("resolviendo dependencias: %w", err)
 			}
@@ -112,26 +95,6 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 	modules := cfg.Modules
 	if len(modules) == 0 {
 		modules = []config.Module{{Name: "app", Path: "app"}}
-	}
-
-	// Los annotation processors (kapt) se resuelven aparte: no van en el
-	// APK, solo en el classpath de la ronda de annotation processing.
-	var kapt *build.KaptConfig
-	if len(cfg.Kapt.Processors) > 0 {
-		ui.Info("Resolviendo annotation processors (kapt)...")
-		coords, err := resolveCoordinates(cfg.Kapt.Processors)
-		if err != nil {
-			return fmt.Errorf("resolviendo annotation processors: %w", err)
-		}
-		set, err := prepareAARSet(coords, ".rain-kapt")
-		if err != nil {
-			return fmt.Errorf("preparando annotation processors: %w", err)
-		}
-		kapt = &build.KaptConfig{
-			ProcessorJars: set.ClassJars(),
-			Options:       cfg.Kapt.Options,
-		}
-		ui.VerboseLog("processors de kapt: %d jars", len(kapt.ProcessorJars))
 	}
 
 	for _, mod := range modules {
@@ -153,10 +116,6 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			JVMTarget:         bc.JavaTarget,
 			Libs:              libs,
 			AllowDebugSigning: allowDebugSigning,
-			CheckOnly:         checkOnly,
-			FastCheck:         fast,
-			Kapt:              kapt,
-			ProguardFiles:     cfg.Build.ProguardFiles,
 		}
 		if libs != nil {
 			bcfg.DepsDir = libs.Dir
@@ -247,26 +206,18 @@ func resolveModuleBuildConfig(cfg config.Config, modulePath string) moduleBuildS
 	return s
 }
 
-// resolveTransitiveCoordinates resuelve el cierre transitivo de una lista de
-// coordenadas y devuelve la lista final, sin duplicados y con la versión más
-// alta cuando hay conflicto.
-func resolveTransitiveCoordinates(deps []string) ([]string, error) {
-	return resolveCoordinates(deps)
-}
-
-// resolveCoordinates resuelve el cierre transitivo de una lista de
-// coordenadas y devuelve la lista final, sin duplicados y con la versión más
-// alta cuando hay conflicto.
-func resolveCoordinates(deps []string) ([]string, error) {
+// resolveTransitiveCoordinates resuelve el cierre transitivo de las
+// dependencias declaradas (modo completo).
+func resolveTransitiveCoordinates(cfg config.Config) ([]string, error) {
 	var coords []string
 	seen := make(map[string]bool)
 
-	for _, dep := range deps {
-		resolved, err := pom.ResolveTransitive(dep, "cache")
+	for _, dep := range cfg.Dependencies {
+		deps, err := pom.ResolveTransitive(dep, "cache")
 		if err != nil {
 			return nil, fmt.Errorf("resolviendo %s: %w", dep, err)
 		}
-		for _, d := range resolved {
+		for _, d := range deps {
 			coord := d.Coordinate()
 			if !seen[coord] {
 				seen[coord] = true
@@ -286,14 +237,6 @@ func resolveCoordinates(deps []string) ([]string, error) {
 
 // prepareAARSet descarga y prepara cada coordenada (AAR o JAR) en dir.
 func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
-	// Si las dependencias ya estaban preparadas y no han cambiado, se
-	// reutilizan: extraer decenas de AAR de Compose cuesta varios segundos
-	// en cada build y no aporta nada si el resultado es el mismo.
-	if set, ok := aar.LoadCache(dir, coords); ok {
-		ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
-		return set, nil
-	}
-
 	pb := ui.NewProgressBar(len(coords), "Preparando ")
 	set := &aar.Set{Dir: dir}
 	client := aar.NewClient()
@@ -316,21 +259,12 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	if failures > 0 {
 		ui.Warn("%d dependencias no se pudieron preparar", failures)
 	}
-	if err := aar.SaveCache(dir, set, coords); err != nil {
-		ui.VerboseLog("no se pudo guardar la caché de dependencias: %v", err)
-	}
 	return set, nil
 }
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
 func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error {
-	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false)
-}
-
-// runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
-// los tipos del código (y con fast, solo lo modificado).
-func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolviendo %s: %w", dir, err)
@@ -349,7 +283,7 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 			return fmt.Errorf("entrando en %s: %w", absDir, err)
 		}
 		defer func() { _ = os.Chdir(previous) }()
-		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast)
+		return runBuild(androidJar, release, allowDebugSigning)
 	}
 
 	if _, err := os.Stat(filepath.Join(absDir, "src/main/AndroidManifest.xml")); err != nil {
@@ -392,8 +326,6 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 		JVMTarget:         s.JavaTarget,
 		AppName:           name,
 		AllowDebugSigning: allowDebugSigning,
-		CheckOnly:         checkOnly,
-		FastCheck:         fast,
 	}
 	return build.Run(bcfg)
 }

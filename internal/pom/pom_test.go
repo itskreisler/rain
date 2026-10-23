@@ -90,6 +90,28 @@ func TestParsePOMInvalidXML(t *testing.T) {
 	}
 }
 
+func TestEffectiveProperties(t *testing.T) {
+	parent := &Project{Properties: []Property{
+		{XMLName: xmlName("a"), Value: "padre-a"},
+		{XMLName: xmlName("b"), Value: "padre-b"},
+	}}
+	child := &Project{Properties: []Property{
+		{XMLName: xmlName("b"), Value: "hijo-b"},
+		{XMLName: xmlName("c"), Value: "hijo-c"},
+	}}
+
+	props := child.EffectiveProperties(parent)
+	if props["a"] != "padre-a" {
+		t.Errorf("a = %q, quiero padre-a", props["a"])
+	}
+	if props["b"] != "hijo-b" {
+		t.Errorf("b = %q, el hijo debe sobrescribir", props["b"])
+	}
+	if props["c"] != "hijo-c" {
+		t.Errorf("c = %q", props["c"])
+	}
+}
+
 func TestResolveProperties(t *testing.T) {
 	props := map[string]string{
 		"kotlin.version": "2.4.21",
@@ -276,46 +298,6 @@ func TestDownloadPOMNotFound(t *testing.T) {
 
 	if _, err := DownloadPOM("com.demo:ausente:1.0", t.TempDir()); err == nil {
 		t.Fatal("DownloadPOM debería fallar si el servidor devuelve 404")
-	}
-}
-
-func TestNeedFetch(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "demo-1.0.pom")
-
-	// No existe: hay que descargarlo.
-	if !needFetch(path) {
-		t.Error("needFetch = false para un fichero inexistente")
-	}
-
-	writeFile(t, path, "<project/>")
-	if needFetch(path) {
-		t.Error("needFetch = true para un fichero ya cacheado")
-	}
-}
-
-func TestDownloadPOMEsAtomico(t *testing.T) {
-	dir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("<project><artifactId>demo</artifactId></project>"))
-	}))
-	defer server.Close()
-
-	original := repositories
-	repositories = []string{server.URL}
-	t.Cleanup(func() { repositories = original })
-
-	path, err := DownloadPOM("com.demo:demo:1.0", dir)
-	if err != nil {
-		t.Fatalf("DownloadPOM: %v", err)
-	}
-
-	// El .part temporal no debe quedarse en la caché.
-	if _, err := os.Stat(path + ".part"); err == nil {
-		t.Error("quedó un fichero .part tras la descarga")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("el POM final no existe: %v", err)
 	}
 }
 

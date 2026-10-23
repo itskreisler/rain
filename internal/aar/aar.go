@@ -18,8 +18,6 @@ import (
 
 	"github.com/itskreisler/rain/internal/httpx"
 	"github.com/itskreisler/rain/internal/mavenrepo"
-	"github.com/itskreisler/rain/internal/pom"
-	"github.com/itskreisler/rain/internal/ui"
 )
 
 // Repositorios Maven base en orden de prioridad. JitPack se añade por
@@ -35,16 +33,8 @@ type Library struct {
 	ClassJar      string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
 	ResDir        string // res/ del AAR, si tiene recursos
 	Package       string // package del AndroidManifest.xml del AAR (para --extra-packages)
-	ManifestPath  string // AndroidManifest.xml del AAR, extraído a disco para fusionarlo
 	NativeABIs    []string
 	ProguardRules string // ruta a las reglas R8/ProGuard del AAR (proguard.txt), si las trae
-
-	// ServiceFiles son los ficheros META-INF/services que traía el AAR en su
-	// raíz, indexados por nombre de servicio y con la ruta del fichero ya
-	// extraído a disco. Los AAR los guardan fuera de classes.jar, así que sin
-	// esto se perderían por el camino: el ServiceLoader no encontraría al
-	// proveedor y la app fallaría al arrancar.
-	ServiceFiles map[string]string
 }
 
 // Set es el conjunto de dependencias preparadas para compilar.
@@ -90,18 +80,6 @@ func (s *Set) ExtraPackages() []string {
 	return out
 }
 
-// Manifests devuelve las rutas de los AndroidManifest.xml de las librerías,
-// para fusionarlos con el de la aplicación.
-func (s *Set) Manifests() []string {
-	var out []string
-	for _, lib := range s.Libraries {
-		if lib.ManifestPath != "" {
-			out = append(out, lib.ManifestPath)
-		}
-	}
-	return out
-}
-
 // NativeDir devuelve el directorio jni/ con lib/<abi>/*.so, o "" si no hay.
 func (s *Set) NativeDir() string {
 	dir := filepath.Join(s.Dir, "jni")
@@ -121,118 +99,6 @@ func (s *Set) ProguardFiles() []string {
 		}
 	}
 	sort.Strings(out)
-	return out
-}
-
-// ServiceFiles devuelve los proveedores de java.util.ServiceLoader que
-// declaran las dependencias, indexados por nombre de servicio.
-//
-// Cada servicio es el nombre de una interfaz y sus valores son las clases que
-// la implementan. Se fusionan los ficheros META-INF/services de los JAR y de la
-// raíz de los AAR: sin esto el ServiceLoader no encuentra nada y la app
-// revienta al arrancar (por ejemplo, sin el dispatcher principal de las
-// coroutines: "Module with the Main dispatcher is missing").
-func (s *Set) ServiceFiles() (map[string][]string, error) {
-	jars := make([]string, 0, len(s.Libraries))
-	for _, lib := range s.Libraries {
-		// JAR plano (o el classes.jar de un AAR): los servicios están dentro.
-		if lib.ClassJar != "" {
-			jars = append(jars, lib.ClassJar)
-		}
-	}
-	out, err := ServiceFilesFromJars(jars)
-	if err != nil {
-		return nil, err
-	}
-
-	// AAR: los servicios están en la raíz del AAR, no en classes.jar.
-	for _, lib := range s.Libraries {
-		for service, path := range lib.ServiceFiles {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			for _, impl := range parseServiceFile(string(data)) {
-				addServiceImpl(out, service, impl)
-			}
-		}
-	}
-	return out, nil
-}
-
-// ServiceFilesFromJars lee los META-INF/services de un conjunto de jars y
-// devuelve los proveedores indexados por nombre de servicio.
-func ServiceFilesFromJars(jars []string) (map[string][]string, error) {
-	out := map[string][]string{}
-	for _, jar := range jars {
-		fromJar, err := serviceFilesFromJar(jar)
-		if err != nil {
-			return nil, err
-		}
-		for service, impls := range fromJar {
-			for _, impl := range impls {
-				addServiceImpl(out, service, impl)
-			}
-		}
-	}
-	return out, nil
-}
-
-// addServiceImpl añade una implementación al servicio, ignorando vacíos,
-// comentarios y duplicados.
-func addServiceImpl(out map[string][]string, service, impl string) {
-	service = strings.TrimSpace(service)
-	impl = strings.TrimSpace(impl)
-	if service == "" || impl == "" || strings.HasPrefix(impl, "#") {
-		return
-	}
-	for _, existing := range out[service] {
-		if existing == impl {
-			return
-		}
-	}
-	out[service] = append(out[service], impl)
-}
-
-// serviceFilesFromJar lee los META-INF/services de un jar.
-func serviceFilesFromJar(path string) (map[string][]string, error) {
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = zr.Close() }()
-
-	out := map[string][]string{}
-	for _, f := range zr.File {
-		name := strings.TrimPrefix(f.Name, "META-INF/services/")
-		if name == f.Name || name == "" || strings.HasSuffix(f.Name, "/") {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			continue
-		}
-		data, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			continue
-		}
-		out[name] = append(out[name], parseServiceFile(string(data))...)
-	}
-	return out, nil
-}
-
-// parseServiceFile devuelve las implementaciones declaradas en un fichero
-// META-INF/services, ignorando líneas vacías y comentarios.
-func parseServiceFile(content string) []string {
-	var out []string
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		out = append(out, line)
-	}
 	return out
 }
 
@@ -278,67 +144,9 @@ func (c *Client) prepareOne(coord, dir string) (*Library, error) {
 		if ext == "jar" {
 			return c.prepareJAR(coord, dir, path)
 		}
-		lib, err := c.extractAAR(coord, artifact, version, path, dir)
-		if err != nil {
-			return nil, err
-		}
-		// Un AAR sin classes.jar ni res/ es la "cáscara" raíz de un módulo
-		// publicado como Kotlin Multiplatform (Compose 1.7+). El código real vive
-		// en la variante "-android", y el Gradle Module Metadata (.module) lo
-		// indica con "available-at". El POM no lo dice, por eso sin esto el
-		// classpath quedaba sin clases de Compose (errores "unresolved
-		// reference 'compose'" en tiempo de compilación Kotlin).
-		if lib.ClassJar == "" && lib.ResDir == "" {
-			if redirected, rerr := c.prepareAndroidVariant(coord, dir); rerr == nil {
-				return redirected, nil
-			} else {
-				ui.VerboseLog("sin variante Android para %s: %v", coord, rerr)
-			}
-		}
-		return lib, nil
+		return c.extractAAR(coord, artifact, version, path, dir)
 	}
 	return nil, fmt.Errorf("no se encontró AAR ni JAR para %s", coord)
-}
-
-// prepareAndroidVariant resuelve la variante Android real de un artefacto KMP
-// raíz (cáscara vacía) a partir del Gradle Module Metadata y la prepara como
-// una librería normal.
-func (c *Client) prepareAndroidVariant(coord, dir string) (*Library, error) {
-	target, err := c.androidVariantTarget(coord, dir)
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(target, ":")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("coordenada de variante inválida: %s", target)
-	}
-	if path, err := c.download(target, dir, "aar"); err == nil {
-		return c.extractAAR(target, parts[1], parts[2], path, dir)
-	}
-	// Algunas variantes Android se publican como JAR plano.
-	path, err := c.download(target, dir, "jar")
-	if err != nil {
-		return nil, fmt.Errorf("no se encontró AAR ni JAR para la variante %s: %w", target, err)
-	}
-	return c.prepareJAR(target, dir, path)
-}
-
-// androidVariantTarget busca en el Gradle Module Metadata del artefacto la
-// variante Android y devuelve la coordenada real a la que apunta.
-func (c *Client) androidVariantTarget(coord, dir string) (string, error) {
-	mdPath, err := pom.DownloadModuleMetadata(coord, filepath.Join(dir, "metadata"))
-	if err != nil {
-		return "", err
-	}
-	md, err := pom.ParseModuleMetadata(mdPath)
-	if err != nil {
-		return "", err
-	}
-	target := md.AndroidTargetCoord()
-	if target == "" || target == coord {
-		return "", fmt.Errorf("el metadata de %s no apunta a otra variante", coord)
-	}
-	return target, nil
 }
 
 // prepareJAR prepara un JAR plano. Si el JAR es un stub de Kotlin Multiplatform
@@ -402,11 +210,6 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("%s devolvió HTTP %d", url, resp.StatusCode)
-			continue
-		}
 		tmp := dest + ".tmp"
 		f, err := os.Create(tmp)
 		if err != nil {
@@ -439,20 +242,6 @@ func (c *Client) httpClient() *httpx.Client {
 		}
 	}
 	return c.client
-}
-
-// ExtractAAR extrae un AAR que ya está en disco (sin descargarlo) y devuelve
-// la librería preparada: clases, recursos, manifiesto, JNI y reglas de R8.
-//
-// Se exporta para poder ejercitar el pipeline completo con AAR de prueba sin
-// depender de la red (los tests de integración construyen una librería
-// sintética estilo AppCompat y la compilan dentro de un APK real).
-func ExtractAAR(aarPath, coord, dir string) (*Library, error) {
-	artifact, version := "lib", "0"
-	if parts := strings.SplitN(coord, ":", 3); len(parts) == 3 {
-		artifact, version = parts[1], parts[2]
-	}
-	return (&Client{}).extractAAR(coord, artifact, version, aarPath, dir)
 }
 
 func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Library, error) {
@@ -492,13 +281,6 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 				// Solo importa si el AAR trae código: su bytecode referencia su R.
 				lib.Package = string(match[1])
 			}
-			// Se extrae a disco para poder fusionar los permisos y los
-			// componentes que declara la librería con los de la app.
-			manifestDest := filepath.Join(dir, "manifests", artifact+"-"+version+".xml")
-			if err := extractFile(f, manifestDest); err != nil {
-				return nil, err
-			}
-			lib.ManifestPath = manifestDest
 		case strings.HasPrefix(f.Name, "jni/") && strings.HasSuffix(f.Name, ".so"):
 			rel := strings.TrimPrefix(f.Name, "jni/")
 			dest := filepath.Join(dir, "jni", rel)
@@ -514,22 +296,6 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 				return nil, err
 			}
 			lib.ProguardRules = dest
-		case strings.HasPrefix(f.Name, "META-INF/services/"):
-			// Los AAR guardan los servicios de ServiceLoader en su raíz, fuera
-			// de classes.jar. Sin extractarlos se pierden y la app no
-			// encuentra al proveedor en tiempo de ejecución.
-			name := strings.TrimPrefix(f.Name, "META-INF/services/")
-			if name == "" || strings.HasSuffix(f.Name, "/") {
-				continue
-			}
-			dest := filepath.Join(dir, "services", artifact+"-"+version, name)
-			if err := extractFile(f, dest); err != nil {
-				return nil, err
-			}
-			if lib.ServiceFiles == nil {
-				lib.ServiceFiles = map[string]string{}
-			}
-			lib.ServiceFiles[name] = dest
 		}
 	}
 

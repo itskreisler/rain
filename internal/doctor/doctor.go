@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/itskreisler/rain/internal/compat"
-	"github.com/itskreisler/rain/internal/memenv"
 	"github.com/itskreisler/rain/internal/toolchain"
 )
 
@@ -235,45 +234,6 @@ func Diagnose(profile Profile) Report {
 		}
 	}
 
-	// Analizadores estáticos opcionales: no hacen falta para compilar, pero
-	// "rain lint" los usa si están instalados.
-	for _, lt := range []struct {
-		name    string
-		version string
-	}{
-		{"ktlint", toolchain.KtlintVersion},
-		{"detekt", toolchain.DetektVersion},
-	} {
-		path, version := findLintTool(lt.name)
-		detail := "opcional: no instalado (rain doctor --fix --lint)"
-		if path != "" {
-			detail = "opcional: disponible para rain lint"
-		}
-		add(Check{
-			Name:     lt.name,
-			Required: false,
-			OK:       path != "",
-			Version:  version,
-			Path:     path,
-			Detail:   detail,
-		})
-	}
-
-	// La memoria es la causa habitual de fallos en contenedores: la JVM
-	// reserva 1/4 de la RAM física y el runtime de Go puede morir por
-	// presión de memoria. No es un requisito, pero conviene avisar.
-	mem := memenv.Detect()
-	memDetail := memenv.Describe()
-	if hint := memenv.Hint(); hint != "" {
-		memDetail = memDetail + " → " + hint
-	}
-	add(Check{
-		Name:     "memoria",
-		Required: false,
-		OK:       !mem.Tight(),
-		Detail:   memDetail,
-	})
-
 	report.Compat = compat.CheckMatrix(versionsFromChecks(report.Checks))
 
 	report.Ready = true
@@ -421,32 +381,6 @@ func managedTool(name string) string {
 	return ""
 }
 
-// findLintTool localiza un analizador estático: primero el toolchain de Rain
-// (~/.rain/toolchain) y después el PATH del sistema.
-func findLintTool(name string) (string, string) {
-	switch name {
-	case "ktlint":
-		if jar := managedTool("ktlint-cli.jar"); jar != "" {
-			return jar, toolchain.KtlintVersion
-		}
-		if path, err := exec.LookPath("ktlint"); err == nil {
-			return path, ""
-		}
-	case "detekt":
-		if jar := managedTool("detekt-cli.jar"); jar != "" {
-			return jar, toolchain.DetektVersion
-		}
-		if path, err := exec.LookPath("detekt"); err == nil {
-			return path, ""
-		}
-	case "pmd":
-		if path, err := exec.LookPath("pmd"); err == nil {
-			return path, ""
-		}
-	}
-	return "", ""
-}
-
 func findComposePlugin(kotlincPath string) string {
 	var candidates []string
 	if kotlincPath != "" {
@@ -489,12 +423,6 @@ func termuxJansi() string {
 	return ""
 }
 
-// runVersion localiza un comando y lo ejecuta para obtener su versión.
-//
-// Devuelve la ruta y la salida solo si el comando **funciona**: un lanzador de
-// ~/.rain/bin que apunta a un toolchain que no se ha descargado existe en el
-// PATH pero falla al ejecutarse, y contarlo como disponible sería un check
-// mentiroo.
 func runVersion(name string, args ...string) (string, string) {
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -504,8 +432,8 @@ func runVersion(name string, args ...string) (string, string) {
 	defer cancel()
 
 	out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
-	if err != nil {
-		return "", ""
+	if err != nil && len(out) == 0 {
+		return path, ""
 	}
 	return path, strings.TrimSpace(string(out))
 }

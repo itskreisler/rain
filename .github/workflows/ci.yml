@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "1.21.x"
           cache: true
 
       - name: Descargar módulos
@@ -41,102 +41,29 @@ jobs:
         with:
           version: v2.5.0
 
-  # La app está pensado para Alpine (musl) y Termux: el binario es estático
-  # (CGO_ENABLED=0), así que se prueba dentro de un contenedor Alpine.
-  test-alpine:
-    name: test (alpine/musl, ${{ matrix.arch }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Preparar QEMU (solo arm64)
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Tests en Alpine
-        run: |
-          docker run --rm --platform linux/${{ matrix.arch }} \
-            -v "$PWD:/src" -w /src \
-            -e GOCACHE=/tmp/go-cache -e GOFLAGS=-mod=mod \
-            golang:1.26-alpine sh -c 'go mod download && go vet ./... && go test ./...'
-
   build:
-    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: build (${{ matrix.goarch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "1.23.x"
           cache: true
 
       - name: Compilar binario
         env:
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -o rain-${{ matrix.goos }}-${{ matrix.goarch }} .
+        run: go build -trimpath -o rain-linux-${{ matrix.goarch }} .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: rain-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: rain-${{ matrix.goos }}-${{ matrix.goarch }}
-
-  # Compila un proyecto real de Compose de principio a fin: resolución de
-  # dependencias, fusión de recursos y manifests, kotlinc + plugin de Compose,
-  # d8/multidex y firma. Es el test de integración de Rain.
-  compose:
-    name: compose (ejemplo completo)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.x"
-          cache: true
-
-      - name: Instalar JDK 17
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y openjdk-17-jdk unzip
-
-      - name: Compilar rain
-        run: go build -trimpath -o rain .
-
-      - name: Instalar el toolchain (aapt2, R8, apksigner, android.jar, kotlinc)
-        run: ./rain doctor --fix --profile complex
-
-      - name: Compilar el ejemplo de Compose
-        working-directory: examples/compose
-        run: ../../rain build
-
-      - name: Verificar el APK
-        working-directory: examples/compose
-        run: |
-          set -eu
-          APK=app/build/app-debug.apk
-          test -f "$APK"
-          # El DEX y la tabla de recursos tienen que estar dentro.
-          unzip -l "$APK" | grep -q 'classes.dex'
-          unzip -l "$APK" | grep -q 'resources.arsc'
-          # La firma debe validar.
-          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ejemplo-compose-apk
-          path: examples/compose/app/build/app-debug.apk
+          name: rain-linux-${{ matrix.goarch }}
+          path: rain-linux-${{ matrix.goarch }}
