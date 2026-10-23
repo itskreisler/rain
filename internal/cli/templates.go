@@ -4,6 +4,7 @@ import "fmt"
 
 // manifestXML genera el AndroidManifest.xml del proyecto.
 func manifestXML(name, pkg, template string) string {
+	devlog("manifestXML", fmt.Sprintf("name=%s, pkg=%s, template=%s", name, pkg, template), "Genera el contenido de AndroidManifest.xml")
 	theme := "@style/Theme.Rain"
 	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -29,6 +30,7 @@ func manifestXML(name, pkg, template string) string {
 
 // stringsXML genera los recursos de cadena.
 func stringsXML(name string) string {
+	devlog("stringsXML", fmt.Sprintf("name=%s", name), "Genera el archivo strings.xml")
 	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">%s</string>
@@ -40,6 +42,7 @@ func stringsXML(name string) string {
 
 // themesXML genera un tema base; Compose necesita un tema sin ActionBar.
 func themesXML(template string) string {
+	devlog("themesXML", fmt.Sprintf("template=%s", template), "Genera el archivo themes.xml")
 	parent := "@android:style/Theme.DeviceDefault"
 	if template == "completo" {
 		parent = "@android:style/Theme.Material.Light.NoActionBar"
@@ -53,6 +56,7 @@ func themesXML(template string) string {
 
 // javaMainActivity es la actividad de la plantilla simple (vistas programáticas).
 func javaMainActivity(pkg string) string {
+	devlog("javaMainActivity", fmt.Sprintf("pkg=%s", pkg), "Genera MainActivity.java para la plantilla simple")
 	return fmt.Sprintf(`package %s;
 
 import android.app.Activity;
@@ -107,6 +111,7 @@ public class MainActivity extends Activity {
 
 // kotlinComposeMainActivity es la plantilla completo: Kotlin + Compose real.
 func kotlinComposeMainActivity(pkg string) string {
+	devlog("kotlinComposeMainActivity", fmt.Sprintf("pkg=%s", pkg), "Genera MainActivity.kt con Jetpack Compose para la plantilla completo")
 	return fmt.Sprintf(`package %s
 
 import android.os.Bundle

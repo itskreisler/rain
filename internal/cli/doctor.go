@@ -14,6 +14,7 @@ import (
 )
 
 func newDoctorCmd() *cobra.Command {
+	devlog("newDoctorCmd", "", "Crea el subcomando doctor para diagnosticar el entorno de desarrollo")
 	var (
 		profile      string
 		jsonOut      bool
@@ -84,6 +85,7 @@ func newDoctorCmd() *cobra.Command {
 
 // runDoctorFixLint descarga los analizadores estáticos opcionales.
 func runDoctorFixLint(cmd *cobra.Command) error {
+	devlog("runDoctorFixLint", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga los analizadores estáticos opcionales para doctor")
 	manager, err := toolchain.New()
 	if err != nil {
 		return err
@@ -99,6 +101,7 @@ func runDoctorFixLint(cmd *cobra.Command) error {
 }
 
 func runDoctorFix(cmd *cobra.Command, profile doctor.Profile) error {
+	devlog("runDoctorFix", fmt.Sprintf("cmd=%s, profile=%s", cmd.Name(), profile), "Prepara y descarga el toolchain en ~/.rain")
 	manager, err := toolchain.New()
 	if err != nil {
 		return err
@@ -114,6 +117,7 @@ func runDoctorFix(cmd *cobra.Command, profile doctor.Profile) error {
 }
 
 func printDoctorReport(cmd *cobra.Command, report doctor.Report, onlyInstall bool) {
+	devlog("printDoctorReport", fmt.Sprintf("cmd=%s, report=%+v, onlyInstall=%t", cmd.Name(), report, onlyInstall), "Imprime en consola el reporte del diagnóstico de doctor")
 	out := cmd.OutOrStdout()
 
 	if !onlyInstall {

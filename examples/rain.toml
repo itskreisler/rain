@@ -6,8 +6,8 @@ dependencies = [
 ]
 
 [project]
-name = "ComposeLabDemo"
-package = "com.example.composelab"
+name = "FireIconCatalog"
+package = "com.kyant.backdrop.catalog"
 version = "1.0"
 
 [build]

@@ -14,6 +14,7 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
+	devlog("newInitCmd", "", "Crea el subcomando init para inicializar nuevos proyectos rain")
 	var (
 		template       string
 		modeAlias      string
@@ -121,6 +122,7 @@ func newInitCmd() *cobra.Command {
 }
 
 func promptTemplate(cmd *cobra.Command) string {
+	devlog("promptTemplate", fmt.Sprintf("cmd=%s", cmd.Name()), "Solicita interactiva al usuario la plantilla a utilizar")
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "Rain init — ¿qué plantilla quieres?")
 	fmt.Fprintln(out, "  1) simple    — Java, vistas programáticas, sin dependencias externas")
@@ -138,6 +140,7 @@ func promptTemplate(cmd *cobra.Command) string {
 // scaffold devuelve los archivos a crear (ruta relativa -> contenido) y la
 // configuración rain.toml para la plantilla dada.
 func scaffold(template, name, pkg, version string) (map[string]string, config.Config, error) {
+	devlog("scaffold", fmt.Sprintf("template=%s, name=%s, pkg=%s, version=%s", template, name, pkg, version), "Genera la estructura de archivos inicial del proyecto")
 	cfg := config.Config{
 		Project: config.Project{Name: name, Package: pkg, Version: version},
 		Build:   config.Build{Debug: true},
@@ -172,6 +175,7 @@ func scaffold(template, name, pkg, version string) (map[string]string, config.Co
 
 // defaultPackage deriva un package válido a partir del nombre.
 func defaultPackage(name string) string {
+	devlog("defaultPackage", fmt.Sprintf("name=%s", name), "Genera un package ID predeterminado basado en el nombre")
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {
 		switch {
@@ -191,6 +195,7 @@ func defaultPackage(name string) string {
 
 // validatePackage comprueba que el package sea un identificador Java válido.
 func validatePackage(pkg string) error {
+	devlog("validatePackage", fmt.Sprintf("pkg=%s", pkg), "Valida que el package id sea un identificador Java válido")
 	if pkg == "" {
 		return fmt.Errorf("el package no puede estar vacío")
 	}

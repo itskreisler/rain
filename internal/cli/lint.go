@@ -24,6 +24,7 @@ import (
 // errores de tipos; el lint revisa estilo, complejidad y "code smells", que
 // son otra categoría de problemas.
 func newLintCmd() *cobra.Command {
+	devlog("newLintCmd", "", "Crea el subcomando lint para ejecutar análisis estático")
 	var (
 		install   bool
 		toolsFlag string
@@ -66,6 +67,7 @@ func newLintCmd() *cobra.Command {
 
 // runLintInstall descarga los analizadores estáticos que gestiona Rain.
 func runLintInstall(cmd *cobra.Command) error {
+	devlog("runLintInstall", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga e instala los analizadores estáticos ktlint y detekt")
 	manager, err := toolchain.New()
 	if err != nil {
 		return err
@@ -91,6 +93,7 @@ type lintTarget struct {
 
 // runLint analiza el proyecto indicado.
 func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) error {
+	devlog("runLint", fmt.Sprintf("cmd=%s, dir=%s, toolsFlag=%s, failOn=%s, typeRes=%t", cmd.Name(), dir, toolsFlag, failOn, typeRes), "Ejecuta los analizadores estáticos sobre los módulos del proyecto")
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolviendo %s: %w", dir, err)
@@ -186,6 +189,7 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 // lintTargets prepara los módulos a analizar: las fuentes, el directorio de
 // proyecto y el classpath.
 func lintTargets(absDir string, cfg config.Config) ([]lintTarget, error) {
+	devlog("lintTargets", fmt.Sprintf("absDir=%s, cfg=%+v", absDir, cfg), "Prepara y obtiene la lista de módulos y fuentes a analizar")
 	modules := cfg.Modules
 	if len(modules) == 0 {
 		modules = []config.Module{{Name: "app", Path: "app"}}
@@ -228,6 +232,7 @@ func lintTargets(absDir string, cfg config.Config) ([]lintTarget, error) {
 // android.jar, los jars de dependencias ya preparados y las clases compiladas
 // del propio módulo (si existen).
 func lintClasspath(absDir, modDir, androidJar string) []string {
+	devlog("lintClasspath", fmt.Sprintf("absDir=%s, modDir=%s, androidJar=%s", absDir, modDir, androidJar), "Construye el classpath para resolución de tipos en lint")
 	var cp []string
 	if androidJar != "" {
 		cp = append(cp, androidJar)
@@ -263,6 +268,7 @@ func lintClasspath(absDir, modDir, androidJar string) []string {
 
 // printFindings muestra los avisos agrupados por fichero.
 func printFindings(cmd *cobra.Command, findings []lint.Finding) {
+	devlog("printFindings", fmt.Sprintf("cmd=%s, findingsCount=%d", cmd.Name(), len(findings)), "Muestra los hallazgos reportados por los analizadores estáticos")
 	out := cmd.OutOrStdout()
 	if len(findings) == 0 {
 		ui.Success("sin avisos")
@@ -311,6 +317,7 @@ func printFindings(cmd *cobra.Command, findings []lint.Finding) {
 
 // severityRank ordena las severidades para poder comparar.
 func severityRank(s lint.Severity) int {
+	devlog("severityRank", fmt.Sprintf("s=%v", s), "Devuelve la importancia numérica de un nivel de severidad")
 	switch s {
 	case lint.SeverityError:
 		return 2
@@ -323,6 +330,7 @@ func severityRank(s lint.Severity) int {
 
 // splitList parte una lista separada por comas.
 func splitList(value string) []string {
+	devlog("splitList", fmt.Sprintf("value=%s", value), "Divide una cadena separada por comas en una lista de elementos")
 	var out []string
 	for _, part := range strings.Split(value, ",") {
 		part = strings.TrimSpace(part)

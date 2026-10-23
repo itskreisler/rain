@@ -12,6 +12,7 @@ import (
 )
 
 func newCleanCmd() *cobra.Command {
+	devlog("newCleanCmd", "", "Crea el subcomando clean para eliminar artefactos y cachés de compilación")
 	return &cobra.Command{
 		Use:   "clean",
 		Short: "Borra artefactos de build, dependencias y caché",

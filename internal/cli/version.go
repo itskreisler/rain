@@ -8,6 +8,7 @@ import (
 )
 
 func newVersionCmd(info BuildInfo) *cobra.Command {
+	devlog("newVersionCmd", fmt.Sprintf("info=%+v", info), "Crea el subcomando version para mostrar datos de versión")
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Muestra la versión de Rain",
