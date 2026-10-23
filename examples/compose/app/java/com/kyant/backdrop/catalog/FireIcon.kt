@@ -141,7 +141,7 @@ fun FireIcon(
             ),
     ) {
         val resolvedColor = if (color == Color.Unspecified) {
-            Color.Black
+            Color(0xFFFF5722)
         } else {
             color
         }

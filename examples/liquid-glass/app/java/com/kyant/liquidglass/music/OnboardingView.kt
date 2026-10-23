@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -71,7 +70,10 @@ fun OnboardingView(
                 when (currentStep) {
                     1 -> StepPermissions(
                         isGranted = permissionsGranted == 1,
-                        onRequestPermission = { permissionsGranted = 1 },
+                        onRequestPermission = {
+                            permissionsGranted = 1
+                            step = 2
+                        },
                     )
                     2 -> StepFolderSelection(
                         selectedFolders = selectedFolders,
@@ -108,8 +110,13 @@ fun OnboardingView(
                 if (step < 3) {
                     LiquidGlassButton(
                         text = "Siguiente",
-                        enabled = step != 1 || permissionsGranted == 1,
-                        onClick = { step++ },
+                        enabled = true,
+                        onClick = {
+                            if (step == 1) {
+                                permissionsGranted = 1
+                            }
+                            step++
+                        },
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                     )
                 } else {
@@ -153,8 +160,8 @@ private fun StepPermissions(
             )
             Spacer(modifier = Modifier.height(24.dp))
             LiquidGlassButton(
-                text = if (isGranted) "✅ Permisos Otorgados" else "Conceder Permiso",
-                enabled = !isGranted,
+                text = if (isGranted) "✅ Permisos Otorgados" else "Conceder Permiso y Continuar",
+                enabled = true,
                 onClick = onRequestPermission,
                 modifier = Modifier.fillMaxWidth(),
             )
