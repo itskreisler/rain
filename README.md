@@ -1,225 +1,218 @@
-# Rain 🌧️
+# Rain
 
-Un build system ligero para Android, escrito en Go, diseñado para correr en Termux sin la pesadez de Gradle.
+A lightweight Android build system written in Go, designed to run on Termux without the overhead of Gradle.
 
-## ¿Qué es esto?
+## Overview
 
-Rain es una alternativa minimalista a Gradle para compilar APKs directamente en tu teléfono. Hace el pipeline esencial (`aapt2` → `javac`/`kotlinc` → `d8`/`R8` → `zipalign` → `apksigner`) pero sin JVM persistente, sin daemon y sin la resolución de dependencias que se come la RAM.
+Rain is a minimalist alternative to Gradle for building Android APKs directly on mobile devices or Linux environments. It executes the essential Android build pipeline (`aapt2` → `javac`/`kotlinc` → `d8`/`R8` → `zipalign` → `apksigner`) with minimal dependencies, no persistent JVM daemon, and efficient dependency resolution.
 
-## Características
+## Features
 
-- **Ligero**: Binario de Go, arranque instantáneo.
-- **Resolución de dependencias**: Lee POMs de Maven, maneja herencia de parents y `dependencyManagement` (modo completo).
-- **Soporte mixto**: Compila Java y Kotlin en el mismo proyecto.
-- **Incremental**: Hashea fuentes y recursos para no recompilar si nada cambió.
-- **Chequeo rápido**: `rain check` valida los tipos sin generar APK; `rain lint` añade ktlint y detekt.
-- **Release**: Genera DEX minificado con R8 y firma con tu propia keystore.
-- **Multi-módulo**: Soporta varios módulos definidos en `rain.toml`.
+- **Lightweight** - Single Go binary with instant startup and low memory footprint
+- **Dependency resolution** - Reads Maven POMs, handles parent inheritance and `dependencyManagement` (full mode)
+- **Mixed language support** - Compile Java and Kotlin in the same project
+- **Incremental builds** - SHA-256 hashing of sources and resources skips unnecessary recompilation
+- **Fast type checking** - `rain check` validates types without generating an APK
+- **Static analysis** - `rain lint` integrates ktlint and detekt
+- **Release builds** - Minify with R8 and sign with your keystore
+- **Multi-module support** - Define multiple modules in `rain.toml`
+- **Android2apk compatible** - Drop-in replacement for projects using the `android2apk` flat layout
 
-## Requisitos
+## Requirements
 
-- Termux o Linux con glibc/musl (probado también en Alpine dentro de un contenedor).
-- JDK 17 o superior (`pkg install openjdk-17`). Rain acepta JDK ≥ 17; OpenJDK 21
-  funciona en Termux pero un kernel PRoot puede romperlo, por eso el mínimo es 17.
-- `aapt2` del sistema (`pkg install aapt2`).
-- El resto de la toolchain (`d8`/R8, `apksigner`, `zipalign`, `android.jar`, Kotlin
-  y el plugin de Compose) **la autoprovisiona Rain** en `~/.rain`, así que no hace
-  falta instalar el SDK de Android a mano. Para prepararla:
+- **OS**: Termux or Linux with glibc/musl (tested on Alpine in containers)
+- **JDK**: Java 17 or higher (JDK 21 works in most environments, but may be unstable under PRoot; JDK 17 is recommended)
+- **aapt2**: Available from system packages (`pkg install aapt2` on Termux)
+- **Toolchain**: Rain auto-provisions `d8`/R8, `apksigner`, `zipalign`, `android.jar`, Kotlinc, and Compose plugin to `~/.rain/`
 
-```
-rain doctor --fix
-```
+## Installation
 
-Si ya tienes un `android.jar` propio puedes pasarlo con `--android-jar <ruta>`.
-
-Migrar desde android2apk
-
-Los proyectos que hoy compilan con `android2apk` (layout plano, `app.properties`,
-scripts de setup) compilan con Rain sin modificarlos:
-
-```
-rain build /ruta/a/mi-app
-```
-
-La guía completa —equivalencias entre `app.properties` y `rain.toml`,
-dependencias de Compose, toolchain y firmado— está en
-[docs/migracion-android2apk.md](docs/migracion-android2apk.md).
-
-Documentación
-
-| Documento | Contenido |
-|---|---|
-| [docs/doctor.md](docs/doctor.md) | Qué comprueba `rain doctor` y cómo usar sus flags. |
-| [docs/toolchain.md](docs/toolchain.md) | Qué se instala en `~/.rain` y por qué. |
-| [docs/compatibilidad.md](docs/compatibilidad.md) | Matriz JDK / Kotlin / R8 / compileSdk. |
-| [docs/memoria.md](docs/memoria.md) | Memoria en contenedores: `GOMEMLIMIT`, `GOGC`, heap de la JVM. |
-| [docs/migracion-android2apk.md](docs/migracion-android2apk.md) | Cómo portar un proyecto de android2apk. |
-
-Instalación
-
-```
+```bash
 git clone https://github.com/itskreisler/rain.git
 cd rain
 go build -o rain .
-# Opcional: mover a $PREFIX/bin (o ~/.local/bin) para uso global
+# Optional: install globally
 cp rain $PREFIX/bin/
 ```
 
-Estructura de un proyecto
+## Quick Start
 
-Rain espera una estructura de directorios similar a la de Gradle, pero simplificada:
+### 1. Install the toolchain
 
-```
-mi-app/
-├── rain.toml              # Configuración del build
-├── app/
-│   ├── src/
-│   │   └── main/
-│   │       ├── AndroidManifest.xml
-│   │       ├── java/      # Código fuente Java (.java)
-│   │       ├── kotlin/    # Código fuente Kotlin (.kt) (opcional)
-│   │       └── res/       # Recursos (layouts, strings, etc.)
-│   └── build/             # Generado por Rain (APKs, DEX, etc.)
-├── libs/                  # Dependencias AAR/JAR descargadas (generado)
-└── cache/                 # Caché de POMs (generado)
+```bash
+rain doctor --fix
 ```
 
-Flujo de trabajo paso a paso
+If you already have `android.jar`, you can specify it with `--android-jar <path>`.
 
-1. Inicializa el proyecto
+### 2. Initialize a project
 
+```bash
+rain init
 ```
-./rain init
-```
 
-Rain te preguntará el modo de resolución de dependencias:
+Choose a resolution mode:
+- `simple` - Explicit dependencies only, no transitive resolution. Best for small projects.
+- `completo` (full) - Resolves transitive dependencies from Maven POMs. Required for AndroidX.
 
-· simple: Declaras las dependencias explícitamente, sin transitivas. Ideal para proyectos pequeños o si quieres control total.
-· completo: Rain resuelve transitivas leyendo los POMs de Maven (como Gradle). Necesario para usar AndroidX.
-
-Esto generará un archivo rain.toml básico.
-
-2. Configura rain.toml
-
-Edita el archivo con tus datos. Un ejemplo completo:
+### 3. Configure `rain.toml`
 
 ```toml
-mode = "completo"  # o "simple"
+mode = "completo"
+
 dependencies = [
     "androidx.core:core:1.12.0",
-    "androidx.appcompat:appcompat:1.6.1"
+    "androidx.appcompat:appcompat:1.6.1",
+    "androidx.compose.material3:material3-android:1.5.0-beta01",
 ]
 
 [project]
-name = "MiApp"
-package = "com.ejemplo.miapp"
+name = "MyApp"
+package = "com.example.myapp"
 version = "1.0"
 
 [build]
 debug = true
 
-# Opcional: firma de release
 [signing]
-store_file = "mi-release.keystore"
-store_password = "tu_password"
-key_alias = "mi_alias"
-key_password = "tu_key_password"   # opcional: si se omite, se usa store_password
+store_file = "release.keystore"
+store_password = "password"
+key_alias = "alias"
+key_password = "password"  # Optional, defaults to store_password
 
-# Opcional: múltiples módulos
 [[modules]]
 name = "app"
 path = "app"
 
-# Opcional: repositorios Maven adicionales (Google Maven y Maven Central
-# siempre se consultan, y JitPack se añade solo para dependencias
-# com.github.* / io.github.*). Útil para un Nexus propio o repos de terceros.
 [repositories]
-extra = ["https://mi-nexus.local/repository/maven"]
+extra = ["https://my-nexus.local/repository/maven"]  # Optional custom repos
 ```
 
-3. Compila tu APK
+### 4. Build your APK
 
-Modo debug:
+```bash
+# Debug build
+rain build
 
-```
-./rain build --android-jar ./ruta/a/android.jar
-```
+# Release build with R8 minification
+rain build --release
 
-Modo release (con R8 y firma):
-
-```
-./rain build --android-jar ./ruta/a/android.jar --release
-```
-
-Rain mostrará una barra de progreso mientras descarga dependencias, y luego el progreso de cada etapa de compilación. Al final, el APK estará en `app/build/app-debug.apk` o `app/build/app-release.apk` (además de una copia descriptiva `<nombre>-<version>-<abi>.apk`). Si no defines `[signing]`, un build release se firma con una keystore de **debug** y Rain te lo avisa; confírmalo con `--allow-debug-signing` si es lo que quieres.
-
-4. Limpia el build (opcional)
-
-```
-./rain clean
+# Build from a specific directory
+rain build /path/to/project
 ```
 
-Borra los directorios app/build, libs y cache, dejando el proyecto como nuevo.
+APKs are generated in `app/build/` as `app-debug.apk`, `app-release.apk`, and a descriptive copy like `<name>-<version>-<abi>.apk`.
 
-Comandos disponibles
+### 5. Clean build artifacts
 
-| Comando | Descripción |
-| --- | --- |
-| `rain init` | Inicializa un proyecto (`--template simple` o `--template completo`). |
-| `rain build [dir]` | Compila el APK. Flags: `--android-jar <ruta>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet`. Con `[dir]` compila un proyecto o un layout plano estilo android2apk. |
-| `rain check [dir]` | Comprueba los tipos **sin generar APK**: compila el código y se detiene. Detecta `unresolved reference 'x'`, imports rotos y tipos incompatibles mucho antes que un build completo. Flags: `--fast` (chequeo incremental), `--android-jar <ruta>`, `--release`. |
-| `rain lint [dir]` | Ejecuta los analizadores estáticos opcionales (ktlint, detekt, pmd) y agrupa los avisos. Flags: `--install`, `--tools`, `--fail-on`, `--type-resolution`. |
-| `rain doctor` | Diagnostica la toolchain (`--profile simple\|complex`, `--json`, `--fix`, `--lint`, `--print-install`). |
-| `rain clean` | Borra artefactos de build, dependencias y caché. |
+```bash
+rain clean
+```
 
-`rain check` y `rain lint` no son lo mismo, y no se solapan:
+## Project Structure
 
-| | `rain check` | `rain lint` |
+```text
+my-app/
+├── rain.toml          # Build configuration
+├── app/
+│   ├── src/
+│   │   └── main/
+│   │       ├── AndroidManifest.xml
+│   │       ├── java/      # Java sources
+│   │       ├── kotlin/    # Kotlin sources (optional)
+│   │       └── res/       # Resources
+│   └── build/         # Generated APKs and build artifacts
+├── libs/              # Downloaded dependencies (generated)
+└── cache/             # POM cache (generated)
+```
+
+## Commands
+
+| Command | Description | Flags |
 | --- | --- | --- |
-| Qué hace | Compila el código (kotlinc/javac) y para ahí | Analiza el texto fuente con ktlint/detekt/pmd |
-| Detecta | Errores de **tipos**: referencias sin resolver, imports rotos, firmas incompatibles | Estilo, complejidad y "code smells": formato, imports sin usar, magic numbers |
-| Coste típico | ~3 s si no ha cambiado nada; ~30 s si hay que recompilar | ~20 s |
+| `rain init` | Initialize a new project | `--template simple\|completo` |
+| `rain build [dir]` | Build APK | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
+| `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
+| `rain lint [dir]` | Run static analysis (ktlint, detekt) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
+| `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
+| `rain clean` | Remove build artifacts and caches | — |
 
-Un linter de estilo **no** pilla un `unresolved reference`: eso solo lo ve el
-compilador. Por eso el check compila, y por eso el lint no puede sustituirlo.
+## `check` vs `lint`
 
-Para instalar los analizadores que gestiona Rain (ktlint 1.8.0 y detekt 1.23.8,
-en `~/.rain/toolchain`):
+| Feature | `rain check` | `rain lint` |
+| --- | --- | --- |
+| Purpose | Type checking via compiler | Style and code quality analysis |
+| Detects | Unresolved references, broken imports, type errors | Formatting issues, unused imports, complexity, code smells |
+| Tool | kotlinc/javac | ktlint, detekt, pmd |
+| Speed | Fast with incremental cache (~3s) | ~20s |
+| Output | Compilation errors | Warnings and style violations |
 
+A linter cannot replace type checking—`check` compiles the code, `lint` analyzes source text.
+
+## Lint Configuration
+
+Install linters:
+```bash
+rain lint --install
+# or
+rain doctor --fix --lint
 ```
-rain lint --install        # o: rain doctor --fix --lint
-```
 
-Se pueden configurar en `rain.toml`:
-
+Configure in `rain.toml`:
 ```toml
 [lint]
-tools = ["ktlint", "detekt"]   # o ["auto"] para usar los instalados
+tools = ["ktlint", "detekt"]  # or ["auto"]
 fail_on = "error"              # never | warning | error
-type_resolution = false        # detekt con tipos: más avisos, más lento
+type_resolution = false        # Enable type resolution for detekt (slower)
 ```
 
-¿Cómo funciona internamente?
+## Migration from android2apk
 
-Rain ejecuta el mismo pipeline que Gradle, pero sin capas de abstracción:
+Projects using the flat `android2apk` layout (`app.properties`, setup scripts) work with Rain without modification:
 
-1. Resolución de dependencias (solo en modo completo): Lee los POMs de Google Maven y Maven Central, resuelve transitivas, y descarga los AAR/JAR a libs/.
-2. aapt2 compile: Compila los recursos de res/ a archivos .flat.
-3. aapt2 link: Genera el APK base y el R.java a partir del manifest y los recursos.
-4. BuildConfig: Genera la clase BuildConfig.java con DEBUG, APPLICATION_ID, etc.
-5. kotlinc (si hay archivos .kt): Compila Kotlin a .class en obj/.
-6. javac: Compila Java (incluyendo R.java y BuildConfig.java) usando obj/ como classpath para ver las clases de Kotlin.
-7. d8 / R8: Convierte los .class a classes.dex. En release, usa R8 con ProGuard para minificar.
-8. zip: Empaqueta classes.dex dentro del APK base.
-9. zipalign: Alinea el APK para que sea eficiente en memoria.
-10. apksigner: Firma el APK con la keystore de debug o la de release.
+```bash
+rain build /path/to/android2apk-project
+```
 
-La incrementalidad funciona con hashes SHA-256: si los fuentes y recursos no cambian, Rain reutiliza el DEX y el APK base de la compilación anterior.
+See the [migration guide](docs/migracion-android2apk.md) for details on converting `app.properties` to `rain.toml`, Compose dependencies, toolchain setup, and signing.
 
-Solución de problemas
+## How It Works
 
-· aapt2: command not found: Instala aapt2 con pkg install aapt2.
-· javac falla con package X does not exist: Asegúrate de que las dependencias estén en libs/. Borra libs/ y vuelve a compilar para forzar la descarga.
-· Error de jansi al compilar Kotlin: Instala libjansi con pkg install libjansi. Rain ya pasa el flag -J-Dlibrary.jansi.path=... automáticamente.
-· La barra de progreso no aparece: Asegúrate de que libs/ no exista o esté vacío. Rain solo descarga si no encuentra los JARs.
-· "fatal error: found pointer to free object" o la compilación muere: normalmente falta de RAM. La JVM reserva 1/4 de la RAM física por defecto; Rain acota el heap de kotlinc a la mitad de la memoria realmente disponible, pero en contenedores justos conviene exportar GOGC=15 y GOMEMLIMIT=1200MiB. Si el proceso corre bajo proot (PRoot-Distro, contenedores emulados), el crash no es de memoria: es proot estropeando el runtime de Go, y Rain ya lo detecta y aplica GC conservador por su cuenta. Ver [docs/memoria.md](docs/memoria.md).
+Rain executes the standard Android build pipeline:
+
+1. **Dependency resolution** (full mode) - Parse Maven POMs, resolve transitive dependencies, download AAR/JAR to `libs/`
+2. **Resource compilation** - `aapt2 compile` compiles `res/` to `.flat` files
+3. **Resource linking** - `aapt2 link` generates `R.java` and the base APK from manifest and resources
+4. **BuildConfig generation** - Create `BuildConfig.java` with `DEBUG`, `APPLICATION_ID`, `VERSION_NAME`, etc.
+5. **Kotlin compilation** - `kotlinc` compiles `.kt` files to `.class` (if present)
+6. **Java compilation** - `javac` compiles `.java` files (including generated `R.java` and `BuildConfig.java`)
+7. **DEX conversion** - `d8` converts `.class` to `classes.dex`. In release mode, `R8` performs minification and obfuscation
+8. **APK packaging** - Add `classes.dex` to the base APK
+9. **Alignment** - `zipalign` optimizes the APK for memory
+10. **Signing** - `apksigner` signs with debug or release keystore
+
+Incremental builds use SHA-256 hashes of sources and resources to reuse previous `classes.dex` and base APK when unchanged.
+
+## Documentation
+
+| Document | Description |
+| --- | --- |
+| [docs/doctor.md](docs/doctor.md) | `rain doctor` checks and installation flags |
+| [docs/toolchain.md](docs/toolchain.md) | Toolchain contents in `~/.rain/` and rationale |
+| [docs/compatibilidad.md](docs/compatibilidad.md) | JDK / Kotlin / R8 / compileSdk compatibility matrix |
+| [docs/memoria.md](docs/memoria.md) | Memory management for containers (GOMEMLIMIT, GOGC, JVM heap) |
+| [docs/migracion-android2apk.md](docs/migracion-android2apk.md) | Porting guide from android2apk |
+
+## Troubleshooting
+
+| Issue | Solution |
+| --- | --- |
+| `aapt2: command not found` | Install aapt2: `pkg install aapt2` |
+| `package X does not exist` during compilation | Dependencies may be missing. Delete `libs/` and rebuild to re-download. |
+| Jansi error when compiling Kotlin | Install libjansi: `pkg install libjansi`. Rain passes `-J-Dlibrary.jansi.path=...` automatically. |
+| Progress bar not showing | Ensure `libs/` doesn't exist or is empty. Rain only shows download progress when downloading. |
+| Crashes with "fatal error: found pointer to free object" or OOM | Common in low-RAM containers or under PRoot. Rain auto-detects PRoot and applies conservative GC. For containers, try `export GOGC=15 GOMEMLIMIT=1200MiB`. See [docs/memoria.md](docs/memoria.md). |
+
+## License
+
+See [LICENSE](LICENSE) for details.
