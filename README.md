@@ -131,11 +131,25 @@ my-app/
 | Command | Description | Flags |
 | --- | --- | --- |
 | `rain init` | Initialize a new project | `--template simple\|completo` |
-| `rain build [dir]` | Build APK | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
+| `rain build [dir]` | Build and sign APK (supports flat android2apk layout) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
 | `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
-| `rain lint [dir]` | Run static analysis (ktlint, detekt) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
+| `rain lint [dir]` | Run static analysis (ktlint, detekt, pmd) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
 | `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
-| `rain clean` | Remove build artifacts and caches | — |
+| `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
+| `rain deps` | Dependency management commands | — |
+| `rain version` | Show Rain version | — |
+| `rain clean` | Remove build artifacts, dependencies and caches | — |
+| `rain completion` | Generate shell autocompletion scripts | — |
+
+## Global Flags
+
+| Flag | Description |
+| --- | --- |
+| `--devlog` | Show development logs for CLI functions |
+| `-v, --verbose` | Show detailed execution output |
+| `-q, --quiet` | Show only errors |
+| `--no-color` | Disable ANSI colors |
+| `-h, --help` | Show help for any command |
 
 ## `check` vs `lint`
 
