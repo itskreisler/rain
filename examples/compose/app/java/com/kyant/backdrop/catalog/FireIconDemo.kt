@@ -139,10 +139,11 @@ fun FireIconDemo() {
             color = Color(0xFF1E1E2E),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp)
+                        .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -159,6 +160,67 @@ fun FireIconDemo() {
                 FireIconButtonExample()
 
                 FireIconControlsExample()
+
+                FlameIconDemo()
+            }
+        }
+    }
+}
+
+@Composable
+fun FlameIconDemo() {
+    val flameState = rememberFlameIconState()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A3C)),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = "FlameIcon",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 14.sp,
+            )
+            FlameIcon(
+                size = 56.dp,
+                color = Color(0xFFFF5722),
+                state = flameState,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Button(
+                    onClick = { flameState.startAnimation() },
+                ) {
+                    Text("Iniciar")
+                }
+                Button(
+                    onClick = { flameState.stopAnimation() },
+                ) {
+                    Text("Detener")
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FlameIcon(
+                    size = 32.dp,
+                    color = Color(0xFFFF7043),
+                )
+                IconButton(
+                    onClick = { },
+                ) {
+                    FlameIcon(
+                        size = 28.dp,
+                        color = Color(0xFFFF5722),
+                    )
+                }
             }
         }
     }
