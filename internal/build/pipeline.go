@@ -278,7 +278,15 @@ const (
 	javaHashFile = ".rain-java-hash"
 	// dexHashFile marca que el classes.dex corresponde a esas fuentes.
 	dexHashFile = ".rain-dex-hash"
+	// dexDepsHashFile marca que el DEX de dependencias cacheado corresponde a
+	// los jars, el min-api y la versión de d8 actuales.
+	dexDepsHashFile = ".rain-dex-deps-hash"
 )
+
+// dexDepsCacheVersion se incrementa cuando cambia el formato del DEX de
+// dependencias o el filtrado de jars que lo alimenta. Un build antiguo con la
+// misma versión reutilizaría un DEX construido con otras reglas.
+const dexDepsCacheVersion = "1"
 
 // dexIsUpToDate indica si el classes.dex que hay en el directorio de build
 // se puede reutilizar.
@@ -297,11 +305,16 @@ func dexIsUpToDate(buildDir, currentHash string) bool {
 	return fileExists(filepath.Join(buildDir, "dex", "classes.dex"))
 }
 
-func computeJavaHash(appDir, libsDir, genDir string, release bool) (string, error) {
+func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...string) (string, error) {
 	var files []string
 	if err := filepath.Walk(sourceRoot(appDir), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		// build/ contiene artefactos (gen/, kapt/...), no fuentes del
+		// proyecto; contarlos duplicaría el trabajo y el hash.
+		if info.IsDir() && filepath.Clean(path) == filepath.Clean(filepath.Join(appDir, "build")) {
+			return filepath.SkipDir
 		}
 		if strings.HasSuffix(path, ".java") || strings.HasSuffix(path, ".kt") {
 			files = append(files, path)
@@ -343,7 +356,196 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool) (string, erro
 		global.Write(h)
 		global.Write([]byte(filepath.Base(f)))
 	}
+
+	// Las dependencias también determinan el DEX: si cambia una versión en
+	// rain.toml (o se quita) el classes.dex anterior ya no sirve. Sin esto,
+	// cambiar una dependencia cuyas fuentes y R.java no cambian reutilizaba
+	// el DEX viejo. Se usa tamaño+mtime en vez de hashear decenas de MiB: un
+	// jar de una versión publicada no se modifica en disco.
+	deps := append([]string(nil), depsJars...)
+	if stdlib := findKotlinStdlib(); stdlib != "" {
+		deps = append(deps, stdlib)
+	}
+	sort.Strings(deps)
+	seen := make(map[string]bool)
+	for _, path := range deps {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		st, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("stat de dependencia %s: %w", path, err)
+		}
+		fmt.Fprintf(global, "dep\x00%s\x00%d\x00%d\x00", path, st.Size(), st.ModTime().UnixNano())
+	}
+
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
+}
+
+// computeDexDepsHash calcula la clave del DEX de dependencias cacheado.
+//
+// La clave cubre los jars originales (en el orden en que se dexan, porque ese
+// orden decide qué jar gana si hay clases repetidas), el min-api, android.jar,
+// el jar de d8 y el propio binario de Rain. Los jars filtrados de build/dedupe
+// no se incluyen: se reescriben en cada build y son un derivado determinista de
+// los originales, así que su mtime invalidaría la caché siempre.
+func computeDexDepsHash(androidJar string, minSdk int, jars []string) (string, error) {
+	h := sha256.New()
+	fmt.Fprintf(h, "rain-dex-deps\x00%s\x00%d\x00", dexDepsCacheVersion, minSdk)
+
+	files := append([]string(nil), jars...)
+	files = append(files, androidJar)
+	if d8Jar := findD8Jar(); d8Jar != "" {
+		files = append(files, d8Jar)
+	}
+	if d8, err := exec.LookPath("d8"); err == nil {
+		files = append(files, d8)
+	}
+	if rain, err := os.Executable(); err == nil {
+		files = append(files, rain)
+	}
+
+	// Se conserva el orden de la lista: solo se evitan repeticiones.
+	seen := make(map[string]bool, len(files))
+	for _, path := range files {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		st, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("stat de %s: %w", path, err)
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", path, st.Size(), st.ModTime().UnixNano())
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// dexFilesIn devuelve los classes*.dex de un directorio en orden de multidex.
+func dexFilesIn(dir string) []string {
+	files, _ := filepath.Glob(filepath.Join(dir, "classes*.dex"))
+	sort.Slice(files, func(i, j int) bool {
+		return dexNumber(files[i]) < dexNumber(files[j])
+	})
+	return files
+}
+
+// runD8 ejecuta d8 con el límite de heap que usa Rain en el resto del build.
+func runD8(args []string) error {
+	cmd := exec.Command("d8", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	// Con 1g d8 pasa minutos haciendo GC en proyectos Compose; el wrapper de
+	// Rain lee RAIN_JAVA_MAX_HEAP. HeapLimit recorta el valor si la máquina no
+	// tiene memoria y respeta lo que fije el usuario.
+	cmd.Env = append(os.Environ(), memenv.EnvJavaMaxHeap+"="+memenv.HeapLimit("2g"))
+	return cmd.Run()
+}
+
+// buildSplitDex genera el DEX de debug en dos pasadas: dependencias (cacheado
+// entre builds) y clases de la app (en cada build). El DEX de la app va primero
+// como classes.dex para que los entry points queden en el DEX primario; los de
+// dependencias van después como classes2.dex, classes3.dex...
+//
+// d8 procesa las dependencias como programa y las clases de la app por
+// separado. En la pasada de la app los jars de dependencias se pasan como
+// --classpath: d8 necesita sus tipos para desugar interfaces y resolver
+// referencias, pero no debe volver a incluirlos en el DEX resultante.
+func buildSplitDex(cfg Config, dexDir string, appClasses []string, stdlib string, deps []string) error {
+	depInputs := make([]string, 0, len(deps)+1)
+	if stdlib != "" {
+		depInputs = append(depInputs, stdlib)
+	}
+	depInputs = append(depInputs, deps...)
+
+	if len(appClasses) == 0 && len(depInputs) == 0 {
+		return fmt.Errorf("dex: no hay clases que dexar")
+	}
+
+	depsDir := filepath.Join(cfg.BuildDir, "dexdeps")
+	var cached []string
+	if len(depInputs) > 0 {
+		// La clave usa los jars originales, no los filtrados de dedupe (ver
+		// computeDexDepsHash).
+		keyJars := cfg.libraryJars()
+		if stdlib != "" {
+			keyJars = append(keyJars, stdlib)
+		}
+		depsHash, err := computeDexDepsHash(cfg.AndroidJar, cfg.MinSdk, keyJars)
+		if err != nil {
+			return fmt.Errorf("hash del DEX de dependencias: %w", err)
+		}
+
+		cached = dexFilesIn(depsDir)
+		prevHash, _ := os.ReadFile(filepath.Join(depsDir, dexDepsHashFile))
+		if string(prevHash) == depsHash && len(cached) > 0 {
+			ui.Info("dependencias sin cambios, reutilizando su DEX")
+		} else {
+			ui.Info("generando DEX de dependencias con d8...")
+			if err := os.RemoveAll(depsDir); err != nil {
+				return fmt.Errorf("limpiando DEX de dependencias: %w", err)
+			}
+			if err := os.MkdirAll(depsDir, 0755); err != nil {
+				return fmt.Errorf("creando directorio del DEX de dependencias: %w", err)
+			}
+			args := []string{"--output", depsDir, "--lib", cfg.AndroidJar, "--min-api", strconv.Itoa(cfg.MinSdk)}
+			args = append(args, depInputs...)
+			if err := runD8(args); err != nil {
+				return fmt.Errorf("dex de dependencias: %w", err)
+			}
+			if err := os.WriteFile(filepath.Join(depsDir, dexDepsHashFile), []byte(depsHash), 0644); err != nil {
+				return fmt.Errorf("guardando hash del DEX de dependencias: %w", err)
+			}
+			cached = dexFilesIn(depsDir)
+			if len(cached) == 0 {
+				return fmt.Errorf("no se generó DEX de dependencias")
+			}
+		}
+	}
+
+	var appDex []string
+	if len(appClasses) > 0 {
+		appDir := filepath.Join(cfg.BuildDir, "dexapp")
+		if err := os.RemoveAll(appDir); err != nil {
+			return fmt.Errorf("limpiando DEX de la app: %w", err)
+		}
+		if err := os.MkdirAll(appDir, 0755); err != nil {
+			return fmt.Errorf("creando directorio del DEX de la app: %w", err)
+		}
+		ui.Info("generando DEX de la app con d8...")
+		args := []string{"--output", appDir, "--lib", cfg.AndroidJar, "--min-api", strconv.Itoa(cfg.MinSdk)}
+		for _, jar := range depInputs {
+			args = append(args, "--classpath", jar)
+		}
+		args = append(args, appClasses...)
+		if err := runD8(args); err != nil {
+			return fmt.Errorf("dex de la app: %w", err)
+		}
+		appDex = dexFilesIn(appDir)
+		if len(appDex) == 0 {
+			return fmt.Errorf("no se generó DEX de la app")
+		}
+	}
+
+	// Ensamblado final: la app ocupa los primeros números de multidex.
+	if err := os.RemoveAll(dexDir); err != nil {
+		return fmt.Errorf("limpiando DEX: %w", err)
+	}
+	if err := os.MkdirAll(dexDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio dex: %w", err)
+	}
+	all := append(append([]string(nil), appDex...), cached...)
+	for i, src := range all {
+		name := "classes.dex"
+		if i > 0 {
+			name = fmt.Sprintf("classes%d.dex", i+1)
+		}
+		if err := copyFile(src, filepath.Join(dexDir, name)); err != nil {
+			return fmt.Errorf("preparando %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func Run(cfg Config) error {
@@ -591,7 +793,7 @@ public final class BuildConfig {
 	javaHashPath := filepath.Join(cfg.BuildDir, javaHashFile)
 	dexHashPath := filepath.Join(cfg.BuildDir, dexHashFile)
 
-	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release)
+	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
 	if err != nil {
 		return fmt.Errorf("hash de java: %w", err)
 	}
@@ -656,13 +858,16 @@ public final class BuildConfig {
 			return nil
 		}
 
-		var classFiles []string
+		// Clases de la app: son las únicas que cambian entre builds. En debug
+		// se dexan por separado de las dependencias para poder cachear el DEX
+		// de estas últimas.
+		var appClasses []string
 		if err := filepath.Walk(objDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
 			if strings.HasSuffix(path, ".class") && !info.IsDir() {
-				classFiles = append(classFiles, path)
+				appClasses = append(appClasses, path)
 			}
 			return nil
 		}); err != nil {
@@ -677,24 +882,30 @@ public final class BuildConfig {
 			ui.VerboseLog("dex: %d jars de dependencias", len(deps))
 		}
 
+		var stdlib string
 		if len(kotlinSources) > 0 {
-			stdlib := findKotlinStdlib()
+			stdlib = findKotlinStdlib()
 			if stdlib == "" {
 				return fmt.Errorf("se compiló Kotlin pero no se encontró kotlin-stdlib.jar (revisa la instalación de kotlinc)")
 			}
-			// El stdlib debe ser el primero: si alguna dependencia lo duplica,
-			// dedupeJarsByClass conserva esta versión (la del toolchain).
-			classFiles = append(classFiles, stdlib)
 		}
-		classFiles = append(classFiles, deps...)
 
 		dexDir := filepath.Join(cfg.BuildDir, "dex")
 		if err := os.MkdirAll(dexDir, 0755); err != nil {
 			return fmt.Errorf("creando directorio dex: %w", err)
 		}
 
-		var cmd *exec.Cmd
 		if cfg.Release {
+			// R8 trabaja sobre el programa completo y necesita ver todas las
+			// clases juntas para aplicar reglas de optimización y de keep.
+			classFiles := append([]string(nil), appClasses...)
+			if stdlib != "" {
+				// El stdlib debe ir antes que las dependencias: si alguna lo
+				// duplica, se conserva la versión del toolchain.
+				classFiles = append(classFiles, stdlib)
+			}
+			classFiles = append(classFiles, deps...)
+
 			ui.Info("generando DEX con R8 (release)...")
 			d8Jar := findD8Jar()
 			if d8Jar == "" {
@@ -739,17 +950,14 @@ public final class BuildConfig {
 			r8Args = append(r8Args, "--pg-map-output", mappingPath)
 
 			r8Args = append(r8Args, classFiles...)
-			cmd = exec.Command("java", r8Args...)
-		} else {
-			ui.Info("generando DEX con d8...")
-			d8Args := []string{"--output", dexDir, "--lib", cfg.AndroidJar, "--min-api", strconv.Itoa(cfg.MinSdk)}
-			d8Args = append(d8Args, classFiles...)
-			cmd = exec.Command("d8", d8Args...)
-		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("dex: %w", err)
+			cmd := exec.Command("java", r8Args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("dex: %w", err)
+			}
+		} else if err := buildSplitDex(cfg, dexDir, appClasses, stdlib, deps); err != nil {
+			return err
 		}
 		// Solo ahora el DEX corresponde a estas fuentes: se guarda su marca
 		// para que el siguiente build pueda reutilizarlo.
@@ -886,10 +1094,21 @@ public final class BuildConfig {
 		ui.Info("firma verificada (release); mapping en %s", filepath.Join(cfg.BuildDir, "mapping.txt"))
 	}
 
-	// Copia descriptiva estilo android2apk: <nombre>-<version>-<abi>.apk
+	// El APK alineado era solo un paso intermedio: se regenera en cada build y
+	// ocupa lo mismo que el final.
+	_ = os.Remove(alignedApk)
+
+	// Copia descriptiva estilo android2apk: <nombre>-<version>-<abi>.apk.
+	// Un hardlink evita reescribir el APK entero (~12 MiB) en cada build; si
+	// el sistema de archivos no lo permite, se copia como siempre.
 	namedApk := filepath.Join(cfg.BuildDir, apkNameFor(cfg))
-	if err := copyFile(finalApk, namedApk); err != nil {
-		return fmt.Errorf("creando %s: %w", namedApk, err)
+	if err := os.Remove(namedApk); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("preparando %s: %w", namedApk, err)
+	}
+	if err := os.Link(finalApk, namedApk); err != nil {
+		if err := copyFile(finalApk, namedApk); err != nil {
+			return fmt.Errorf("creando %s: %w", namedApk, err)
+		}
 	}
 
 	elapsed := time.Since(start)
@@ -1039,7 +1258,11 @@ func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
 	kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
 		"-d", objDir,
 		"-classpath", strings.Join(kotlinClasspath, ":"),
-		"-jvm-target", kotlinJVMTarget(jvmTarget)}
+		"-jvm-target", kotlinJVMTarget(jvmTarget),
+		// El codegen de kotlinc usa un solo hilo por defecto. En un proyecto
+		// Compose el frontend sigue siendo secuencial, pero repartir el
+		// backend entre los núcleos disponibles reduce la fase de generación.
+		"-Xbackend-threads=0"}
 
 	// La JVM de kotlinc reserva por defecto 1/4 de la RAM física. En
 	// un contenedor con poca memoria libre eso es un OOM asegurado,
@@ -1287,21 +1510,31 @@ func debugKeystorePath(buildDir string) string {
 }
 
 // addFileEntry escribe un fichero del disco dentro del ZIP con la ruta dada.
+// Se hace en streaming: un .so o un .dex grande no necesita estar entero en
+// memoria para empaquetarse.
 func addFileEntry(writer *zip.Writer, name, src string) error {
-	data, err := os.ReadFile(src)
+	f, err := os.Open(src)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = f.Close() }()
+
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
 	header := &zip.FileHeader{
-		Name:     name,
-		Method:   zip.Deflate,
-		Modified: zipTimestamp(),
+		Name:               name,
+		Method:             zip.Deflate,
+		Modified:           zipTimestamp(),
+		UncompressedSize64: uint64(st.Size()),
 	}
 	entry, err := writer.CreateHeader(header)
 	if err != nil {
 		return err
 	}
-	_, err = entry.Write(data)
+	_, err = io.Copy(entry, f)
 	return err
 }
 
@@ -1338,15 +1571,20 @@ func copyZipEntry(writer *zip.Writer, file *zip.File) error {
 	// aapt2 pone la hora de compilación en sus entradas: se sustituye por el
 	// timestamp fijo para que el APK sea reproducible.
 	header.Modified = zipTimestamp()
-	entry, err := writer.CreateHeader(&header)
+	// CreateRaw exige tamaños y CRC reales en la cabecera, así que se quita el
+	// flag de data descriptor si el APK de origen lo traía.
+	header.Flags &^= 0x8
+	// CreateRaw copia los bytes ya comprimidos tal cual. Descomprimir y
+	// recomprimir cada recurso en cada build no cambia el resultado (los
+	// recursos vienen de aapt2) y cuesta segundos con un APK grande.
+	entry, err := writer.CreateRaw(&header)
 	if err != nil {
 		return err
 	}
-	reader, err := file.Open()
+	reader, err := file.OpenRaw()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = reader.Close() }()
 	_, err = io.Copy(entry, reader)
 	return err
 }

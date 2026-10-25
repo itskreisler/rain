@@ -17,6 +17,57 @@ func writeHashFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestComputeDexDepsHashInvalidaConMinSdkYJars(t *testing.T) {
+	dir := t.TempDir()
+	androidJar := filepath.Join(dir, "android.jar")
+	dep := filepath.Join(dir, "dep.jar")
+	writeHashFile(t, androidJar, "android")
+	writeHashFile(t, dep, "dep")
+
+	first, err := computeDexDepsHash(androidJar, 21, []string{dep})
+	if err != nil {
+		t.Fatalf("computeDexDepsHash: %v", err)
+	}
+
+	// Sin cambios: la clave debe ser estable (si no, la caché nunca acierta).
+	again, err := computeDexDepsHash(androidJar, 21, []string{dep})
+	if err != nil {
+		t.Fatalf("computeDexDepsHash: %v", err)
+	}
+	if first != again {
+		t.Errorf("hash inestable: %s != %s", first, again)
+	}
+
+	// Cambia el min-api.
+	otherApi, err := computeDexDepsHash(androidJar, 26, []string{dep})
+	if err != nil {
+		t.Fatalf("computeDexDepsHash: %v", err)
+	}
+	if otherApi == first {
+		t.Error("el hash no cambió al cambiar min-api")
+	}
+
+	// Cambia una dependencia.
+	writeHashFile(t, dep, "dep-v2")
+	otherDep, err := computeDexDepsHash(androidJar, 21, []string{dep})
+	if err != nil {
+		t.Fatalf("computeDexDepsHash: %v", err)
+	}
+	if otherDep == first {
+		t.Error("el hash no cambió al cambiar una dependencia")
+	}
+
+	// Cambia android.jar.
+	writeHashFile(t, androidJar, "android-v2")
+	otherAndroid, err := computeDexDepsHash(androidJar, 21, []string{dep})
+	if err != nil {
+		t.Fatalf("computeDexDepsHash: %v", err)
+	}
+	if otherAndroid == otherDep {
+		t.Error("el hash no cambió al cambiar android.jar")
+	}
+}
+
 func TestComputeResourceHashCambiaConElContenido(t *testing.T) {
 	dir := t.TempDir()
 	app := filepath.Join(dir, "app")
@@ -123,6 +174,42 @@ func TestComputeJavaHashCambiaConElContenido(t *testing.T) {
 	}
 	if changedLib == changed {
 		t.Error("el hash no cambió al modificar una dependencia")
+	}
+}
+
+func TestComputeJavaHashCambiaConLasDependenciasDelSet(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	libs := filepath.Join(dir, "libs")
+	gen := filepath.Join(dir, "gen")
+	writeHashFile(t, filepath.Join(app, "java", "com", "x", "Main.kt"), "package com.x\n")
+
+	dep1 := filepath.Join(dir, ".rain-deps", "jars", "core-1.0.jar")
+	dep2 := filepath.Join(dir, ".rain-deps", "jars", "core-2.0.jar")
+	writeHashFile(t, dep1, "clases de la 1.0")
+	writeHashFile(t, dep2, "clases de la 2.0")
+
+	withDep1, err := computeJavaHash(app, libs, gen, false, dep1)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	withDep2, err := computeJavaHash(app, libs, gen, false, dep2)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	if withDep1 == withDep2 {
+		t.Error("cambiar la versión de una dependencia debe invalidar el DEX")
+	}
+
+	// Mismo nombre de fichero y misma ruta, pero contenido distinto (por
+	// ejemplo, un jar regenerado): el tamaño cambia y el hash debe cambiar.
+	writeHashFile(t, dep1, "clases de la 1.0 con un arreglo")
+	withPatched, err := computeJavaHash(app, libs, gen, false, dep1)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	if withPatched == withDep1 {
+		t.Error("un cambio de contenido en el jar debe invalidar el DEX")
 	}
 }
 

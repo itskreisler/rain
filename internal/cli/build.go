@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 
@@ -301,22 +304,68 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 		return set, nil
 	}
 
-	pb := ui.NewProgressBar(len(coords), "Preparando ")
-	set := &aar.Set{Dir: dir}
+	// La descarga es el cuello de botella de un build frío: cada AAR se pide
+	// en serie y la latencia/velocidad de Google Maven se paga una vez por
+	// artefacto. Se preparan en paralelo, pero con un límite para no saturar
+	// la red ni la memoria de Termux. El orden de los resultados se conserva
+	// para que el classpath siga siendo determinista.
+	workers := runtime.NumCPU()
+	if workers > 8 {
+		workers = 8
+	}
+	if workers > len(coords) {
+		workers = len(coords)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	type prepared struct {
+		libs []aar.Library
+		err  error
+	}
+	results := make([]prepared, len(coords))
 	client := aar.NewClient()
-	failures := 0
+	pb := ui.NewProgressBar(len(coords), "Preparando ")
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var progressMu sync.Mutex
+	var done int64
+
 	for i, coord := range coords {
-		pb.Current = i + 1
-		pb.Render()
-		s, err := client.Prepare([]string{coord}, dir)
-		if err != nil {
+		wg.Add(1)
+		go func(i int, coord string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			set, err := client.Prepare([]string{coord}, dir)
+			if err != nil {
+				results[i] = prepared{err: err}
+			} else {
+				results[i] = prepared{libs: set.Libraries}
+			}
+
+			n := int(atomic.AddInt64(&done, 1))
+			progressMu.Lock()
+			pb.Current = n
+			pb.Render()
+			progressMu.Unlock()
+		}(i, coord)
+	}
+	wg.Wait()
+	pb.Finish()
+
+	set := &aar.Set{Dir: dir}
+	failures := 0
+	for i, result := range results {
+		if result.err != nil {
 			failures++
-			ui.Warn("No se pudo preparar %s: %v", coord, err)
+			ui.Warn("No se pudo preparar %s: %v", coords[i], result.err)
 			continue
 		}
-		set.Libraries = append(set.Libraries, s.Libraries...)
+		set.Libraries = append(set.Libraries, result.libs...)
 	}
-	pb.Finish()
 	if len(set.Libraries) == 0 {
 		return nil, fmt.Errorf("no se pudo preparar ninguna dependencia")
 	}

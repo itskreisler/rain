@@ -275,12 +275,19 @@ func TestIntegracionAPKConLibreriaAndroidX(t *testing.T) {
 		}
 	}
 
-	// --- Dex: el código de la librería tiene que estar dentro ---
-	dex := entradas["classes.dex"]
-	if !bytes.Contains([]byte(dex), []byte("Lcom/example/androidx/LibraryHelper;")) {
+	// --- Dex: el código de la librería y el de la app tienen que estar dentro ---
+	// En debug el DEX se genera en dos pasadas: la app ocupa classes.dex y las
+	// dependencias classes2.dex, así que hay que buscar en todos los DEX.
+	var dex bytes.Buffer
+	for name, contenido := range entradas {
+		if strings.HasPrefix(name, "classes") && strings.HasSuffix(name, ".dex") {
+			dex.WriteString(contenido)
+		}
+	}
+	if !bytes.Contains(dex.Bytes(), []byte("Lcom/example/androidx/LibraryHelper;")) {
 		t.Error("el dex no contiene la clase de la librería")
 	}
-	if !bytes.Contains([]byte(dex), []byte("Lcom/example/integration/MainActivity;")) {
+	if !bytes.Contains(dex.Bytes(), []byte("Lcom/example/integration/MainActivity;")) {
 		t.Error("el dex no contiene la activity de la app")
 	}
 }
