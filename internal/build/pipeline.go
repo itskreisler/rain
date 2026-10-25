@@ -114,6 +114,9 @@ var reManifestPlaceholder = regexp.MustCompile(`\$\{([^}]+)\}`)
 // reManifestTag busca la etiqueta de apertura del <manifest>.
 var reManifestTag = regexp.MustCompile(`<manifest(\s[^>]*)?>`)
 
+// dexEntryRe reconoce los DEX de multidex (classes.dex, classes2.dex...).
+var dexEntryRe = regexp.MustCompile(`^classes\d*\.dex$`)
+
 // substituteManifestPlaceholders sustituye los marcadores del manifest que
 // Gradle resuelve al fusionarlo ("${applicationId}", "${versionName}"...).
 //
@@ -553,6 +556,7 @@ func Run(cfg Config) error {
 	if err := ValidateJVMTarget(cfg.JVMTarget); err != nil {
 		return err
 	}
+	cfg.warnLibsWithDependencies()
 	if cfg.MinSdk <= 0 {
 		cfg.MinSdk = 21
 	}
@@ -978,7 +982,7 @@ public final class BuildConfig {
 		return dexNumber(dexFiles[i]) < dexNumber(dexFiles[j])
 	})
 
-	nativeLibs, err := collectNativeLibs(cfg.nativeDir(cfg.Libs))
+	nativeLibs, err := cfg.nativeLibs()
 	if err != nil {
 		return err
 	}
@@ -1412,6 +1416,10 @@ func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string, 
 	// librerías nativas que se van a añadir ahora. Si se copiaran tal cual,
 	// el APK tendría entradas duplicadas ("Multiple ZIP entries with the
 	// same name: classes.dex") y apksigner lo rechazaría.
+	//
+	// Se descartan todos los classes*.dex, no solo los que se van a escribir:
+	// si el build anterior tenía más DEX (p. ej. más dependencias) y el actual
+	// genera menos, los sobrantes quedarían dentro con clases antiguas.
 	skip := map[string]bool{}
 	for _, dex := range dexFiles {
 		skip[filepath.Base(dex)] = true
@@ -1424,7 +1432,14 @@ func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string, 
 	}
 
 	for _, file := range src.File {
-		if skip[file.Name] {
+		if skip[file.Name] || dexEntryRe.MatchString(file.Name) {
+			continue
+		}
+		// Las librerías nativas y los servicios de ServiceLoader se escriben
+		// desde cero en cada build. Si el APK base viene de un build anterior,
+		// puede traer entradas de dependencias ya retiradas: conservarlas
+		// dejaría .so y proveedores fantasma dentro del APK.
+		if strings.HasPrefix(file.Name, "lib/") || strings.HasPrefix(file.Name, "META-INF/services/") {
 			continue
 		}
 		if err := copyZipEntry(writer, file); err != nil {
@@ -1536,34 +1551,6 @@ func addFileEntry(writer *zip.Writer, name, src string) error {
 	}
 	_, err = io.Copy(entry, f)
 	return err
-}
-
-// collectNativeLibs recorre jni/<abi>/*.so y devuelve un mapa
-// lib/<abi>/<file>.so -> ruta de origen.
-func collectNativeLibs(nativeDir string) (map[string]string, error) {
-	libs := make(map[string]string)
-	if nativeDir == "" {
-		return libs, nil
-	}
-	abis, _ := os.ReadDir(nativeDir)
-	for _, abi := range abis {
-		if !abi.IsDir() {
-			continue
-		}
-		abiDir := filepath.Join(nativeDir, abi.Name())
-		files, err := os.ReadDir(abiDir)
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".so") {
-				continue
-			}
-			apkPath := filepath.ToSlash(filepath.Join("lib", abi.Name(), f.Name()))
-			libs[apkPath] = filepath.Join(abiDir, f.Name())
-		}
-	}
-	return libs, nil
 }
 
 func copyZipEntry(writer *zip.Writer, file *zip.File) error {

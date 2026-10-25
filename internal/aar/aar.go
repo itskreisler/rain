@@ -31,12 +31,16 @@ var manifestPackageRe = regexp.MustCompile(`package="([^"]+)"`)
 
 // Library es el resultado de preparar una dependencia.
 type Library struct {
-	Coordinate    string // group:artifact:version
-	ClassJar      string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
-	ResDir        string // res/ del AAR, si tiene recursos
-	Package       string // package del AndroidManifest.xml del AAR (para --extra-packages)
-	ManifestPath  string // AndroidManifest.xml del AAR, extraído a disco para fusionarlo
-	NativeABIs    []string
+	Coordinate   string // group:artifact:version
+	ClassJar     string // classes.jar (AAR) o el .jar (JAR); vacío si el AAR no trae código
+	ResDir       string // res/ del AAR, si tiene recursos
+	Package      string // package del AndroidManifest.xml del AAR (para --extra-packages)
+	ManifestPath string // AndroidManifest.xml del AAR, extraído a disco para fusionarlo
+	NativeABIs   []string
+	// NativeFiles son las .so extraídas de este AAR. Se guarda la ruta de cada
+	// una porque jni/ es un directorio compartido: si se empaquetara todo su
+	// contenido, las .so de una dependencia retirada seguirían en el APK.
+	NativeFiles   []string
 	ProguardRules string // ruta a las reglas R8/ProGuard del AAR (proguard.txt), si las trae
 
 	// ServiceFiles son los ficheros META-INF/services que traía el AAR en su
@@ -103,12 +107,56 @@ func (s *Set) Manifests() []string {
 }
 
 // NativeDir devuelve el directorio jni/ con lib/<abi>/*.so, o "" si no hay.
+//
+// Es un directorio compartido entre resoluciones: puede contener .so de
+// dependencias que ya no están en el grafo. Para empaquetar, usar NativeLibs,
+// que solo devuelve las del set actual.
 func (s *Set) NativeDir() string {
 	dir := filepath.Join(s.Dir, "jni")
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		return dir
 	}
 	return ""
+}
+
+// NativeLibs devuelve las bibliotecas nativas del set actual, indexadas por su
+// ruta dentro del APK (lib/<abi>/<fichero>.so). Frente a recorrer jni/ entero,
+// esto evita empaquetar .so de dependencias retiradas que siguen en disco.
+//
+// Cada AAR extrae sus .so en jni/<coordinate>/, así que dos dependencias que
+// traigan el mismo nombre (p. ej. libc++_shared.so) no se pisan al prepararse
+// en paralelo. Si aun así coinciden, gana la última del set: el orden de
+// Libraries es el de las coordenadas y, por tanto, determinista.
+func (s *Set) NativeLibs() map[string]string {
+	out := make(map[string]string)
+	jniDir := filepath.Join(s.Dir, "jni")
+	for _, lib := range s.Libraries {
+		coordDir := nativeDirName(lib.Coordinate)
+		for _, path := range lib.NativeFiles {
+			rel, err := filepath.Rel(jniDir, path)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			rel = filepath.ToSlash(rel)
+			// Formato actual: <artifact>-<version>/<abi>/<fichero>. Las cachés
+			// antiguas guardaban <abi>/<fichero> directamente.
+			partes := strings.Split(rel, "/")
+			if coordDir != "" && len(partes) > 1 && partes[0] == coordDir {
+				rel = strings.Join(partes[1:], "/")
+			}
+			out["lib/"+rel] = path
+		}
+	}
+	return out
+}
+
+// nativeDirName es el subdirectorio de jni/ donde un AAR extrae sus .so.
+func nativeDirName(coord string) string {
+	parts := strings.Split(coord, ":")
+	if len(parts) != 3 {
+		return ""
+	}
+	return parts[1] + "-" + parts[2]
 }
 
 // ProguardFiles devuelve las reglas R8/ProGuard (consumer-rules) de las
@@ -243,7 +291,13 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 10 * time.Minute}}
+	// El cliente de reintentos se crea una sola vez: prepareAARSet comparte
+	// este Client entre varias goroutines y la inicialización perezosa de
+	// httpClient() sería una carrera de datos.
+	httpClient := &http.Client{Timeout: 10 * time.Minute}
+	retryClient := httpx.NewClient()
+	retryClient.HTTP = httpClient
+	return &Client{HTTP: httpClient, client: retryClient}
 }
 
 // Prepare descarga y prepara cada coordenada en dir, devolviendo el Set.
@@ -501,10 +555,15 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 			lib.ManifestPath = manifestDest
 		case strings.HasPrefix(f.Name, "jni/") && strings.HasSuffix(f.Name, ".so"):
 			rel := strings.TrimPrefix(f.Name, "jni/")
-			dest := filepath.Join(dir, "jni", rel)
+			// Cada AAR extrae en su propio subdirectorio: prepareAARSet prepara
+			// varias dependencias en paralelo y dos pueden traer la misma .so
+			// (p. ej. libc++_shared.so). En un jni/<abi>/ compartido se
+			// pisarían y el contenido dependería del orden de las goroutines.
+			dest := filepath.Join(dir, "jni", nativeDirName(coord), rel)
 			if err := extractFile(f, dest); err != nil {
 				return nil, err
 			}
+			lib.NativeFiles = append(lib.NativeFiles, dest)
 			if abi := strings.Split(rel, "/")[0]; !contains(lib.NativeABIs, abi) {
 				lib.NativeABIs = append(lib.NativeABIs, abi)
 			}

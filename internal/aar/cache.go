@@ -80,6 +80,16 @@ func LoadCache(dir string, coords []string) (*Set, bool) {
 				return nil, false
 			}
 		}
+		// Un set antiguo no guardaba las rutas de las .so: sin ellas no se
+		// pueden empaquetar solo las del set actual, así que se re-prepara.
+		if len(lib.NativeABIs) > 0 && len(lib.NativeFiles) == 0 {
+			return nil, false
+		}
+		for _, path := range lib.NativeFiles {
+			if st, err := os.Stat(path); err != nil || st.IsDir() {
+				return nil, false
+			}
+		}
 	}
 	return cached.Set, true
 }

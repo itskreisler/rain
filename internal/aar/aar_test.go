@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,15 +77,24 @@ func TestExtractAARFull(t *testing.T) {
 			t.Errorf("recurso %s no extraído: %v", rel, err)
 		}
 	}
-	// Los .so se extraen y las ABIs se registran ordenadas.
+	// Los .so se extraen en un subdirectorio por coordenada y las ABIs se
+	// registran ordenadas.
 	for _, abi := range []string{"arm64-v8a", "armeabi-v7a"} {
-		so := filepath.Join(dir, "jni", abi, "libfoo.so")
+		so := filepath.Join(dir, "jni", "lib-1.0", abi, "libfoo.so")
 		if _, err := os.Stat(so); err != nil {
 			t.Errorf("nativo %s no extraído: %v", so, err)
 		}
 	}
 	if len(lib.NativeABIs) != 2 || lib.NativeABIs[0] != "arm64-v8a" || lib.NativeABIs[1] != "armeabi-v7a" {
 		t.Errorf("NativeABIs = %v", lib.NativeABIs)
+	}
+	if len(lib.NativeFiles) != 2 {
+		t.Fatalf("NativeFiles = %v, quiero las dos .so", lib.NativeFiles)
+	}
+	for _, path := range lib.NativeFiles {
+		if !strings.HasPrefix(path, filepath.Join(dir, "jni", "lib-1.0")+string(filepath.Separator)) || filepath.Base(path) != "libfoo.so" {
+			t.Errorf("NativeFiles incluye una ruta inesperada: %q", path)
+		}
 	}
 	// Las reglas ProGuard del AAR se extraen.
 	if lib.ProguardRules != filepath.Join(dir, "proguard", "lib-1.0.pro") {
@@ -185,6 +195,80 @@ func TestSetAccessors(t *testing.T) {
 	}
 	if set.NativeDir() != filepath.Join(dir, "jni") {
 		t.Errorf("NativeDir = %q, quiero %q", set.NativeDir(), filepath.Join(dir, "jni"))
+	}
+}
+
+func TestSetNativeLibsSoloDelSetActual(t *testing.T) {
+	dir := t.TempDir()
+	jni := filepath.Join(dir, "jni", "arm64-v8a")
+	if err := os.MkdirAll(jni, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(jni, "libactual.so")
+	stale := filepath.Join(jni, "libretirada.so")
+	for _, path := range []string{current, stale} {
+		if err := os.WriteFile(path, []byte("so"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	set := &Set{
+		Dir: dir,
+		Libraries: []Library{
+			{Coordinate: "a:a:1", NativeABIs: []string{"arm64-v8a"}, NativeFiles: []string{current}},
+		},
+	}
+
+	libs := set.NativeLibs()
+	if len(libs) != 1 {
+		t.Fatalf("NativeLibs = %v, quiero solo la del set actual", libs)
+	}
+	if got := libs["lib/arm64-v8a/libactual.so"]; got != current {
+		t.Errorf("NativeLibs[actual] = %q, quiero %q", got, current)
+	}
+	if _, ok := libs["lib/arm64-v8a/libretirada.so"]; ok {
+		t.Error("NativeLibs incluye una .so de una dependencia retirada")
+	}
+}
+
+func TestSetNativeLibsAislaDependenciasParalelas(t *testing.T) {
+	dir := t.TempDir()
+	jni := filepath.Join(dir, "jni")
+
+	// Dos dependencias con la misma .so. Al prepararse en paralelo, cada una
+	// escribe en su subdirectorio; en el APK solo puede quedar una entrada y
+	// debe ser la última del set (orden determinista de coordenadas).
+	primera := filepath.Join(jni, "a-1", "arm64-v8a", "libc++_shared.so")
+	segunda := filepath.Join(jni, "b-2", "arm64-v8a", "libc++_shared.so")
+	otra := filepath.Join(jni, "b-2", "armeabi-v7a", "libextra.so")
+	for path, data := range map[string]string{primera: "a", segunda: "b", otra: "c"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	set := &Set{Dir: dir, Libraries: []Library{
+		{Coordinate: "g:a:1", NativeFiles: []string{primera}},
+		{Coordinate: "g:b:2", NativeFiles: []string{segunda, otra}},
+	}}
+
+	libs := set.NativeLibs()
+	if len(libs) != 2 {
+		t.Fatalf("NativeLibs = %v, quiero 2 entradas sin duplicados", libs)
+	}
+	if got := libs["lib/arm64-v8a/libc++_shared.so"]; got != segunda {
+		t.Errorf("la .so duplicada = %q, quiero la última del set (%q)", got, segunda)
+	}
+	if got := libs["lib/armeabi-v7a/libextra.so"]; got != otra {
+		t.Errorf("NativeLibs[extra] = %q, quiero %q", got, otra)
+	}
+	for key := range libs {
+		if strings.Contains(key, "a-1/") || strings.Contains(key, "b-2/") {
+			t.Errorf("la clave del APK conserva el subdirectorio de la coordenada: %q", key)
+		}
 	}
 }
 

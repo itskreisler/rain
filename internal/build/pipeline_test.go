@@ -345,6 +345,59 @@ func TestDedupeJarsByClassUnreadableKept(t *testing.T) {
 	}
 }
 
+func TestAppendDexDescartaDexSobrantesDelAPKBase(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.apk")
+
+	// APK base de un build anterior con más DEX de los que genera este build.
+	f, err := os.Create(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for _, name := range []string{"AndroidManifest.xml", "resources.arsc", "classes.dex", "classes9.dex"} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("viejo")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dex := filepath.Join(dir, "classes.dex")
+	writeFile(t, dex, "nuevo")
+	if err := appendDex(base, []string{dex}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	zr, err := zip.OpenReader(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+
+	names := make(map[string]string)
+	for _, entry := range zr.File {
+		names[entry.Name] = ""
+	}
+	if _, ok := names["classes9.dex"]; ok {
+		t.Error("el APK conserva classes9.dex de un build anterior")
+	}
+	if _, ok := names["classes.dex"]; !ok {
+		t.Error("el APK no contiene el classes.dex actual")
+	}
+	if _, ok := names["AndroidManifest.xml"]; !ok {
+		t.Error("el APK perdió el manifest")
+	}
+}
+
 func readZip(t *testing.T, path string) map[string]string {
 	t.Helper()
 	zr, err := zip.OpenReader(path)

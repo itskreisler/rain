@@ -106,6 +106,52 @@ func TestLoadCacheSiFaltaUnFichero(t *testing.T) {
 	}
 }
 
+func TestLoadCacheRechazaSetsSinRutasNativas(t *testing.T) {
+	dir := t.TempDir()
+	lib := makeLib(t, dir, "graphics", "1.0")
+	// Caché de una versión anterior de Rain: guardaba las ABIs pero no las
+	// rutas de las .so, así que no se puede saber qué empaquetar.
+	lib.NativeABIs = []string{"arm64-v8a"}
+	set := &Set{Dir: dir, Libraries: []Library{lib}}
+	coords := []string{"androidx.graphics:graphics:1.0"}
+	if err := SaveCache(dir, set, coords); err != nil {
+		t.Fatalf("SaveCache: %v", err)
+	}
+
+	if _, ok := LoadCache(dir, coords); ok {
+		t.Error("un set con ABIs pero sin rutas de .so debe re-prepararse")
+	}
+}
+
+func TestLoadCacheSiFaltaUnaLibreriaNativa(t *testing.T) {
+	dir := t.TempDir()
+	lib := makeLib(t, dir, "graphics", "1.0")
+	so := filepath.Join(dir, "jni", "arm64-v8a", "libgraphics.so")
+	if err := os.MkdirAll(filepath.Dir(so), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(so, []byte("so"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib.NativeABIs = []string{"arm64-v8a"}
+	lib.NativeFiles = []string{so}
+	set := &Set{Dir: dir, Libraries: []Library{lib}}
+	coords := []string{"androidx.graphics:graphics:1.0"}
+	if err := SaveCache(dir, set, coords); err != nil {
+		t.Fatalf("SaveCache: %v", err)
+	}
+
+	if _, ok := LoadCache(dir, coords); !ok {
+		t.Fatal("la caché debería ser válida con la .so presente")
+	}
+	if err := os.Remove(so); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadCache(dir, coords); ok {
+		t.Error("la caché no debe servir si falta una .so del set")
+	}
+}
+
 func TestLoadCacheSinCopia(t *testing.T) {
 	if _, ok := LoadCache(t.TempDir(), []string{"a:1:1"}); ok {
 		t.Error("no debería haber caché en un directorio vacío")

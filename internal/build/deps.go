@@ -72,6 +72,33 @@ func (c Config) libraryJars() []string {
 	return out
 }
 
+// warnLibsWithDependencies avisa cuando hay jars sueltos en libs/ además de un
+// conjunto de dependencias resuelto.
+//
+// libs/ se escanea siempre por compatibilidad con proyectos que meten jars
+// locales a mano. En modo completo eso también incluye restos de versiones
+// antiguas: el dedupe elimina las clases que chocan con el set actual, pero las
+// clases que solo existen en un jar viejo sobreviven y acaban en el APK. Un
+// aviso explícito evita que esa mezcla pase desapercibida.
+func (c Config) warnLibsWithDependencies() {
+	if c.Libs == nil || c.LibsDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(c.LibsDir)
+	if err != nil {
+		return
+	}
+	var jars int
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jar") {
+			jars++
+		}
+	}
+	if jars > 0 {
+		ui.Warn("%s contiene %d jar(s) además de las dependencias de rain.toml; se incluirán en el APK. Bórralos si son restos de versiones antiguas.", c.LibsDir, jars)
+	}
+}
+
 // prepareLibraryResources fusiona los res/ de las librerías (si hay) y devuelve
 // el directorio fusionado y los packages para --extra-packages.
 func (c Config) prepareLibraryResources(libs *aar.Set) (string, []string, error) {
@@ -101,12 +128,15 @@ func (c Config) libraryResourceInputs() []string {
 	return out
 }
 
-// nativeDir devuelve el directorio con lib/<abi>/*.so de los AAR, o "".
-func (c Config) nativeDir(libs *aar.Set) string {
-	if libs == nil {
-		return ""
+// nativeLibs devuelve las .so que deben empaquetarse. Con un set de
+// dependencias se usan solo las del set; recorrer jni/ entero empaquetaría las
+// de dependencias que ya no están en rain.toml pero siguen en disco.
+func (c Config) nativeLibs() (map[string]string, error) {
+	if c.Libs == nil {
+		// Modo simple: sin AARs no hay jni/ que empaquetar.
+		return nil, nil
 	}
-	return libs.NativeDir()
+	return c.Libs.NativeLibs(), nil
 }
 
 // dedupeJarsByClass resuelve definiciones duplicadas de clases entre jars. Los
