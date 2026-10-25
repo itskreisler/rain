@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,9 @@ func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build [dir]",
 		Short: "Compila y firma un APK",
-		Long: "Compila un APK. Sin argumentos usa rain.toml del directorio actual.\n" +
+		Long: "Compila un APK. Sin argumentos usa el rain.toml del directorio actual;\n" +
+			"si no existe y hay un AndroidManifest.xml (en la raíz o en src/main/),\n" +
+			"compila con el layout plano estilo android2apk.\n" +
 			"Con [dir] compila un proyecto completo o un layout plano estilo android2apk\n" +
 			"(AndroidManifest.xml, java/ y res/ en la raíz).\n\n" +
 			"Si se omite --android-jar, rain busca el android.jar instalado por\n" +
@@ -84,6 +87,17 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 	devlog("runBuildOrCheck", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta el flujo de compilación o verificación de tipos para un proyecto rain")
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
+		// Sin rain.toml, un proyecto con manifest en el layout plano se
+		// compila igual que con "rain build <dir>": antes había que pasar el
+		// directorio explícitamente aunque ya estuvieras dentro de él.
+		if errors.Is(err, os.ErrNotExist) && detectarLayout(".") == layoutPlano {
+			absDir, absErr := filepath.Abs(".")
+			if absErr != nil {
+				return fmt.Errorf("resolviendo el directorio actual: %w", absErr)
+			}
+			ui.VerboseLog("sin rain.toml; compilando con layout plano")
+			return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast)
+		}
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
 	}
 
@@ -385,6 +399,29 @@ func runBuildDir(dir, androidJar string, release, allowDebugSigning bool) error 
 	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false)
 }
 
+// layoutProyecto describe cómo compilar un directorio.
+type layoutProyecto int
+
+const (
+	layoutDesconocido layoutProyecto = iota
+	layoutRain                       // tiene rain.toml
+	layoutPlano                      // AndroidManifest.xml en la raíz o en src/main
+)
+
+// detectarLayout decide qué flujo usar para dir. rain.toml manda: si existe,
+// se ignora cualquier manifest suelto.
+func detectarLayout(dir string) layoutProyecto {
+	if _, err := os.Stat(filepath.Join(dir, "rain.toml")); err == nil {
+		return layoutRain
+	}
+	for _, manifest := range []string{"src/main/AndroidManifest.xml", "AndroidManifest.xml"} {
+		if _, err := os.Stat(filepath.Join(dir, manifest)); err == nil {
+			return layoutPlano
+		}
+	}
+	return layoutDesconocido
+}
+
 // runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
 // los tipos del código (y con fast, solo lo modificado).
 func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
@@ -398,7 +435,8 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 		return usageErr("%s no es un directorio válido", dir)
 	}
 
-	if _, err := os.Stat(filepath.Join(absDir, "rain.toml")); err == nil {
+	switch detectarLayout(absDir) {
+	case layoutRain:
 		previous, err := os.Getwd()
 		if err != nil {
 			return err
@@ -408,25 +446,24 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 		}
 		defer func() { _ = os.Chdir(previous) }()
 		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast)
+	case layoutDesconocido:
+		return usageErr("%s no contiene rain.toml ni AndroidManifest.xml", dir)
 	}
 
-	if _, err := os.Stat(filepath.Join(absDir, "src/main/AndroidManifest.xml")); err != nil {
-		if _, err := os.Stat(filepath.Join(absDir, "AndroidManifest.xml")); err != nil {
-			return usageErr("%s no contiene rain.toml ni AndroidManifest.xml", dir)
-		}
-	}
+	return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast)
+}
 
+// runFlatBuild compila absDir con el layout plano de android2apk. No hay
+// rain.toml: el package y los datos del APK salen del manifest y de
+// app.properties, con los defaults de Rain como respaldo.
+func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOnly, fast bool) error {
+	devlog("runFlatBuild", fmt.Sprintf("absDir=%s, androidJar=%s", absDir, androidJar), "Compila un proyecto con layout plano")
 	props := readProperties(filepath.Join(absDir, "app.properties"))
 	name := props["name"]
 	if name == "" {
 		name = filepath.Base(absDir)
 	}
-	// Repos extra (opción A) también en layout plano, si hay rain.toml.
-	if cfg, err := config.Read(filepath.Join(absDir, "rain.toml")); err == nil {
-		mavenrepo.ExtraRepositories = cfg.Repositories.Extra
-	} else {
-		mavenrepo.ExtraRepositories = nil
-	}
+	mavenrepo.ExtraRepositories = nil
 	s := resolveModuleBuildConfig(config.Config{}, absDir)
 	if s.Package == "" {
 		s.Package = build.PackageFromManifest(absDir)

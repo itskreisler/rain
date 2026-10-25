@@ -252,13 +252,25 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 
 // collectJavaSources devuelve todas las rutas .java bajo root (recursivo).
 // Un root inexistente devuelve (nil, nil): no tener fuentes es válido.
-func collectJavaSources(root string) ([]string, error) {
+//
+// skipDirs permite excluir subárboles que no son fuentes del proyecto. En el
+// layout plano el root es el propio módulo, así que sin esto se colaría
+// build/gen: los R.java generados se compilarían dos veces por build.
+func collectJavaSources(root string, skipDirs ...string) ([]string, error) {
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && strings.HasSuffix(path, ".java") {
+		if info.IsDir() {
+			for _, skip := range skipDirs {
+				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".java") {
 			sources = append(sources, path)
 		}
 		return nil
@@ -1135,11 +1147,11 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 		return nil, fmt.Errorf("creando el directorio de objetos: %w", err)
 	}
 
-	kotlinFiles, err := collectKotlinFiles(sourceRoot(cfg.AppDir))
+	kotlinFiles, err := collectKotlinFiles(sourceRoot(cfg.AppDir), cfg.BuildDir)
 	if err != nil {
 		return nil, err
 	}
-	javaFiles, err := collectJavaSources(sourceRoot(cfg.AppDir))
+	javaFiles, err := collectJavaSources(sourceRoot(cfg.AppDir), cfg.BuildDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("buscando fuentes Java: %w", err)
 	}
@@ -1147,13 +1159,25 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 }
 
 // collectKotlinFiles devuelve las rutas .kt bajo root (recursivo).
-func collectKotlinFiles(root string) ([]string, error) {
+//
+// skipDirs excluye subárboles que no contienen fuentes. En el layout plano el
+// root es el módulo entero, así que sin esto se recorrerían los artefactos de
+// build/ (decenas de MiB) en cada compilación.
+func collectKotlinFiles(root string, skipDirs ...string) ([]string, error) {
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info != nil && !info.IsDir() && strings.HasSuffix(path, ".kt") {
+		if info != nil && info.IsDir() {
+			for _, skip := range skipDirs {
+				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if info != nil && strings.HasSuffix(path, ".kt") {
 			sources = append(sources, path)
 		}
 		return nil
@@ -1845,7 +1869,13 @@ func (c Config) findKotlinSources() []string {
 		if err != nil {
 			return err
 		}
-		if info != nil && !info.IsDir() && strings.HasSuffix(path, ".kt") {
+		if info != nil && info.IsDir() {
+			if c.BuildDir != "" && filepath.Clean(path) == filepath.Clean(c.BuildDir) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info != nil && strings.HasSuffix(path, ".kt") {
 			sources = append(sources, path)
 		}
 		return nil

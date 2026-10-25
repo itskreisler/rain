@@ -42,7 +42,10 @@ func newCheckCmd() *cobra.Command {
 			"Con --fast el chequeo es incremental: solo se recompilan los ficheros\n" +
 			"modificados (y los que dependen de ellos) contra las clases ya\n" +
 			"compiladas. Es mucho más rápido, pero menos exhaustivo: un error en\n" +
-			"un fichero que no se recompila puede no aparecer.",
+			"un fichero que no se recompila puede no aparecer.\n\n" +
+			"Sin rain.toml también acepta el layout plano: si el directorio actual\n" +
+			"tiene un AndroidManifest.xml (en la raíz o en src/main/), lo compila\n" +
+			"igual que \"rain check <dir>\".",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jar := androidJar

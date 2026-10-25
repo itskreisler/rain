@@ -80,6 +80,10 @@ func changedSources(cfg Config, stamp time.Time) (changed []string, dependents [
 			return err
 		}
 		if info.IsDir() {
+			// build/ guarda artefactos y Java generado: no son fuentes.
+			if filepath.Clean(path) == filepath.Clean(cfg.BuildDir) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		ext := filepath.Ext(path)
