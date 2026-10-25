@@ -14,7 +14,7 @@ import (
 // resolvedCacheVersion invalida el caché cuando cambia la lógica del
 // resolvedor (por ejemplo, un filtro nuevo de artefactos). Hay que subirlo a
 // mano al tocar internal/pom/transitive.go.
-const resolvedCacheVersion = 1
+const resolvedCacheVersion = 3
 
 // resolvedCache guarda el cierre transitivo ya calculado. Sin esto, cada
 // build vuelve a recorrer y parsear todos los POMs del grafo (cientos en un

@@ -453,6 +453,19 @@ func TestDedupeCoordinates(t *testing.T) {
 			in:   []string{"paquete-raro", "androidx.core:core:1.9.0"},
 			want: []string{"paquete-raro", "androidx.core:core:1.9.0"},
 		},
+		{
+			name: "alias de Compose Multiplatform se omiten",
+			in: []string{
+				"org.jetbrains.compose.foundation:foundation-android:1.12.0",
+				"androidx.compose.foundation:foundation-android:1.12.0",
+				"org.jetbrains.compose.ui:ui-android:1.12.0",
+				"androidx.compose.ui:ui-android:1.12.0",
+			},
+			want: []string{
+				"androidx.compose.foundation:foundation-android:1.12.0",
+				"androidx.compose.ui:ui-android:1.12.0",
+			},
+		},
 	}
 
 	for _, tc := range cases {

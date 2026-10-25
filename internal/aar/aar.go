@@ -405,6 +405,17 @@ func (c *Client) prepareJAR(coord, dir, path string) (*Library, error) {
 		return &Library{Coordinate: coord, ClassJar: path}, nil
 	}
 
+	// Variante Android de un módulo KMP (p. ej. io.github.kyant0:backdrop →
+	// backdrop-android). Antes se intentaba solo el hermano "-jvm", que no
+	// existe para las librerías de Compose Multiplatform: el classpath se
+	// quedaba con un JAR de metadata sin clases y kotlinc fallaba con
+	// "unresolved reference".
+	if redirected, err := c.prepareAndroidVariant(coord, dir); err == nil {
+		return redirected, nil
+	} else {
+		ui.VerboseLog("sin variante Android para el JAR %s: %v", coord, err)
+	}
+
 	parts := strings.Split(coord, ":")
 	if len(parts) == 3 && !strings.HasSuffix(parts[1], "-jvm") {
 		group, artifact, version := parts[0], parts[1], parts[2]

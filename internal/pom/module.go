@@ -217,6 +217,31 @@ func (md *ModuleMetadata) AndroidTargetCoord() string {
 	return v.AvailableAt.Coordinate()
 }
 
+// AndroidVariantCoordinate resuelve la coordenada real de la variante Android
+// de un módulo publicado con Gradle Module Metadata. Si el módulo no publica
+// metadata, no tiene variante Android o no redirige a otro artefacto, devuelve
+// la coordenada original.
+//
+// Se usa antes de recorrer el grafo transitivo: un módulo KMP como
+// io.github.kyant0:backdrop solo publica un JAR de metadata en la raíz, y sus
+// POMs declaran dependencias de las variantes common/JVM (skiko, ui-uikit…)
+// que no existen en Android. Siguiendo available-at se resuelve el POM de
+// backdrop-android, que es el que Gradle usaría.
+func AndroidVariantCoordinate(coordinate, destDir string) string {
+	path, err := DownloadModuleMetadata(coordinate, destDir)
+	if err != nil {
+		return coordinate
+	}
+	md, err := ParseModuleMetadata(path)
+	if err != nil {
+		return coordinate
+	}
+	if target := md.AndroidTargetCoord(); target != "" {
+		return target
+	}
+	return coordinate
+}
+
 // AndroidDependencies devuelve las dependencias de la variante Android, en
 // formato "group:module:version". Los módulos sin versión explícita se
 // omiten: no se pueden resolver sin más información.

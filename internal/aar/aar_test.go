@@ -339,6 +339,74 @@ func TestPrepareJARFallsBackToJVMVariant(t *testing.T) {
 	}
 }
 
+func TestPrepareJARRedirectsToAndroidVariant(t *testing.T) {
+	dir := t.TempDir()
+	serveDir := t.TempDir()
+
+	// La raíz KMP es un JAR de metadata sin clases.
+	writeZip(t, filepath.Join(serveDir, "backdrop-2.0.1.jar"), map[string]string{
+		"META-INF/kotlin-project-structure-metadata.json": "{}",
+	})
+	const metadata = `{
+	  "variants": [
+	    {
+	      "name": "androidApiElements-published",
+	      "attributes": {
+	        "org.gradle.jvm.environment": "android",
+	        "org.gradle.usage": "java-api"
+	      },
+	      "available-at": {
+	        "group": "io.github.kyant0",
+	        "module": "backdrop-android",
+	        "version": "2.0.1"
+	      }
+	    }
+	  ]
+	}`
+	if err := os.WriteFile(filepath.Join(serveDir, "backdrop-2.0.1.module"), []byte(metadata), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// La variante Android es un AAR con clases reales.
+	writeZip(t, filepath.Join(serveDir, "classes.jar"), map[string]string{
+		"com/kyant/backdrop/Backdrop.class": "bytecode",
+	})
+	classes, err := os.ReadFile(filepath.Join(serveDir, "classes.jar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeZip(t, filepath.Join(serveDir, "backdrop-android-2.0.1.aar"), map[string]string{
+		"classes.jar":         string(classes),
+		"AndroidManifest.xml": `<manifest package="com.kyant.backdrop"></manifest>`,
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := os.ReadFile(filepath.Join(serveDir, filepath.Base(r.URL.Path)))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	old := repositories
+	repositories = []string{srv.URL}
+	defer func() { repositories = old }()
+
+	c := NewClient()
+	lib, err := c.prepareOne("io.github.kyant0:backdrop:2.0.1", dir)
+	if err != nil {
+		t.Fatalf("prepareOne: %v", err)
+	}
+	if lib.Coordinate != "io.github.kyant0:backdrop-android:2.0.1" {
+		t.Errorf("Coordinate = %q, quiero la variante Android", lib.Coordinate)
+	}
+	if !jarHasClasses(lib.ClassJar) {
+		t.Errorf("ClassJar %q no tiene clases", lib.ClassJar)
+	}
+}
+
 func TestPrepareJARKeepsPlainJar(t *testing.T) {
 	dir := t.TempDir()
 	serveDir := t.TempDir()

@@ -1,6 +1,8 @@
 package pom
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,5 +241,46 @@ func TestAndroidTargetCoordVacioSiNoHayRedireccion(t *testing.T) {
 	deps := md.AndroidDependencies()
 	if len(deps) != 1 || deps[0] != "androidx.core:core:1.19.1" {
 		t.Errorf("AndroidDependencies = %v, quiero [androidx.core:core:1.19.1]", deps)
+	}
+}
+
+func TestAndroidVariantCoordinateRedirigeKMP(t *testing.T) {
+	const metadata = `{
+	  "variants": [
+	    {
+	      "name": "androidApiElements-published",
+	      "attributes": {
+	        "org.gradle.jvm.environment": "android",
+	        "org.gradle.usage": "java-api"
+	      },
+	      "available-at": {
+	        "group": "io.github.kyant0",
+	        "module": "backdrop-android",
+	        "version": "2.0.1"
+	      }
+	    }
+	  ]
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "backdrop-2.0.1.module") {
+			_, _ = w.Write([]byte(metadata))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	original := repositories
+	repositories = []string{srv.URL}
+	t.Cleanup(func() { repositories = original })
+
+	dir := t.TempDir()
+	if got := AndroidVariantCoordinate("io.github.kyant0:backdrop:2.0.1", dir); got != "io.github.kyant0:backdrop-android:2.0.1" {
+		t.Errorf("AndroidVariantCoordinate = %q, quiero backdrop-android", got)
+	}
+	// Sin metadata disponible se conserva la coordenada original.
+	if got := AndroidVariantCoordinate("com.example:sin-metadata:1.0", dir); got != "com.example:sin-metadata:1.0" {
+		t.Errorf("AndroidVariantCoordinate sin metadata = %q, quiero la original", got)
 	}
 }

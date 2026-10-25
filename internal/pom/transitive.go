@@ -25,6 +25,12 @@ func (d ResolvedDep) Coordinate() string {
 // descargar se omiten (con Warning) en vez de abortar toda la resolución: el
 // grafo de AndroidX trae artefactos antiguos/no publicados que no aportan nada.
 func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error) {
+	// Los módulos KMP publican en la raíz un JAR de metadata y dejan el
+	// código Android en un artefacto hermano (available-at). Resolver el POM
+	// raíz arrastraría dependencias de otras plataformas (skiko, ui-uikit…),
+	// así que se empieza por la variante Android, igual que Gradle.
+	rootCoord = AndroidVariantCoordinate(rootCoord, filepath.Join(cacheDir, "metadata"))
+
 	resolved := make(map[string]ResolvedDep) // key: group:artifact
 	order := make([]string, 0, 16)           // claves en orden de descubrimiento
 	visited := make(map[string]bool)         // key: group:artifact:version
@@ -173,7 +179,14 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 	// Convertir a slice respetando el orden de descubrimiento.
 	out := make([]ResolvedDep, 0, len(order))
 	for _, key := range order {
-		out = append(out, resolved[key])
+		dep := resolved[key]
+		// Los alias de Compose Multiplatform no aportan clases en Android:
+		// solo declaran la dependencia androidx equivalente. Se usan durante
+		// el cierre para descubrirla, pero no se preparan.
+		if isComposeMultiplatformAlias(dep.GroupID) {
+			continue
+		}
+		out = append(out, dep)
 	}
 	return out, nil
 }
@@ -196,6 +209,9 @@ func DedupeCoordinates(coords []string) []string {
 			continue
 		}
 		group, artifact, version := parts[0], parts[1], parts[2]
+		if isComposeMultiplatformAlias(group) {
+			continue
+		}
 		key := moduleKey(group, artifact)
 		existing, ok := best[key]
 		if !ok {
@@ -257,6 +273,17 @@ func isKotlinStdlib(group, artifact string) bool {
 	default:
 		return false
 	}
+}
+
+// isComposeMultiplatformAlias detecta los artefactos de
+// org.jetbrains.compose.*. En Android son alias de androidx.compose.*:
+// publican un AAR vacío que solo sirve para declarar la dependencia
+// equivalente. Se recorren sus POMs para descubrir AndroidX, pero no se
+// preparan: su AAR comparte nombre de archivo con el de AndroidX y lo
+// sobrescribiría, dejando el classpath sin clases.
+func isComposeMultiplatformAlias(group string) bool {
+	return group == "org.jetbrains.compose" ||
+		strings.HasPrefix(group, "org.jetbrains.compose.")
 }
 
 // deprecatedArtifact detecta artefactos que fueron absorbidos por otro y cuya
