@@ -279,8 +279,10 @@ funciona (con tinte) en versiones anteriores.
 
 ## Pendiente
 
-- **Probar `../../rain build --release`.** El build debug ocupa 17 MB de APK y
-  unos 80 MB instalados porque no hay R8 y `material-icons-extended` conserva
-  todas sus variantes (~9.900 clases). Hay que medir el APK release, verificar
-  la firma y comprobar que la app sigue funcionando (reproducción, ecualizador,
-  carátulas y acento dinámico), además de comparar el tamaño instalado.
+- **Probar `../../rain build --release --allow-debug-signing`.** El ejemplo no
+  tiene keystore de release; el flag firma con la de debug y avisa. El build
+  debug ocupa 17 MB de APK y unos 80 MB instalados porque no hay R8 y
+  `material-icons-extended` conserva todas sus variantes (~9.900 clases). Hay
+  que medir el APK release, verificar la firma y comprobar que la app sigue
+  funcionando (reproducción, ecualizador, carátulas y acento dinámico), además
+  de comparar el tamaño instalado.
