@@ -395,6 +395,16 @@ func Run(cfg Config) error {
 		ui.Info("recursos sin cambios, reutilizando APK base")
 	} else {
 		ui.Info("compilando recursos...")
+		// aapt2 link no limpia --java: los R.java de librerías retiradas
+		// seguirían en gen/ y se compilarían (y dexarían) en cada build. Se
+		// vacía para que solo quede lo que genera este build; BuildConfig.java
+		// se escribe más abajo.
+		if err := os.RemoveAll(genDir); err != nil {
+			return fmt.Errorf("limpiando Java generado: %w", err)
+		}
+		if err := os.MkdirAll(genDir, 0755); err != nil {
+			return fmt.Errorf("creando directorio gen: %w", err)
+		}
 		resDir := resPath(cfg.AppDir)
 		manifest := manifestPath(cfg.AppDir)
 		if !fileExists(manifest) {
@@ -950,21 +960,8 @@ func compileSourceSet(cfg Config, genDir, objDir string, kotlinFiles, javaFiles 
 		return nil, fmt.Errorf("buscando fuentes generadas: %w", err)
 	}
 	if len(generatedSources) > 0 {
-		var genClasspath []string
-		genClasspath = append(genClasspath, cfg.AndroidJar)
-		genClasspath = append(genClasspath, cfg.libraryJars()...)
-		genArgs := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
-			"-classpath", strings.Join(genClasspath, ":")}
-		genArgs = append(genArgs, generatedSources...)
-
-		var genErr bytes.Buffer
-		genCmd := exec.Command("javac", genArgs...)
-		genCmd.Stdout = os.Stdout
-		genCmd.Stderr = &genErr
-		if err := genCmd.Run(); err != nil {
-			ui.Error("Errores de compilación Java (generado):")
-			fmt.Println(genErr.String())
-			return nil, fmt.Errorf("javac falló")
+		if err := compileGeneratedJava(cfg, objDir, generatedSources); err != nil {
+			return nil, err
 		}
 	}
 

@@ -101,7 +101,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 		ui.Info("Resolviendo y descargando dependencias...")
 		coords := deps
 		if cfg.Mode == "completo" {
-			coords, err = resolveTransitiveCoordinates(deps)
+			coords, err = resolveTransitiveCoordinatesCached(deps)
 			if err != nil {
 				return fmt.Errorf("resolviendo dependencias: %w", err)
 			}
@@ -122,7 +122,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 	var kapt *build.KaptConfig
 	if len(cfg.Kapt.Processors) > 0 {
 		ui.Info("Resolviendo annotation processors (kapt)...")
-		coords, err := resolveCoordinates(cfg.Kapt.Processors)
+		coords, err := resolveCoordinatesCached("kapt", cfg.Kapt.Processors)
 		if err != nil {
 			return fmt.Errorf("resolviendo annotation processors: %w", err)
 		}
