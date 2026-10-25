@@ -46,6 +46,14 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 - Test de integración que compila y firma un APK real con una librería AndroidX
   sintética y verifica el manifiesto fusionado, la tabla de recursos y el dex
   (`internal/build/integration_test.go`).
+- **Detección automática del layout plano.** `rain build` y `rain check` sin
+  argumentos ya no exigen `rain.toml`: si el directorio actual tiene un
+  `AndroidManifest.xml` (en la raíz o en `src/main/`), compilan con el layout
+  plano estilo android2apk, igual que `rain build <dir>`.
+- Aviso cuando `libs/` contiene jars sueltos además de un conjunto de
+  dependencias resuelto: pueden ser restos de versiones antiguas cuyas clases
+  únicas acabarían en el APK. Se siguen incluyendo, pero ya no pasa
+  desapercibido.
 
 ### Corregido
 
@@ -75,6 +83,13 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   sin tocar los recursos). Ahora `appendDex` omite del APK base las entradas
   que va a añadir, de modo que el empaquetado es idempotente
   (tests en `internal/build/packaging_test.go`).
+- **Sobrevivían artefactos de builds anteriores.** Al reutilizar el APK base se
+  descartan todos los `classes*.dex`, no solo los que este build va a escribir:
+  si antes había más dependencias, los DEX sobrantes se quedaban con clases
+  viejas. Además solo se empaquetan las `.so` del set actual, no todo
+  `.rain-deps/jni`, y cada AAR extrae las suyas en su propio subdirectorio para
+  que dos dependencias con el mismo nombre (p. ej. `libc++_shared.so`) no se
+  pisen al prepararse en paralelo.
 - **El classpath podía contaminarse con artefactos rancios del caché.** Al
   resolver dependencias, `libraryJars()` metía en el classpath *todos* los jars
   encontrados en el caché local, no solo los del conjunto resuelto. Bastaba un
@@ -107,6 +122,26 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Cambiado
 
+- **El build es mucho más rápido, sobre todo con un cambio de código.** Varias
+  fases dejaron de repetir trabajo en cada ejecución:
+  - El cierre transitivo de dependencias se cachea por coordenadas y repos
+    (`cache/.rain-resolved-*.json`), sin recorrer cientos de POMs por build.
+  - Los AAR/JAR se preparan en paralelo y el conjunto extraído se reutiliza
+    (`.rain-deps/.rain-deps.json`).
+  - El Java generado (`R.java`, `BuildConfig.java`) se compila una vez y se
+    cachea en `build/genclasses/` (`.rain-gen-hash`).
+  - En debug, el DEX de dependencias se cachea en `build/dexdeps/`
+    (`.rain-dex-deps-hash`) y solo se regenera si cambian los jars, `min-api`,
+    `android.jar`, d8 o el propio binario. La app se dexa aparte y ocupa
+    `classes.dex`; las dependencias van después como `classes2.dex`,
+    `classes3.dex`… En release se mantiene la pasada única de R8.
+  - d8/R8 usan un heap de 2 GB por defecto (`RAIN_JAVA_MAX_HEAP`), que evita
+    minutos de GC en proyectos Compose.
+  - El empaquetado evita copias intermedias y ya no conserva `aligned.apk`.
+
+  Medido en `examples/compose`: build con cambio de código ~199 s → ~60 s;
+  build frío con la red ya cacheada ~735 s → ~160–210 s; sin cambios
+  ~7,7 s → ~5–9 s.
 - El hash de las fuentes compiladas se guarda **después** de compilar, no
   después de generar el DEX. Así un `rain check` posterior puede saltarse el
   trabajo si el código no ha cambiado, y un `rain build` reutiliza la

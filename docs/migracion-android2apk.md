@@ -38,6 +38,11 @@ mi-app/
 rain build /ruta/a/mi-app
 ```
 
+También puedes ejecutar `rain build` desde dentro del proyecto: si no hay
+`rain.toml` pero sí un `AndroidManifest.xml` (en la raíz o en `src/main/`),
+Rain detecta el layout plano y compila igual. Lo mismo vale para
+`rain check`.
+
 **Layout Gradle**:
 
 ```

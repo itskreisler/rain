@@ -131,7 +131,7 @@ my-app/
 | Command | Description | Flags |
 | --- | --- | --- |
 | `rain init` | Initialize a new project | `--template simple\|completo` |
-| `rain build [dir]` | Build and sign APK (supports flat android2apk layout) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
+| `rain build [dir]` | Build and sign APK (supports flat android2apk layout, auto-detected without `rain.toml`) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
 | `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
 | `rain lint [dir]` | Run static analysis (ktlint, detekt, pmd) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
 | `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
@@ -187,6 +187,8 @@ Projects using the flat `android2apk` layout (`app.properties`, setup scripts) w
 ```bash
 rain build /path/to/android2apk-project
 ```
+
+Rain detects the layout automatically: if there is no `rain.toml` but the current directory has `AndroidManifest.xml` (at the root or in `src/main/`), `rain build` and `rain check` use the flat flow without needing the path argument.
 
 See the [migration guide](docs/migracion-android2apk.md) for details on converting `app.properties` to `rain.toml`, Compose dependencies, toolchain setup, and signing.
 
