@@ -54,9 +54,31 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   dependencias resuelto: pueden ser restos de versiones antiguas cuyas clases
   únicas acabarían en el APK. Se siguen incluyendo, pero ya no pasa
   desapercibido.
+- **Ejemplo `examples/backdrop-music` completo.** El reproductor de cristal
+  pasa de una demo de dos pestañas a una app real con Inicio (recientes,
+  álbumes y acceso al reproductor), Biblioteca (canciones, artistas, álbumes,
+  géneros y carpetas, con búsqueda y filtros), Reproductor (portada, progreso,
+  controles, cola y ecualizador real) y Configuración (audio, apariencia,
+  biblioteca, reproducción y almacenamiento). Añade aleatorio, repetición,
+  mini-reproductor, ajustes persistidos en `SharedPreferences`, acento
+  dinámico extraído de la carátula y transiciones animadas entre páginas y al
+  cambiar de canción. El README incluye una checklist con lo implementado y lo
+  pendiente (servicio en segundo plano, preajustes de ecualizador, letras,
+  temporizador, radio por Internet, widgets y Android Auto).
 
 ### Corregido
 
+- **Los alias de Compose Multiplatform vaciaban el classpath.** Al depender de
+  una librería KMP como `io.github.kyant0:backdrop:2.0.1`, su metadata arrastra
+  artefactos `org.jetbrains.compose.*` (`foundation-android`, `ui-android`…).
+  En Android no son más que alias: publican un AAR casi vacío cuyo único
+  contenido útil es la dependencia `androidx.compose.*` equivalente. Como
+  comparten nombre de archivo con el AAR real, al descargarse en paralelo lo
+  sobrescribían en `.rain-deps/aars`, y kotlinc fallaba con cientos de
+  `unresolved reference` en `androidx.compose.*` de forma no determinista.
+  Ahora `ResolveTransitive` sigue recorriendo sus POMs para descubrir AndroidX,
+  pero los excluye del conjunto final y de la deduplicación
+  (`isComposeMultiplatformAlias`, tests en `internal/pom/pom_test.go`).
 - **Un `rain check` envenenaba el `rain build` siguiente, que empaquetaba el
   DEX viejo.** El estado de compilación se guardaba en un único fichero de
   marca (`.rain-java-hash`) que servía para dos cosas distintas: saber si las
@@ -122,6 +144,12 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Cambiado
 
+- **Etiquetas de acción de Configuración en blanco.** En
+  `examples/backdrop-music`, “Abrir” y “Escanear” dejan de usar el acento
+  dinámico y pasan a blanco con una cápsula algo más opaca, para asegurar el
+  contraste del texto pequeño sobre el cristal. El acento se mantiene en
+  iconos, selección, progreso y escena, y su extracción queda documentada en el
+  README del ejemplo.
 - **El build es mucho más rápido, sobre todo con un cambio de código.** Varias
   fases dejaron de repetir trabajo en cada ejecución:
   - El cierre transitivo de dependencias se cachea por coordenadas y repos

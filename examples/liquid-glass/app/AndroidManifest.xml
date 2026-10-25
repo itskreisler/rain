@@ -2,9 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.kyant.liquidglass.music">
 
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-
     <application
         android:label="Liquid Glass Music"
         android:icon="@android:drawable/sym_def_app_icon"

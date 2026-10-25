@@ -6,7 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 
 class MainActivity : ComponentActivity() {
@@ -16,19 +16,28 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("liquid_glass_prefs", Context.MODE_PRIVATE)
 
         setContent {
-            var onboardingCompleted by remember {
+            var onboardingCompleted by rememberSaveable {
                 mutableStateOf(prefs.getBoolean("onboarding_completed", false))
+            }
+            var autoplay by rememberSaveable {
+                mutableStateOf(prefs.getBoolean("autoplay", true))
             }
 
             if (!onboardingCompleted) {
                 OnboardingView(
-                    onFinishOnboarding = {
-                        prefs.edit().putBoolean("onboarding_completed", true).apply()
+                    initialAutoplay = autoplay,
+                    onFinishOnboarding = { chosenAutoplay ->
+                        prefs.edit()
+                            .putBoolean("onboarding_completed", true)
+                            .putBoolean("autoplay", chosenAutoplay)
+                            .apply()
+                        autoplay = chosenAutoplay
                         onboardingCompleted = true
                     },
                 )
             } else {
                 MusicPlayerView(
+                    autoplay = autoplay,
                     onResetOnboarding = {
                         prefs.edit().putBoolean("onboarding_completed", false).apply()
                         onboardingCompleted = false
