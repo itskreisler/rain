@@ -9,6 +9,17 @@ progreso simulado), este ejemplo lee el audio del dispositivo con `MediaStore`,
 lo reproduce con `MediaPlayer` y muestra el cristal como efecto real sobre el
 contenido de la pantalla.
 
+## Capturas
+
+<p align="center">
+  <img src="docs/screenshots/inicio.webp" width="240" alt="Inicio">
+  <img src="docs/screenshots/biblioteca.webp" width="240" alt="Biblioteca">
+  <img src="docs/screenshots/reproductor.webp" width="240" alt="Reproductor">
+</p>
+
+Capturas reales de Backdrop Music en un dispositivo Android, compilada y
+firmada con Rain (`rain --devlog build`), sin Gradle ni Android Studio.
+
 ## Qué hace
 
 La app tiene cuatro secciones pensadas para un reproductor completo:
@@ -79,6 +90,10 @@ marcan como hechas funciones que solo existen como maqueta.
 - [ ] **Radio por Internet:** no implementado; faltan URLs y listas de
   emisoras.
 - [ ] **Widgets y Android Auto:** no implementado; faltan ambas integraciones.
+- [x] **Icono de aplicación:** icono adaptativo propio (`@mipmap/ic_launcher`)
+  con fondo degradado índigo, nota musical vectorial y capa monocroma para los
+  iconos temáticos de Android 13+. Sin recursos raster ni icono por defecto del
+  sistema.
 
 ## Permisos
 
@@ -143,6 +158,7 @@ backdrop-music/
 │   │   ├── MusicSettings.kt      # preferencias persistidas y orden
 │   │   ├── PlayerController.kt   # MediaPlayer, foco de audio, ecualizador y cola
 │   │   └── Glass.kt              # LayerBackdrop, blur/lens, paneles y navegación
+│   ├── res/                      # icono adaptativo (v26) y monocromo (v33)
 │   └── build/                    # generado por Rain (ignorado por git)
 ├── cache/                        # POMs descargados (ignorado por git)
 └── .rain-deps/                   # AAR/JAR preparados (ignorado por git)

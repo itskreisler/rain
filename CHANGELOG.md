@@ -144,6 +144,11 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Cambiado
 
+- **Icono propio en `examples/backdrop-music`.** La app deja el icono por
+  defecto del sistema y estrena un icono adaptativo vectorial (degradado
+  índigo, nota musical y halo) con capa monocroma para los iconos temáticos de
+  Android 13+. El README añade capturas reales de Inicio, Biblioteca y
+  Reproductor.
 - **Etiquetas de acción de Configuración en blanco.** En
   `examples/backdrop-music`, “Abrir” y “Escanear” dejan de usar el acento
   dinámico y pasan a blanco con una cápsula algo más opaca, para asegurar el
