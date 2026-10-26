@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
@@ -110,13 +111,13 @@ fun RadioScreen(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Radio por Internet",
+                            text = stringResource(R.string.radio_online),
                             color = Color.White,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = "${stations.size} emisoras en vivo (editables y eliminables)",
+                            text = stringResource(R.string.radio_count_sub, stations.size),
                             color = Color.White.copy(alpha = 0.65f),
                             fontSize = 12.sp,
                         )
@@ -124,7 +125,7 @@ fun RadioScreen(
                     GlassIconButton(
                         backdrop = backdrop,
                         icon = Icons.Rounded.Add,
-                        contentDescription = "Añadir emisora",
+                        contentDescription = stringResource(R.string.add_station),
                         onClick = {
                             editingStationId = null
                             customName = ""
@@ -141,13 +142,13 @@ fun RadioScreen(
                     Spacer(Modifier.height(14.dp))
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            if (editingStationId == null) "Nueva Emisora" else "Editar Emisora",
+                            if (editingStationId == null) stringResource(R.string.new_station) else stringResource(R.string.edit_station),
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("Nombre", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text(stringResource(R.string.station_name), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         BasicTextField(
                             value = customName,
                             onValueChange = { customName = it },
@@ -160,7 +161,7 @@ fun RadioScreen(
                                 .padding(8.dp),
                         )
                         Spacer(Modifier.height(6.dp))
-                        Text("Género", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text(stringResource(R.string.station_genre), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         BasicTextField(
                             value = customGenre,
                             onValueChange = { customGenre = it },
@@ -173,7 +174,7 @@ fun RadioScreen(
                                 .padding(8.dp),
                         )
                         Spacer(Modifier.height(6.dp))
-                        Text("URL del Stream", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text(stringResource(R.string.station_url), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         BasicTextField(
                             value = customUrl,
                             onValueChange = { customUrl = it },
@@ -191,7 +192,7 @@ fun RadioScreen(
                                 onClick = { showAddDialog = false },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
+                                Text(stringResource(R.string.cancel), color = Color.White.copy(alpha = 0.7f))
                             }
                             Spacer(Modifier.width(8.dp))
                             Button(
@@ -219,7 +220,7 @@ fun RadioScreen(
                                 colors = ButtonDefaults.buttonColors(containerColor = accent),
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("Guardar", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(stringResource(R.string.save), color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -314,7 +315,7 @@ fun RadioScreen(
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.5f)),
                     ) {
-                        Text("Sintonizar", fontSize = 12.sp, color = Color.White)
+                        Text(stringResource(R.string.tune), fontSize = 12.sp, color = Color.White)
                     }
                 }
             }

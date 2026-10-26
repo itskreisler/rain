@@ -24,9 +24,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.res.stringResource
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -85,15 +85,16 @@ fun SettingsScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+
         item(key = "audio") {
             SettingsSection(
-                title = "Audio",
+                title = stringResource(R.string.audio),
                 icon = Icons.Rounded.GraphicEq,
                 accent = accent,
                 backdrop = backdrop,
             ) {
                 Text(
-                    text = "Fundido cruzado (Crossfade)",
+                    text = stringResource(R.string.crossfade),
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
@@ -101,9 +102,9 @@ fun SettingsScreen(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = if (settings.crossfadeSeconds == 0) {
-                        "Desactivado"
+                        stringResource(R.string.crossfade_off)
                     } else {
-                        "Transición de ${settings.crossfadeSeconds} segundos entre pistas"
+                        stringResource(R.string.crossfade_sub, settings.crossfadeSeconds)
                     },
                     color = Color.White.copy(alpha = 0.58f),
                     fontSize = 11.sp,
@@ -125,23 +126,22 @@ fun SettingsScreen(
                 }
                 SettingDivider()
                 SettingSwitch(
-                    title = "Pausar al perder el foco",
-                    description = "Detiene la música cuando otra app toma el audio; " +
-                        "se reanuda al recuperarlo.",
+                    title = stringResource(R.string.pause_focus),
+                    description = stringResource(R.string.pause_focus_sub),
                     checked = settings.pauseOnFocusLoss,
                     accent = accent,
                     onCheckedChange = settings::updatePauseOnFocusLoss,
                 )
                 SettingDivider()
                 ActionRow(
-                    title = "Ecualizador",
+                    title = stringResource(R.string.equalizer),
                     description = when {
                         controller.hasEqualizer ->
-                            "${controller.eqBands.size} bandas listas en el reproductor."
+                            "${controller.eqBands.size} bandas"
                         controller.eqError != null -> controller.eqError.orEmpty()
-                        else -> "Disponible al reproducir una canción."
+                        else -> "Disponible al reproducir"
                     },
-                    actionLabel = "Abrir",
+                    actionLabel = stringResource(R.string.open),
                     icon = Icons.Rounded.GraphicEq,
                     accent = accent,
                     onClick = onOpenEqualizer,
@@ -149,57 +149,24 @@ fun SettingsScreen(
             }
         }
 
-        item(key = "idioma") {
-            SettingsSection(
-                title = Strings.get("language", settings.language),
-                icon = Icons.Rounded.Language,
-                accent = accent,
-                backdrop = backdrop,
-            ) {
-                Text(
-                    text = Strings.get("language", settings.language),
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    AppLanguage.values().forEach { lang ->
-                        ChoiceChip(
-                            label = lang.displayName,
-                            selected = settings.language == lang,
-                            accent = accent,
-                            modifier = Modifier.weight(1f),
-                            onClick = { settings.updateLanguage(lang) },
-                        )
-                    }
-                }
-            }
-        }
-
         item(key = "apariencia") {
             SettingsSection(
-                title = "Apariencia",
+                title = stringResource(R.string.appearance),
                 icon = Icons.Rounded.Palette,
                 accent = accent,
                 backdrop = backdrop,
             ) {
                 SettingSwitch(
-                    title = "Acento dinámico",
-                    description = "El color de la interfaz se extrae de la carátula " +
-                        "de la canción actual.",
+                    title = stringResource(R.string.dynamic_accent),
+                    description = stringResource(R.string.dynamic_accent_sub),
                     checked = settings.dynamicAccent,
                     accent = accent,
                     onCheckedChange = settings::updateDynamicAccent,
                 )
                 SettingDivider()
                 SettingSwitch(
-                    title = "Reducir movimiento",
-                    description = "Acorta las transiciones y detiene los halos animados " +
-                        "del fondo.",
+                    title = stringResource(R.string.reduce_motion),
+                    description = stringResource(R.string.reduce_motion_sub),
                     checked = settings.reduceMotion,
                     accent = accent,
                     onCheckedChange = settings::updateReduceMotion,
