@@ -33,7 +33,7 @@ La app tiene cuatro secciones pensadas para un reproductor completo:
 - **Reproductor.** Portada, metadatos animados, barra de progreso arrastrable,
   controles de reproducción, aleatorio, repetición (off/todo/una), cola
   desplegable y ecualizador real.
-- **Configuración.** Audio (foco de audio y acceso al ecualizador), apariencia
+- **Configuración.** Audio (foco de audio, fundido cruzado / crossfade de 0 a 10s y acceso al ecualizador), apariencia
   (acento dinámico y reducir movimiento), biblioteca (orden, reescaneo y caché
   de carátulas), reproducción (auto-inicio, aleatorio y repetición) y
   almacenamiento (estadísticas y restablecer ajustes).

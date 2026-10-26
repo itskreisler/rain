@@ -212,6 +212,7 @@ fun BackdropMusicApp(controller: PlayerController) {
     // sentidos: los controles del reproductor también las actualizan.
     LaunchedEffect(settings.shuffle) { controller.updateShuffle(settings.shuffle) }
     LaunchedEffect(settings.repeatMode) { controller.updateRepeatMode(settings.repeatMode) }
+    LaunchedEffect(settings.crossfadeSeconds) { controller.updateCrossfadeSeconds(settings.crossfadeSeconds) }
     LaunchedEffect(settings.pauseOnFocusLoss) {
         controller.updatePauseOnFocusLoss(settings.pauseOnFocusLoss)
     }
@@ -392,6 +393,14 @@ fun BackdropMusicApp(controller: PlayerController) {
                                 modifier = Modifier.fillMaxSize(),
                             )
 
+                            page == TAB_RADIO -> RadioScreen(
+                                controller = controller,
+                                backdrop = backdrop,
+                                accent = accent,
+                                onOpenPlayer = { tab = TAB_PLAYER },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+
                             !granted -> CenteredStatus {
                                 StatusCard(
                                     backdrop = backdrop,
@@ -506,6 +515,7 @@ private fun pageSubtitle(tab: Int): String = when (tab) {
     TAB_HOME -> "Recientes, álbumes y reproducción"
     TAB_LIBRARY -> "Canciones, artistas, álbumes, géneros y carpetas"
     TAB_PLAYER -> "Portada, controles, cola y ecualizador"
+    TAB_RADIO -> "Emisoras de radio por internet en vivo"
     else -> "Audio, apariencia, biblioteca, reproducción y almacenamiento"
 }
 

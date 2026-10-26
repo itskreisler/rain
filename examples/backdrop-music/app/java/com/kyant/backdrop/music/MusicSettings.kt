@@ -58,6 +58,14 @@ class MusicSettings(context: Context) {
     var repeatMode by mutableStateOf(readRepeatMode())
         private set
 
+    var crossfadeSeconds by mutableStateOf(prefs.getInt(KEY_CROSSFADE, 0))
+        private set
+
+    fun updateCrossfadeSeconds(seconds: Int) {
+        crossfadeSeconds = seconds
+        prefs.edit().putInt(KEY_CROSSFADE, seconds).apply()
+    }
+
     fun updateAutoPlay(value: Boolean) {
         autoPlay = value
         prefs.edit().putBoolean(KEY_AUTO_PLAY, value).apply()
@@ -110,6 +118,7 @@ class MusicSettings(context: Context) {
         updateShuffle(false)
         updateRepeatMode(RepeatMode.Off)
         updateSavedQueueIds(emptyList())
+        updateCrossfadeSeconds(0)
     }
 
     private fun readSavedQueueIds(): List<Long> {
@@ -139,5 +148,6 @@ class MusicSettings(context: Context) {
         const val KEY_SHUFFLE = "shuffle"
         const val KEY_REPEAT = "repeatMode"
         const val KEY_QUEUE_IDS = "savedQueueIds"
+        const val KEY_CROSSFADE = "crossfadeSeconds"
     }
 }

@@ -109,6 +109,13 @@ class PlayerController(context: Context) : ViewModel() {
     var repeatMode by mutableStateOf(RepeatMode.Off)
         private set
 
+    var crossfadeSeconds by mutableIntStateOf(0)
+        private set
+
+    fun updateCrossfadeSeconds(seconds: Int) {
+        crossfadeSeconds = seconds
+    }
+
     var eqBands by mutableStateOf<List<EqBand>>(emptyList())
         private set
     var eqError by mutableStateOf<String?>(null)

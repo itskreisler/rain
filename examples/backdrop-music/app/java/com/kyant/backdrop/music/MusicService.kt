@@ -54,12 +54,8 @@ class MusicService : Service() {
 
     fun updateNotification() {
         val current = controller?.currentTrack
-        if (current == null) {
-            stopForeground(true)
-            return
-        }
-
         val isPlaying = controller?.isPlaying == true
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             val state = if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
             mediaSession?.setPlaybackState(
@@ -95,9 +91,12 @@ class MusicService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val title = current?.title ?: "Backdrop Music"
+        val subtitle = if (current != null) "${current.artist} · ${current.album}" else "Listo para reproducir"
+
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(current.title)
-            .setContentText("${current.artist} · ${current.album}")
+            .setContentTitle(title)
+            .setContentText(subtitle)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(openAppIntent)
             .setOngoing(isPlaying)

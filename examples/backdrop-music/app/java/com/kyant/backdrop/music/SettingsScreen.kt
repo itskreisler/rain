@@ -91,6 +91,38 @@ fun SettingsScreen(
                 accent = accent,
                 backdrop = backdrop,
             ) {
+                Text(
+                    text = "Fundido cruzado (Crossfade)",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = if (settings.crossfadeSeconds == 0) {
+                        "Desactivado"
+                    } else {
+                        "Transición de ${settings.crossfadeSeconds} segundos entre pistas"
+                    },
+                    color = Color.White.copy(alpha = 0.58f),
+                    fontSize = 11.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(0 to "Off", 2 to "2s", 4 to "4s", 6 to "6s", 8 to "8s", 10 to "10s").forEach { (sec, label) ->
+                        ChoiceChip(
+                            label = label,
+                            selected = settings.crossfadeSeconds == sec,
+                            accent = accent,
+                            modifier = Modifier.weight(1f),
+                            onClick = { settings.updateCrossfadeSeconds(sec) },
+                        )
+                    }
+                }
+                SettingDivider()
                 SettingSwitch(
                     title = "Pausar al perder el foco",
                     description = "Detiene la música cuando otra app toma el audio; " +
