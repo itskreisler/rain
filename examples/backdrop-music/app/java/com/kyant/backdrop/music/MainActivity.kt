@@ -66,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -511,12 +512,13 @@ fun BackdropMusicApp(controller: PlayerController) {
     }
 }
 
+@Composable
 private fun pageSubtitle(tab: Int): String = when (tab) {
-    TAB_HOME -> "Recientes, álbumes y reproducción"
-    TAB_LIBRARY -> "Canciones, artistas, álbumes, géneros y carpetas"
-    TAB_PLAYER -> "Portada, controles, cola y ecualizador"
-    TAB_RADIO -> "Emisoras de radio por internet en vivo"
-    else -> "Audio, apariencia, biblioteca, reproducción y almacenamiento"
+    TAB_HOME -> stringResource(R.string.recent_added)
+    TAB_LIBRARY -> stringResource(R.string.explore_more)
+    TAB_PLAYER -> stringResource(R.string.now_playing)
+    TAB_RADIO -> stringResource(R.string.radio_subtitle)
+    else -> stringResource(R.string.audio)
 }
 
 @Composable

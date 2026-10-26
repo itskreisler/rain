@@ -91,8 +91,12 @@ class MusicService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val title = current?.title ?: "Backdrop Music"
-        val subtitle = if (current != null) "${current.artist} · ${current.album}" else "Listo para reproducir"
+        val title = current?.title ?: getString(R.string.app_name)
+        val subtitle = if (current != null) "${current.artist} · ${current.album}" else getString(R.string.ready_to_play)
+
+        val prevLabel = getString(R.string.previous)
+        val playLabel = if (isPlaying) getString(R.string.pause) else getString(R.string.play)
+        val nextLabel = getString(R.string.next)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
@@ -101,13 +105,13 @@ class MusicService : Service() {
             .setContentIntent(openAppIntent)
             .setOngoing(isPlaying)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_media_previous, "Anterior", prevIntent)
+            .addAction(android.R.drawable.ic_media_previous, prevLabel, prevIntent)
             .addAction(
                 if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                if (isPlaying) "Pausar" else "Reproducir",
+                playLabel,
                 playPauseIntent,
             )
-            .addAction(android.R.drawable.ic_media_next, "Siguiente", nextIntent)
+            .addAction(android.R.drawable.ic_media_next, nextLabel, nextIntent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             builder.setStyle(

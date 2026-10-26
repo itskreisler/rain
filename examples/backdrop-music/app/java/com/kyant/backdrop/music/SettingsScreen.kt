@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.ui.res.stringResource
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -85,6 +86,37 @@ fun SettingsScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+
+        item(key = "idioma") {
+            SettingsSection(
+                title = stringResource(R.string.language),
+                icon = Icons.Rounded.Language,
+                accent = accent,
+                backdrop = backdrop,
+            ) {
+                Text(
+                    text = stringResource(R.string.language),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("es" to "Español", "en" to "English").forEach { (code, displayName) ->
+                        ChoiceChip(
+                            label = displayName,
+                            selected = (code == "es"),
+                            accent = accent,
+                            modifier = Modifier.weight(1f),
+                            onClick = { },
+                        )
+                    }
+                }
+            }
+        }
 
         item(key = "audio") {
             SettingsSection(

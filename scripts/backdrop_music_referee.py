@@ -53,14 +53,20 @@ def run_referee(iteration_name=""):
         print("✅ Compilación limpia de Rain completada con éxito.")
 
     # 3. Verify APK
-    print("\n[3/3] Verificando APK generado...")
-    apk_path = os.path.join(backdrop_dir, "app", "build", "app-debug.apk")
-    if os.path.exists(apk_path) and os.path.getsize(apk_path) > 0:
-        size_mb = os.path.getsize(apk_path) / (1024 * 1024)
-        print(f"✅ APK verificado: {apk_path} ({size_mb:.2f} MiB)")
+    print("\n[3/3] Verificando APKs generados...")
+    debug_apk = os.path.join(backdrop_dir, "app", "build", "app-debug.apk")
+    release_apk = os.path.join(backdrop_dir, "app", "build", "app-release.apk")
+
+    if os.path.exists(debug_apk) and os.path.getsize(debug_apk) > 0:
+        size_mb = os.path.getsize(debug_apk) / (1024 * 1024)
+        print(f"✅ APK Debug verificado: {debug_apk} ({size_mb:.2f} MiB)")
     else:
-        print(f"❌ APK no encontrado o vacío en {apk_path}")
+        print(f"❌ APK Debug no encontrado o vacío en {debug_apk}")
         sys.exit(1)
+
+    if os.path.exists(release_apk) and os.path.getsize(release_apk) > 0:
+        size_mb = os.path.getsize(release_apk) / (1024 * 1024)
+        print(f"✅ APK Release verificado: {release_apk} ({size_mb:.2f} MiB)")
 
     print(f"\n🏆 Resultado del Árbitro para '{iteration_name}': APROBADO ✅\n")
 

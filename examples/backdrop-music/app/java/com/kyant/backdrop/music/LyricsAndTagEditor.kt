@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,7 +68,7 @@ fun LyricsView(
 ) {
     if (lyrics.isEmpty()) {
         Text(
-            text = "Buscando o sincronizando letras para esta canción…",
+            text = stringResource(R.string.lyrics_title),
             color = Color.White.copy(alpha = 0.55f),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
@@ -125,20 +126,20 @@ fun TagEditorCard(
         contentPadding = PaddingValues(18.dp),
     ) {
         Text(
-            text = "Editar Etiquetas de Audio",
+            text = stringResource(R.string.edit_tags),
             color = Color.White,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(12.dp))
 
-        TagInputField(label = "Título", value = title, onValueChange = { title = it }, accent = accent)
+        TagInputField(label = stringResource(R.string.title), value = title, onValueChange = { title = it }, accent = accent)
         Spacer(Modifier.height(8.dp))
-        TagInputField(label = "Artista", value = artist, onValueChange = { artist = it }, accent = accent)
+        TagInputField(label = stringResource(R.string.artist), value = artist, onValueChange = { artist = it }, accent = accent)
         Spacer(Modifier.height(8.dp))
-        TagInputField(label = "Álbum", value = album, onValueChange = { album = it }, accent = accent)
+        TagInputField(label = stringResource(R.string.album), value = album, onValueChange = { album = it }, accent = accent)
         Spacer(Modifier.height(8.dp))
-        TagInputField(label = "Género", value = genre, onValueChange = { genre = it }, accent = accent)
+        TagInputField(label = stringResource(R.string.genre), value = genre, onValueChange = { genre = it }, accent = accent)
 
         Spacer(Modifier.height(14.dp))
 
@@ -147,7 +148,7 @@ fun TagEditorCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
-                Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
+                Text(stringResource(R.string.cancel), color = Color.White.copy(alpha = 0.7f))
             }
             Spacer(Modifier.width(10.dp))
             Button(
@@ -156,7 +157,7 @@ fun TagEditorCard(
                 colors = ButtonDefaults.buttonColors(containerColor = accent),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Guardar", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.save), color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }

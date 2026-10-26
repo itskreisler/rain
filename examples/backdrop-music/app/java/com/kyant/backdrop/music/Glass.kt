@@ -90,6 +90,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -955,10 +956,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Home,
-                    contentDescription = "Inicio",
+                    contentDescription = stringResource(R.string.nav_home),
                 )
             },
-            label = { Text("Inicio", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_home), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -967,10 +968,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.LibraryMusic,
-                    contentDescription = "Biblioteca",
+                    contentDescription = stringResource(R.string.nav_library),
                 )
             },
-            label = { Text("Biblioteca", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_library), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -979,10 +980,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Album,
-                    contentDescription = "Reproductor",
+                    contentDescription = stringResource(R.string.nav_player),
                 )
             },
-            label = { Text("Reproductor", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_player), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -991,10 +992,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Radio,
-                    contentDescription = "Radio",
+                    contentDescription = stringResource(R.string.nav_radio),
                 )
             },
-            label = { Text("Radio", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_radio), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -1003,10 +1004,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Settings,
-                    contentDescription = "Configuración",
+                    contentDescription = stringResource(R.string.nav_settings),
                 )
             },
-            label = { Text("Ajustes", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_settings), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
     }

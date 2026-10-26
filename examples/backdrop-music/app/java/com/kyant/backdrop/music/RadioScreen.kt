@@ -40,10 +40,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
@@ -57,22 +57,34 @@ data class RadioStation(
 
 val VerifiedRadioStations = listOf(
     RadioStation("1", "Radio Anime Stream", "Anime", "https://radioanime.radioca.st/stream"),
-    RadioStation("2", "AnimeRadio.de", "J-Music", "https://stream.animeradio.de/animeradio.mp3"),
-    RadioStation("3", "J-Pop Powerplay Kawaii", "J-Pop", "https://kathy.torontocast.com:3060/;?type=http&nocache=24667"),
-    RadioStation("4", "Vocaloid Radio", "Vocaloid", "http://curiosity.shoutca.st:8019/stream"),
-    RadioStation("5", "Otaku Music Radio", "Otaku", "https://kathy.torontocast.com:2880/1.mp3"),
-    RadioStation("6", "Radio Free Otaku", "Otaku", "https://streaming.radio.co/s8267e5edc/listen"),
-    RadioStation("7", "stereoanime.net", "Anime", "https://radio.stereoanime.net/listen/stereoanime/128"),
-    RadioStation("8", "Kawaii Music", "Kawaii", "https://kawaii-music.stream.laut.fm/kawaii-music"),
-    RadioStation("9", "Big B Radio #JPOP", "J-Pop", "https://antares.dribbcast.com/proxy/jpop?mp=/s"),
-    RadioStation("10", "Radio J-Hero", "J-Rock / J-Pop", "https://stm1.radiojhero.com:18008/;"),
-    RadioStation("11", "Anime FM", "Anime", "https://stream.laut.fm/animefm"),
-    RadioStation("12", "Ronin Radio", "J-Pop / Gaming", "https://s3.radio.co/sff133d65b/listen"),
-    RadioStation("13", "BOX : Weeb Anime Radio", "Anime / Weeb", "https://ss-edge.joeycast.com/anime.mp3"),
-    RadioStation("14", "Final Fantasy Radio", "Game OST", "http://finalfantasystation.com:8000/stream"),
-    RadioStation("15", "Kodama Station", "Anime OST", "https://cast.kodamastation.com/radio/8000/radio.mp3"),
-    RadioStation("16", "SomaFM Groove Salad", "Ambient", "https://ice1.somafm.com/groovesalad-128-mp3"),
-    RadioStation("17", "SomaFM DEF CON Radio", "Electronic", "https://ice1.somafm.com/defcon-128-mp3"),
+    RadioStation("2", "AnimeRadio.de (OGG 96)", "J-Music", "https://stream.animeradio.de/animeradio96.ogg"),
+    RadioStation("3", "AnimeRadio.de (OGG)", "J-Music", "https://stream.animeradio.de/animeradio.ogg"),
+    RadioStation("4", "AnimeRadio.de (AAC)", "J-Music", "https://stream.animeradio.de/animeradio.aac"),
+    RadioStation("5", "AnimeRadio.de (MP3)", "J-Music", "https://stream.animeradio.de/animeradio.mp3"),
+    RadioStation("6", "J-Pop Powerplay Kawaii", "J-Pop", "https://kathy.torontocast.com:3060/;?type=http&nocache=24667"),
+    RadioStation("7", "Vocaloid Radio", "Vocaloid", "http://curiosity.shoutca.st:8019/stream"),
+    RadioStation("8", "Otaku Music Radio", "Otaku", "https://kathy.torontocast.com:2880/1.mp3"),
+    RadioStation("9", "Radio Free Otaku", "Otaku", "https://streaming.radio.co/s8267e5edc/listen"),
+    RadioStation("10", "Hentai-Radio", "Anime", "https://hentairadio.stream.laut.fm/hentai_radio"),
+    RadioStation("11", "stereoanime.net", "Anime", "https://radio.stereoanime.net/listen/stereoanime/128"),
+    RadioStation("12", "Retro PC Game Music Radio", "Retro Gaming", "http://gyusyabu.ddo.jp:8000/;"),
+    RadioStation("13", "Kawaii Music", "Kawaii", "https://kawaii-music.stream.laut.fm/kawaii-music"),
+    RadioStation("14", "Asian Music", "Asian / J-Pop", "http://91.232.4.33:7028/stream/;"),
+    RadioStation("15", "Yggdrasil Radio", "Anime / Game", "http://yggdrasilradio.net:8000/;stream.nsv"),
+    RadioStation("16", "Big B Radio #JPOP", "J-Pop", "https://antares.dribbcast.com/proxy/jpop?mp=/s"),
+    RadioStation("17", "Radio J-Hero", "J-Rock / J-Pop", "https://stm1.radiojhero.com:18008/;"),
+    RadioStation("18", "Iloveanimemanga", "Anime", "https://iloveanimemanga.stream.laut.fm/iloveanimemanga"),
+    RadioStation("19", "RadioAnimati AAC+", "Anime / Cartoons", "https://stream.radioanimati.it/ramobile"),
+    RadioStation("20", "Anime FM (Laut)", "Anime", "https://animefm.stream.laut.fm/animefm"),
+    RadioStation("21", "Ronin Radio", "J-Pop / Gaming", "https://s3.radio.co/sff133d65b/listen"),
+    RadioStation("22", "Anime FM", "Anime", "https://stream.laut.fm/animefm"),
+    RadioStation("23", "BOX : Weeb Anime Radio", "Anime / Weeb", "https://ss-edge.joeycast.com/anime.mp3"),
+    RadioStation("24", "Final Fantasy Radio", "Game OST", "http://finalfantasystation.com:8000/stream"),
+    RadioStation("25", "Otaku no Radio!", "Otaku", "http://radio.otakunopodcast.com:8000/otakunoradio"),
+    RadioStation("26", "Web Radio", "Anime", "https://player.voxtreaming.com.br/proxy/6728"),
+    RadioStation("27", "Fluffylandrpg", "RPG / Game", "https://fluffylandrpg.stream.laut.fm/fluffylandrpg"),
+    RadioStation("28", "SUPERLOUSTIC", "Anime / Cartoons", "https://www.superloustic.com/listen"),
+    RadioStation("29", "Kodama Station", "Anime OST", "https://cast.kodamastation.com/radio/8000/radio.mp3"),
 )
 
 @Composable
@@ -280,7 +292,7 @@ fun RadioScreen(
                     GlassIconButton(
                         backdrop = backdrop,
                         icon = Icons.Rounded.Edit,
-                        contentDescription = "Editar",
+                        contentDescription = stringResource(R.string.edit_station),
                         onClick = {
                             editingStationId = station.id
                             customName = station.name
@@ -297,7 +309,7 @@ fun RadioScreen(
                     GlassIconButton(
                         backdrop = backdrop,
                         icon = Icons.Rounded.Delete,
-                        contentDescription = "Eliminar",
+                        contentDescription = stringResource(R.string.cancel),
                         onClick = {
                             stations = stations.filter { it.id != station.id }
                         },

@@ -29,6 +29,7 @@
     <string name="station_genre">Genre</string>
     <string name="station_url">Stream URL</string>
     <string name="tune">Tune</string>
+    <string name="delete">Delete</string>
 
     <string name="audio">Audio</string>
     <string name="crossfade">Crossfade</string>
@@ -77,4 +78,15 @@
     <string name="grant_permission">Grant permission</string>
     <string name="open_settings">Open settings</string>
     <string name="retry">Retry</string>
+    <string name="language">Language</string>
+    <string name="custom">Custom</string>
+    <string name="previous">Previous</string>
+    <string name="pause">Pause</string>
+    <string name="play">Play</string>
+    <string name="next">Next</string>
+    <string name="ready_to_play">Ready to play</string>
+    <string name="more_tracks_in_queue">and %1$d more tracks</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="remove_from_queue">Remove from queue</string>
 </resources>
