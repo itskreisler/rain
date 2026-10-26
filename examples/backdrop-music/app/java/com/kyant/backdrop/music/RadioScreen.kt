@@ -20,12 +20,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,11 +54,24 @@ data class RadioStation(
     val url: String,
 )
 
-val DefaultRadioStations = listOf(
-    RadioStation("1", "SomaFM Groove Salad", "Ambient / Chill", "https://ice1.somafm.com/groovesalad-128-mp3"),
-    RadioStation("2", "SomaFM Secret Agent", "Lounge / Spy", "https://ice1.somafm.com/secretagent-128-mp3"),
-    RadioStation("3", "SomaFM DEF CON Radio", "Hacker / Electronic", "https://ice1.somafm.com/defcon-128-mp3"),
-    RadioStation("4", "KEXP Seattle", "Indie Rock", "https://kexp-mp3-128.streamguys1.com/kexp128.mp3"),
+val VerifiedRadioStations = listOf(
+    RadioStation("1", "Radio Anime Stream", "Anime", "https://radioanime.radioca.st/stream"),
+    RadioStation("2", "AnimeRadio.de", "J-Music", "https://stream.animeradio.de/animeradio.mp3"),
+    RadioStation("3", "J-Pop Powerplay Kawaii", "J-Pop", "https://kathy.torontocast.com:3060/;?type=http&nocache=24667"),
+    RadioStation("4", "Vocaloid Radio", "Vocaloid", "http://curiosity.shoutca.st:8019/stream"),
+    RadioStation("5", "Otaku Music Radio", "Otaku", "https://kathy.torontocast.com:2880/1.mp3"),
+    RadioStation("6", "Radio Free Otaku", "Otaku", "https://streaming.radio.co/s8267e5edc/listen"),
+    RadioStation("7", "stereoanime.net", "Anime", "https://radio.stereoanime.net/listen/stereoanime/128"),
+    RadioStation("8", "Kawaii Music", "Kawaii", "https://kawaii-music.stream.laut.fm/kawaii-music"),
+    RadioStation("9", "Big B Radio #JPOP", "J-Pop", "https://antares.dribbcast.com/proxy/jpop?mp=/s"),
+    RadioStation("10", "Radio J-Hero", "J-Rock / J-Pop", "https://stm1.radiojhero.com:18008/;"),
+    RadioStation("11", "Anime FM", "Anime", "https://stream.laut.fm/animefm"),
+    RadioStation("12", "Ronin Radio", "J-Pop / Gaming", "https://s3.radio.co/sff133d65b/listen"),
+    RadioStation("13", "BOX : Weeb Anime Radio", "Anime / Weeb", "https://ss-edge.joeycast.com/anime.mp3"),
+    RadioStation("14", "Final Fantasy Radio", "Game OST", "http://finalfantasystation.com:8000/stream"),
+    RadioStation("15", "Kodama Station", "Anime OST", "https://cast.kodamastation.com/radio/8000/radio.mp3"),
+    RadioStation("16", "SomaFM Groove Salad", "Ambient", "https://ice1.somafm.com/groovesalad-128-mp3"),
+    RadioStation("17", "SomaFM DEF CON Radio", "Electronic", "https://ice1.somafm.com/defcon-128-mp3"),
 )
 
 @Composable
@@ -68,8 +84,10 @@ fun RadioScreen(
 ) {
     var customName by remember { mutableStateOf("") }
     var customUrl by remember { mutableStateOf("") }
-    var stations by remember { mutableStateOf(DefaultRadioStations) }
+    var customGenre by remember { mutableStateOf("Personalizada") }
+    var stations by remember { mutableStateOf(VerifiedRadioStations) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingStationId by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -98,7 +116,7 @@ fun RadioScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = "Emisoras online de alta calidad en tiempo real",
+                            text = "${stations.size} emisoras en vivo (editables y eliminables)",
                             color = Color.White.copy(alpha = 0.65f),
                             fontSize = 12.sp,
                         )
@@ -107,7 +125,13 @@ fun RadioScreen(
                         backdrop = backdrop,
                         icon = Icons.Rounded.Add,
                         contentDescription = "Añadir emisora",
-                        onClick = { showAddDialog = !showAddDialog },
+                        onClick = {
+                            editingStationId = null
+                            customName = ""
+                            customUrl = ""
+                            customGenre = "Personalizada"
+                            showAddDialog = true
+                        },
                         buttonSize = 42.dp,
                         iconSize = 22.dp,
                     )
@@ -116,7 +140,14 @@ fun RadioScreen(
                 if (showAddDialog) {
                     Spacer(Modifier.height(14.dp))
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Text("Nombre de la emisora", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text(
+                            if (editingStationId == null) "Nueva Emisora" else "Editar Emisora",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("Nombre", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         BasicTextField(
                             value = customName,
                             onValueChange = { customName = it },
@@ -129,7 +160,20 @@ fun RadioScreen(
                                 .padding(8.dp),
                         )
                         Spacer(Modifier.height(6.dp))
-                        Text("URL del stream HTTP/HTTPS", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text("Género", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        BasicTextField(
+                            value = customGenre,
+                            onValueChange = { customGenre = it },
+                            singleLine = true,
+                            textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                            cursorBrush = SolidColor(accent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                                .padding(8.dp),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("URL del Stream", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                         BasicTextField(
                             value = customUrl,
                             onValueChange = { customUrl = it },
@@ -142,25 +186,41 @@ fun RadioScreen(
                                 .padding(8.dp),
                         )
                         Spacer(Modifier.height(10.dp))
-                        Button(
-                            onClick = {
-                                if (customName.isNotBlank() && customUrl.isNotBlank()) {
-                                    stations = stations + RadioStation(
-                                        id = System.currentTimeMillis().toString(),
-                                        name = customName,
-                                        genre = "Personalizada",
-                                        url = customUrl,
-                                    )
-                                    customName = ""
-                                    customUrl = ""
-                                    showAddDialog = false
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = accent),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Guardar Emisora", color = Color.White, fontWeight = FontWeight.Bold)
+                        Row {
+                            TextButton(
+                                onClick = { showAddDialog = false },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (customName.isNotBlank() && customUrl.isNotBlank()) {
+                                        val editId = editingStationId
+                                        if (editId != null) {
+                                            stations = stations.map {
+                                                if (it.id == editId) {
+                                                    it.copy(name = customName, genre = customGenre, url = customUrl)
+                                                } else it
+                                            }
+                                        } else {
+                                            stations = stations + RadioStation(
+                                                id = System.currentTimeMillis().toString(),
+                                                name = customName,
+                                                genre = customGenre,
+                                                url = customUrl,
+                                            )
+                                        }
+                                        showAddDialog = false
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accent),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Guardar", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -215,6 +275,36 @@ fun RadioScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = Icons.Rounded.Edit,
+                        contentDescription = "Editar",
+                        onClick = {
+                            editingStationId = station.id
+                            customName = station.name
+                            customGenre = station.genre
+                            customUrl = station.url
+                            showAddDialog = true
+                        },
+                        buttonSize = 36.dp,
+                        iconSize = 18.dp,
+                    )
+
+                    Spacer(Modifier.width(4.dp))
+
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = Icons.Rounded.Delete,
+                        contentDescription = "Eliminar",
+                        onClick = {
+                            stations = stations.filter { it.id != station.id }
+                        },
+                        buttonSize = 36.dp,
+                        iconSize = 18.dp,
+                    )
+
+                    Spacer(Modifier.width(6.dp))
 
                     Button(
                         onClick = {

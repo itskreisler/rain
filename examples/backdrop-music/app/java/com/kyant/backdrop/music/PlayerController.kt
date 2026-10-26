@@ -294,16 +294,34 @@ class PlayerController(context: Context) : ViewModel() {
                 attachEqualizer(prepared.audioSessionId)
                 if (autoPlay) {
                     if (requestFocus()) {
-                        runCatching { prepared.start() }
-                            .onSuccess {
+                        if (crossfadeSeconds > 0) {
+                            runCatching {
+                                prepared.setVolume(0f, 0f)
+                                prepared.start()
                                 isPlaying = true
                                 onStateChanged?.invoke()
                             }
-                            .onFailure {
-                                isPlaying = false
-                                error = "No se pudo iniciar «${track.title}»."
-                                onStateChanged?.invoke()
+                            scope.launch {
+                                val steps = 10
+                                val duration = (crossfadeSeconds * 1000L) / steps
+                                for (i in 0..steps) {
+                                    val vol = i.toFloat() / steps
+                                    runCatching { prepared.setVolume(vol, vol) }
+                                    delay(duration)
+                                }
                             }
+                        } else {
+                            runCatching { prepared.start() }
+                                .onSuccess {
+                                    isPlaying = true
+                                    onStateChanged?.invoke()
+                                }
+                                .onFailure {
+                                    isPlaying = false
+                                    error = "No se pudo iniciar «${track.title}»."
+                                    onStateChanged?.invoke()
+                                }
+                        }
                     } else {
                         isPlaying = false
                         error = "Otra aplicación está usando el audio en este momento."
@@ -558,11 +576,24 @@ class PlayerController(context: Context) : ViewModel() {
 
     private fun releasePlayer() {
         releaseEqualizer()
-        player?.let { mediaPlayer ->
-            runCatching { mediaPlayer.reset() }
-            runCatching { mediaPlayer.release() }
-        }
+        val oldPlayer = player
         player = null
+        if (oldPlayer != null) {
+            if (crossfadeSeconds > 0 && isPlaying) {
+                scope.launch {
+                    val steps = 10
+                    val duration = (crossfadeSeconds * 1000L) / steps
+                    for (i in steps downTo 0) {
+                        val vol = i.toFloat() / steps
+                        runCatching { oldPlayer.setVolume(vol, vol) }
+                        delay(duration)
+                    }
+                    runCatching { oldPlayer.reset(); oldPlayer.release() }
+                }
+            } else {
+                runCatching { oldPlayer.reset(); oldPlayer.release() }
+            }
+        }
         isPlaying = false
         isPreparing = false
         onStateChanged?.invoke()
