@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -145,6 +146,37 @@ fun SettingsScreen(
                     accent = accent,
                     onClick = onOpenEqualizer,
                 )
+            }
+        }
+
+        item(key = "idioma") {
+            SettingsSection(
+                title = Strings.get("language", settings.language),
+                icon = Icons.Rounded.Language,
+                accent = accent,
+                backdrop = backdrop,
+            ) {
+                Text(
+                    text = Strings.get("language", settings.language),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AppLanguage.values().forEach { lang ->
+                        ChoiceChip(
+                            label = lang.displayName,
+                            selected = settings.language == lang,
+                            accent = accent,
+                            modifier = Modifier.weight(1f),
+                            onClick = { settings.updateLanguage(lang) },
+                        )
+                    }
+                }
             }
         }
 

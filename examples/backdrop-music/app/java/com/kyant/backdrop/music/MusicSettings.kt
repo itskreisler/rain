@@ -58,8 +58,16 @@ class MusicSettings(context: Context) {
     var repeatMode by mutableStateOf(readRepeatMode())
         private set
 
+    var language by mutableStateOf(readLanguage())
+        private set
+
     var crossfadeSeconds by mutableStateOf(prefs.getInt(KEY_CROSSFADE, 0))
         private set
+
+    fun updateLanguage(lang: AppLanguage) {
+        language = lang
+        prefs.edit().putString(KEY_LANGUAGE, lang.code).apply()
+    }
 
     fun updateCrossfadeSeconds(seconds: Int) {
         crossfadeSeconds = seconds
@@ -119,6 +127,12 @@ class MusicSettings(context: Context) {
         updateRepeatMode(RepeatMode.Off)
         updateSavedQueueIds(emptyList())
         updateCrossfadeSeconds(0)
+        updateLanguage(AppLanguage.Spanish)
+    }
+
+    private fun readLanguage(): AppLanguage {
+        val code = prefs.getString(KEY_LANGUAGE, "es")
+        return AppLanguage.values().firstOrNull { it.code == code } ?: AppLanguage.Spanish
     }
 
     private fun readSavedQueueIds(): List<Long> {
@@ -149,5 +163,6 @@ class MusicSettings(context: Context) {
         const val KEY_REPEAT = "repeatMode"
         const val KEY_QUEUE_IDS = "savedQueueIds"
         const val KEY_CROSSFADE = "crossfadeSeconds"
+        const val KEY_LANGUAGE = "language"
     }
 }
