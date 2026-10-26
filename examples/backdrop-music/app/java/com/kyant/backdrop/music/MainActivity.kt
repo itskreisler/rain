@@ -43,13 +43,35 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.ExitToApp
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.PlaylistAddCheck
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -155,6 +177,9 @@ fun BackdropMusicApp(controller: PlayerController) {
     var tab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
     var query by rememberSaveable { mutableStateOf("") }
     var eqRequest by remember { mutableIntStateOf(0) }
+
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -279,6 +304,51 @@ fun BackdropMusicApp(controller: PlayerController) {
         ),
     ) {
         CompositionLocalProvider(LocalContentColor provides Color.White) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(
+                        drawerContainerColor = Color(0xEA12121E),
+                        drawerContentColor = Color.White,
+                    ) {
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            text = "AIMP Mobile / Backdrop",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accent,
+                            modifier = Modifier.padding(20.dp),
+                        )
+                        val menuItems = listOf(
+                            Triple(TAB_HOME, "Pantalla principal", Icons.Rounded.Home),
+                            Triple(TAB_LIBRARY, "Mi audio", Icons.Rounded.LibraryMusic),
+                            Triple(TAB_PLAYER, "Efectos de sonido", Icons.Rounded.GraphicEq),
+                            Triple(TAB_LIBRARY, "Marcadores", Icons.Rounded.Bookmark),
+                            Triple(TAB_HOME, "Favoritos", Icons.Rounded.Favorite),
+                            Triple(TAB_PLAYER, "Cola", Icons.Rounded.QueueMusic),
+                            Triple(TAB_LIBRARY, "Listas de reproducción", Icons.Rounded.PlaylistAddCheck),
+                            Triple(TAB_RADIO, "Radio por Internet", Icons.Rounded.Radio),
+                            Triple(TAB_SETTINGS, "Ajustes", Icons.Rounded.Settings),
+                        )
+                        menuItems.forEach { (targetTab, title, icon) ->
+                            NavigationDrawerItem(
+                                label = { Text(title, fontSize = 14.sp) },
+                                selected = tab == targetTab,
+                                icon = { Icon(icon, contentDescription = null, tint = if (tab == targetTab) accent else Color.White.copy(alpha = 0.7f)) },
+                                onClick = {
+                                    tab = targetTab
+                                    drawerScope.launch { drawerState.close() }
+                                },
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    selectedContainerColor = accent.copy(alpha = 0.25f),
+                                    unselectedContainerColor = Color.Transparent,
+                                ),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                },
+            ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // Solo la escena se graba en el backdrop. La interfaz de cristal
                 // queda fuera para que nunca se refracte a sí misma.
@@ -310,6 +380,9 @@ fun BackdropMusicApp(controller: PlayerController) {
                             granted = granted,
                             loading = loading,
                             backdrop = backdrop,
+                            onMenuClick = {
+                                drawerScope.launch { drawerState.open() }
+                            },
                             onRefresh = {
                                 if (granted) {
                                     reloadToken++
@@ -536,6 +609,7 @@ fun BackdropMusicApp(controller: PlayerController) {
             }
         }
     }
+    }
 }
 
 @Composable
@@ -566,9 +640,21 @@ private fun AppTopBar(
     granted: Boolean,
     loading: Boolean,
     backdrop: com.kyant.backdrop.Backdrop,
+    onMenuClick: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     TopAppBar(
+        navigationIcon = {
+            Spacer(Modifier.width(8.dp))
+            GlassIconButton(
+                backdrop = backdrop,
+                icon = Icons.Rounded.Menu,
+                contentDescription = "Menú AIMP",
+                onClick = onMenuClick,
+                buttonSize = 44.dp,
+                iconSize = 20.dp,
+            )
+        },
         title = {
             Column {
                 Text(

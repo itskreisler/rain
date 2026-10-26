@@ -257,22 +257,28 @@ fun PlayerScreen(
                     )
                 }
 
-                val modeLabel = buildString {
-                    if (controller.shuffle) append("Aleatorio")
-                    if (controller.repeatMode != RepeatMode.Off) {
-                        if (isNotEmpty()) append(" · ")
-                        append(controller.repeatMode.label)
-                    }
-                }
-                if (modeLabel.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        text = modeLabel,
+                        text = "Posición: ${controller.currentIndex + 1}/${controller.queue.size.coerceAtLeast(1)}",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        text = "A-B Bucle: Off",
                         color = accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Velocidad: 1.0x",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
                     )
                 }
 

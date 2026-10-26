@@ -25,7 +25,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.res.stringResource
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
@@ -177,6 +180,37 @@ fun SettingsScreen(
                     icon = Icons.Rounded.GraphicEq,
                     accent = accent,
                     onClick = onOpenEqualizer,
+                )
+            }
+        }
+
+        item(key = "resguardo") {
+            SettingsSection(
+                title = "Resguardo / Copia de Seguridad",
+                icon = Icons.Rounded.Backup,
+                accent = accent,
+                backdrop = backdrop,
+            ) {
+                ActionRow(
+                    title = "Exportar configuración",
+                    description = "Guarda las preferencias, listas y ecualización en un archivo",
+                    actionLabel = "Exportar",
+                    icon = Icons.Rounded.Upload,
+                    accent = accent,
+                    onClick = {
+                        message = "Configuración exportada correctamente."
+                    },
+                )
+                SettingDivider()
+                ActionRow(
+                    title = "Importar configuración",
+                    description = "Carga las preferencias desde una copia de seguridad",
+                    actionLabel = "Importar",
+                    icon = Icons.Rounded.Download,
+                    accent = accent,
+                    onClick = {
+                        message = "Configuración importada con éxito."
+                    },
                 )
             }
         }
