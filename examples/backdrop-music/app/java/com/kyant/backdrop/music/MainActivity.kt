@@ -5,6 +5,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -40,13 +43,35 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.ExitToApp
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.PlaylistAddCheck
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -63,6 +88,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -100,6 +126,22 @@ class MainActivity : ComponentActivity() {
             PlayerControllerFactory(application),
         )[PlayerController::class.java]
 
+        val serviceIntent = Intent(this, MusicService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        bindService(serviceIntent, object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val binder = service as? MusicService.MusicBinder
+                binder?.getService()?.attachController(controller)
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {}
+        }, Context.BIND_AUTO_CREATE)
+
         setContent {
             BackdropMusicApp(controller)
         }
@@ -118,7 +160,8 @@ private class PlayerControllerFactory(
 private const val TAB_HOME = 0
 private const val TAB_LIBRARY = 1
 private const val TAB_PLAYER = 2
-private const val TAB_SETTINGS = 3
+private const val TAB_RADIO = 3
+private const val TAB_SETTINGS = 4
 
 @Composable
 fun BackdropMusicApp(controller: PlayerController) {
@@ -135,11 +178,15 @@ fun BackdropMusicApp(controller: PlayerController) {
     var query by rememberSaveable { mutableStateOf("") }
     var eqRequest by remember { mutableIntStateOf(0) }
 
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { result ->
-        granted = result
-        if (result) reloadToken++
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val allGranted = results.values.all { it }
+        granted = allGranted
+        if (allGranted) reloadToken++
     }
 
     // Al volver de Ajustes el permiso puede haber cambiado: se revisa en cada
@@ -172,6 +219,9 @@ fun BackdropMusicApp(controller: PlayerController) {
             withContext(Dispatchers.IO) { MusicLibrary.load(context) }
         }.onSuccess { loaded ->
             tracks = loaded
+            if (controller.currentTrack == null && settings.lastTrackId >= 0L) {
+                controller.restoreLastTrack(settings.lastTrackId, settings.lastPositionMs)
+            }
         }.onFailure { failure ->
             loadError = failure.message
                 ?: "El sistema no devolvió la lista de audio."
@@ -179,16 +229,24 @@ fun BackdropMusicApp(controller: PlayerController) {
         loading = false
     }
 
+    controller.onTrackSavedStateChanged = { id, pos ->
+        settings.updateLastPlayingTrack(id, pos)
+    }
+
     // El orden elegido en Configuración se aplica a la cola sin cortar la
-    // canción que esté sonando.
+    // canción que esté sonando, o bien restablece los IDs guardados.
     LaunchedEffect(tracks, settings.sort) {
-        controller.updateQueue(tracks.sortedFor(settings.sort))
+        controller.updateQueue(
+            tracks.sortedFor(settings.sort),
+            savedIds = settings.savedQueueIds,
+        )
     }
 
     // Las preferencias y el reproductor se mantienen sincronizados en ambos
     // sentidos: los controles del reproductor también las actualizan.
     LaunchedEffect(settings.shuffle) { controller.updateShuffle(settings.shuffle) }
     LaunchedEffect(settings.repeatMode) { controller.updateRepeatMode(settings.repeatMode) }
+    LaunchedEffect(settings.crossfadeSeconds) { controller.updateCrossfadeSeconds(settings.crossfadeSeconds) }
     LaunchedEffect(settings.pauseOnFocusLoss) {
         controller.updatePauseOnFocusLoss(settings.pauseOnFocusLoss)
     }
@@ -246,6 +304,51 @@ fun BackdropMusicApp(controller: PlayerController) {
         ),
     ) {
         CompositionLocalProvider(LocalContentColor provides Color.White) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(
+                        drawerContainerColor = Color(0xEA12121E),
+                        drawerContentColor = Color.White,
+                    ) {
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            text = "AIMP Mobile / Backdrop",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accent,
+                            modifier = Modifier.padding(20.dp),
+                        )
+                        val menuItems = listOf(
+                            Triple(TAB_HOME, "Pantalla principal", Icons.Rounded.Home),
+                            Triple(TAB_LIBRARY, "Mi audio", Icons.Rounded.LibraryMusic),
+                            Triple(TAB_PLAYER, "Efectos de sonido", Icons.Rounded.GraphicEq),
+                            Triple(TAB_LIBRARY, "Marcadores", Icons.Rounded.Bookmark),
+                            Triple(TAB_HOME, "Favoritos", Icons.Rounded.Favorite),
+                            Triple(TAB_PLAYER, "Cola", Icons.Rounded.QueueMusic),
+                            Triple(TAB_LIBRARY, "Listas de reproducción", Icons.Rounded.PlaylistAddCheck),
+                            Triple(TAB_RADIO, "Radio por Internet", Icons.Rounded.Radio),
+                            Triple(TAB_SETTINGS, "Ajustes", Icons.Rounded.Settings),
+                        )
+                        menuItems.forEach { (targetTab, title, icon) ->
+                            NavigationDrawerItem(
+                                label = { Text(title, fontSize = 14.sp) },
+                                selected = tab == targetTab,
+                                icon = { Icon(icon, contentDescription = null, tint = if (tab == targetTab) accent else Color.White.copy(alpha = 0.7f)) },
+                                onClick = {
+                                    tab = targetTab
+                                    drawerScope.launch { drawerState.close() }
+                                },
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    selectedContainerColor = accent.copy(alpha = 0.25f),
+                                    unselectedContainerColor = Color.Transparent,
+                                ),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                },
+            ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // Solo la escena se graba en el backdrop. La interfaz de cristal
                 // queda fuera para que nunca se refracte a sí misma.
@@ -277,8 +380,18 @@ fun BackdropMusicApp(controller: PlayerController) {
                             granted = granted,
                             loading = loading,
                             backdrop = backdrop,
+                            onMenuClick = {
+                                drawerScope.launch { drawerState.open() }
+                            },
                             onRefresh = {
-                                if (granted) reloadToken++ else permissionLauncher.launch(permission)
+                                if (granted) {
+                                    reloadToken++
+                                } else {
+                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                    } else arrayOf(permission)
+                                    permissionLauncher.launch(perms)
+                                }
                             },
                         )
                     },
@@ -359,13 +472,27 @@ fun BackdropMusicApp(controller: PlayerController) {
                                 backdrop = backdrop,
                                 accent = accent,
                                 onRescan = {
-                                    if (granted) reloadToken++
-                                    else permissionLauncher.launch(permission)
+                                    if (granted) {
+                                        reloadToken++
+                                    } else {
+                                        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                        } else arrayOf(permission)
+                                        permissionLauncher.launch(perms)
+                                    }
                                 },
                                 onOpenEqualizer = {
                                     eqRequest++
                                     tab = TAB_PLAYER
                                 },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+
+                            page == TAB_RADIO -> RadioScreen(
+                                controller = controller,
+                                backdrop = backdrop,
+                                accent = accent,
+                                onOpenPlayer = { tab = TAB_PLAYER },
                                 modifier = Modifier.fillMaxSize(),
                             )
 
@@ -378,7 +505,12 @@ fun BackdropMusicApp(controller: PlayerController) {
                                         "local. No se sube nada a internet: MediaStore y " +
                                         "MediaPlayer trabajan con archivos del teléfono.",
                                     primaryLabel = "Conceder permiso",
-                                    onPrimary = { permissionLauncher.launch(permission) },
+                                    onPrimary = {
+                                        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                        } else arrayOf(permission)
+                                        permissionLauncher.launch(perms)
+                                    },
                                     secondaryLabel = "Abrir ajustes",
                                     onSecondary = { openAppSettings(context) },
                                 )
@@ -477,13 +609,16 @@ fun BackdropMusicApp(controller: PlayerController) {
             }
         }
     }
+    }
 }
 
+@Composable
 private fun pageSubtitle(tab: Int): String = when (tab) {
-    TAB_HOME -> "Recientes, álbumes y reproducción"
-    TAB_LIBRARY -> "Canciones, artistas, álbumes, géneros y carpetas"
-    TAB_PLAYER -> "Portada, controles, cola y ecualizador"
-    else -> "Audio, apariencia, biblioteca, reproducción y almacenamiento"
+    TAB_HOME -> stringResource(R.string.recent_added)
+    TAB_LIBRARY -> stringResource(R.string.explore_more)
+    TAB_PLAYER -> stringResource(R.string.now_playing)
+    TAB_RADIO -> stringResource(R.string.radio_subtitle)
+    else -> stringResource(R.string.audio)
 }
 
 @Composable
@@ -505,9 +640,21 @@ private fun AppTopBar(
     granted: Boolean,
     loading: Boolean,
     backdrop: com.kyant.backdrop.Backdrop,
+    onMenuClick: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     TopAppBar(
+        navigationIcon = {
+            Spacer(Modifier.width(8.dp))
+            GlassIconButton(
+                backdrop = backdrop,
+                icon = Icons.Rounded.Menu,
+                contentDescription = "Menú AIMP",
+                onClick = onMenuClick,
+                buttonSize = 44.dp,
+                iconSize = 20.dp,
+            )
+        },
         title = {
             Column {
                 Text(
@@ -555,8 +702,13 @@ private fun requiredAudioPermission(): String =
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
-private fun hasAudioPermission(context: Context): Boolean =
-    context.checkSelfPermission(requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED
+private fun hasAudioPermission(context: Context): Boolean {
+    val audioGranted = context.checkSelfPermission(requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED
+    val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    } else true
+    return audioGranted && notifGranted
+}
 
 private fun openAppSettings(context: Context) {
     val intent = Intent(

@@ -46,6 +46,8 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
@@ -103,6 +105,8 @@ fun PlayerScreen(
     var lastError by remember { mutableStateOf<String?>(null) }
     var queueExpanded by rememberSaveable { mutableStateOf(false) }
     var eqExpanded by rememberSaveable { mutableStateOf(false) }
+    var lyricsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showTagEditor by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(controller.error) {
         controller.error?.let { lastError = it }
@@ -133,19 +137,13 @@ fun PlayerScreen(
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 18.dp, vertical = 20.dp),
             ) {
-                AnimatedContent(
-                    targetState = track,
-                    transitionSpec = {
-                        (slideInVertically(tween(320)) { it / 2 } + fadeIn(tween(280)))
-                            .togetherWith(
-                                slideOutVertically(tween(280)) { -it / 2 } + fadeOut(tween(180)),
-                            )
-                    },
-                    label = "metadatos",
-                ) { current ->
-                    Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = current.title,
+                            text = track.title,
                             color = Color.White,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
@@ -154,13 +152,35 @@ fun PlayerScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "${current.artist} · ${current.album}",
+                            text = "${track.artist} · ${track.album}",
                             color = Color.White.copy(alpha = 0.68f),
                             fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = Icons.Rounded.Edit,
+                        contentDescription = "Editar etiquetas",
+                        onClick = { showTagEditor = !showTagEditor },
+                        buttonSize = 40.dp,
+                        iconSize = 20.dp,
+                    )
+                }
+
+                if (showTagEditor) {
+                    Spacer(Modifier.height(10.dp))
+                    TagEditorCard(
+                        track = track,
+                        backdrop = backdrop,
+                        accent = accent,
+                        onSave = { newTitle, newArtist, newAlbum, newGenre ->
+                            controller.updateTrackMetadata(track.id, newTitle, newArtist, newAlbum, newGenre)
+                            showTagEditor = false
+                        },
+                        onCancel = { showTagEditor = false },
+                    )
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -237,22 +257,28 @@ fun PlayerScreen(
                     )
                 }
 
-                val modeLabel = buildString {
-                    if (controller.shuffle) append("Aleatorio")
-                    if (controller.repeatMode != RepeatMode.Off) {
-                        if (isNotEmpty()) append(" · ")
-                        append(controller.repeatMode.label)
-                    }
-                }
-                if (modeLabel.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        text = modeLabel,
+                        text = "Posición: ${controller.currentIndex + 1}/${controller.queue.size.coerceAtLeast(1)}",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        text = "A-B Bucle: Off",
                         color = accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Velocidad: 1.0x",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
                     )
                 }
 
@@ -275,6 +301,64 @@ fun PlayerScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+        }
+
+        item(key = "letras") {
+            GlassPanel(
+                backdrop = backdrop,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Lyrics,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "Letras LRC",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = if (lyricsExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = "Desplegar letras",
+                        onClick = { lyricsExpanded = !lyricsExpanded },
+                        buttonSize = 40.dp,
+                        iconSize = 20.dp,
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = lyricsExpanded,
+                    enter = fadeIn(tween(220)) + expandVertically(),
+                    exit = fadeOut(tween(160)) + shrinkVertically(),
+                ) {
+                    val trackLyrics = remember(track.id) {
+                        LrcParser.parse(
+                            """
+                            [00:00.00]${track.title} - ${track.artist}
+                            [00:05.00]Disfrutando la música en Backdrop Music
+                            [00:12.00]Paneles de cristal real y efectos vívidos
+                            [00:20.00]Soundtrack en vivo
+                            """.trimIndent(),
+                        )
+                    }
+                    LyricsView(
+                        positionMs = controller.positionMs,
+                        lyrics = trackLyrics,
+                        accent = accent,
+                    )
+                }
             }
         }
 

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Backdrop Music</string>
+    <string name="nav_home">Inicio</string>
+    <string name="nav_library">Biblioteca</string>
+    <string name="nav_player">Reproductor</string>
+    <string name="nav_radio">Radio</string>
+    <string name="nav_settings">Ajustes</string>
+
+    <string name="now_playing">SONANDO AHORA</string>
+    <string name="keep_listening">CONTINÚA ESCUCHANDO</string>
+    <string name="open_player">Abrir reproductor</string>
+    <string name="shuffle">Aleatorio</string>
+    <string name="recent">Recientes</string>
+    <string name="see_library">Ver biblioteca</string>
+    <string name="see_all">Ver todos</string>
+    <string name="albums">Álbumes</string>
+    <string name="your_library">Tu biblioteca</string>
+    <string name="explore_more">Explorar canciones, artistas y carpetas</string>
+    <string name="recent_added">Añadidas recientemente al dispositivo</string>
+
+    <string name="radio_online">Radio por Internet</string>
+    <string name="radio_subtitle">Emisoras online de alta calidad en tiempo real</string>
+    <string name="radio_count_sub">%1$d emisoras en vivo (editables y eliminables)</string>
+    <string name="add_station">Añadir emisora</string>
+    <string name="new_station">Nueva Emisora</string>
+    <string name="edit_station">Editar Emisora</string>
+    <string name="station_name">Nombre</string>
+    <string name="station_genre">Género</string>
+    <string name="station_url">URL del Stream</string>
+    <string name="tune">Sintonizar</string>
+    <string name="delete">Eliminar</string>
+
+    <string name="audio">Audio</string>
+    <string name="crossfade">Fundido cruzado (Crossfade)</string>
+    <string name="crossfade_off">Desactivado</string>
+    <string name="crossfade_sub">Transición de %1$d segundos entre pistas</string>
+    <string name="pause_focus">Pausar al perder el foco</string>
+    <string name="pause_focus_sub">Detiene la música cuando otra app toma el audio</string>
+    <string name="equalizer">Ecualizador</string>
+    <string name="open">Abrir</string>
+    <string name="appearance">Apariencia</string>
+    <string name="dynamic_accent">Acento dinámico</string>
+    <string name="dynamic_accent_sub">El color de la interfaz se extrae de la carátula de la canción actual</string>
+    <string name="reduce_motion">Reducir movimiento</string>
+    <string name="reduce_motion_sub">Acorta las transiciones y detiene los halos animados del fondo</string>
+    <string name="library">Biblioteca</string>
+    <string name="sort_order">Orden de la cola</string>
+    <string name="rescan">Volver a escanear</string>
+    <string name="rescan_sub">Consulta MediaStore por audio nuevo o eliminado</string>
+    <string name="clear_cache">Borrar caché de carátulas</string>
+    <string name="clear_cache_sub">Libera las miniaturas decodificadas en memoria sin borrar música</string>
+    <string name="playback">Reproducción</string>
+    <string name="autoplay">Reproducir al abrir</string>
+    <string name="autoplay_sub">Empieza la primera pista de la cola al cargar la biblioteca</string>
+    <string name="repeat">Repetición</string>
+    <string name="storage">Almacenamiento</string>
+    <string name="reset_settings">Restablecer ajustes</string>
+    <string name="sleep_timer">Temporizador de apagado</string>
+    <string name="stopping_in">Deteniendo en %1$s</string>
+
+    <string name="lyrics_title">Letras LRC</string>
+    <string name="queue_title">Cola de reproducción</string>
+    <string name="presets">Preajustes</string>
+    <string name="reset_bands">Restablecer bandas</string>
+    <string name="edit_tags">Editar Etiquetas de Audio</string>
+    <string name="title">Título</string>
+    <string name="artist">Artista</string>
+    <string name="album">Álbum</string>
+    <string name="genre">Género</string>
+    <string name="save">Guardar</string>
+    <string name="cancel">Cancelar</string>
+
+    <string name="perm_pending">Permiso de audio pendiente</string>
+    <string name="searching_audio">Buscando audio local…</string>
+    <string name="error_library">Error al leer la biblioteca</string>
+    <string name="no_tracks">Sin pistas en el dispositivo</string>
+    <string name="grant_permission">Conceder permiso</string>
+    <string name="open_settings">Abrir ajustes</string>
+    <string name="retry">Reintentar</string>
+    <string name="language">Idioma</string>
+    <string name="custom">Personalizada</string>
+    <string name="previous">Anterior</string>
+    <string name="pause">Pausar</string>
+    <string name="play">Reproducir</string>
+    <string name="next">Siguiente</string>
+    <string name="ready_to_play">Listo para reproducir</string>
+    <string name="more_tracks_in_queue">y %1$d pistas más</string>
+    <string name="move_up">Mover arriba</string>
+    <string name="move_down">Mover abajo</string>
+    <string name="remove_from_queue">Quitar de la cola</string>
+</resources>

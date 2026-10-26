@@ -58,6 +58,14 @@ class MusicSettings(context: Context) {
     var repeatMode by mutableStateOf(readRepeatMode())
         private set
 
+    var crossfadeSeconds by mutableStateOf(prefs.getInt(KEY_CROSSFADE, 0))
+        private set
+
+    fun updateCrossfadeSeconds(seconds: Int) {
+        crossfadeSeconds = seconds
+        prefs.edit().putInt(KEY_CROSSFADE, seconds).apply()
+    }
+
     fun updateAutoPlay(value: Boolean) {
         autoPlay = value
         prefs.edit().putBoolean(KEY_AUTO_PLAY, value).apply()
@@ -93,6 +101,26 @@ class MusicSettings(context: Context) {
         prefs.edit().putString(KEY_REPEAT, value.name).apply()
     }
 
+    var lastTrackId by mutableStateOf(prefs.getLong(KEY_LAST_TRACK_ID, -1L))
+        private set
+
+    var lastPositionMs by mutableStateOf(prefs.getLong(KEY_LAST_POSITION, 0L))
+        private set
+
+    fun updateLastPlayingTrack(id: Long, posMs: Long) {
+        lastTrackId = id
+        lastPositionMs = posMs
+        prefs.edit().putLong(KEY_LAST_TRACK_ID, id).putLong(KEY_LAST_POSITION, posMs).apply()
+    }
+
+    var savedQueueIds by mutableStateOf(readSavedQueueIds())
+        private set
+
+    fun updateSavedQueueIds(ids: List<Long>) {
+        savedQueueIds = ids
+        prefs.edit().putString(KEY_QUEUE_IDS, ids.joinToString(",")).apply()
+    }
+
     fun reset() {
         updateAutoPlay(false)
         updatePauseOnFocusLoss(true)
@@ -101,6 +129,14 @@ class MusicSettings(context: Context) {
         updateSort(LibrarySort.Title)
         updateShuffle(false)
         updateRepeatMode(RepeatMode.Off)
+        updateSavedQueueIds(emptyList())
+        updateCrossfadeSeconds(0)
+    }
+
+    private fun readSavedQueueIds(): List<Long> {
+        val stored = prefs.getString(KEY_QUEUE_IDS, "") ?: ""
+        if (stored.isBlank()) return emptyList()
+        return stored.split(",").mapNotNull { it.trim().toLongOrNull() }
     }
 
     private fun readSort(): LibrarySort {
@@ -123,5 +159,9 @@ class MusicSettings(context: Context) {
         const val KEY_SORT = "sort"
         const val KEY_SHUFFLE = "shuffle"
         const val KEY_REPEAT = "repeatMode"
+        const val KEY_QUEUE_IDS = "savedQueueIds"
+        const val KEY_LAST_TRACK_ID = "lastTrackId"
+        const val KEY_LAST_POSITION = "lastPositionMs"
+        const val KEY_CROSSFADE = "crossfadeSeconds"
     }
 }

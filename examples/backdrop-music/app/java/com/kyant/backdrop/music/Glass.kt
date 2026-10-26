@@ -48,12 +48,22 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.ExitToApp
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAddCheck
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -89,6 +99,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -954,10 +965,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Home,
-                    contentDescription = "Inicio",
+                    contentDescription = stringResource(R.string.nav_home),
                 )
             },
-            label = { Text("Inicio", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_home), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -966,10 +977,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.LibraryMusic,
-                    contentDescription = "Biblioteca",
+                    contentDescription = stringResource(R.string.nav_library),
                 )
             },
-            label = { Text("Biblioteca", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_library), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -978,10 +989,10 @@ fun GlassNavigationBar(
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Album,
-                    contentDescription = "Reproductor",
+                    contentDescription = stringResource(R.string.nav_player),
                 )
             },
-            label = { Text("Reproductor", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_player), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
         NavigationBarItem(
@@ -989,11 +1000,23 @@ fun GlassNavigationBar(
             onClick = { onSelect(3) },
             icon = {
                 Icon(
-                    imageVector = Icons.Rounded.Settings,
-                    contentDescription = "Configuración",
+                    imageVector = Icons.Rounded.Radio,
+                    contentDescription = stringResource(R.string.nav_radio),
                 )
             },
-            label = { Text("Ajustes", fontSize = 11.sp) },
+            label = { Text(stringResource(R.string.nav_radio), fontSize = 11.sp) },
+            colors = navigationColors(accent),
+        )
+        NavigationBarItem(
+            selected = selected == 4,
+            onClick = { onSelect(4) },
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Settings,
+                    contentDescription = stringResource(R.string.nav_settings),
+                )
+            },
+            label = { Text(stringResource(R.string.nav_settings), fontSize = 11.sp) },
             colors = navigationColors(accent),
         )
     }

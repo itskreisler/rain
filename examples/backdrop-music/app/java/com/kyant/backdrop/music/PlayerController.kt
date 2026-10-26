@@ -24,14 +24,12 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
-/** Cómo se comporta la cola al terminar una pista. */
 enum class RepeatMode(val label: String) {
     Off("Sin repetición"),
     All("Repetir todo"),
     One("Repetir una pista"),
 }
 
-/** Banda del ecualizador real del dispositivo, en milibelios. */
 data class EqBand(
     val index: Int,
     val label: String,
@@ -44,13 +42,6 @@ data class EqBand(
     val maxDb: Float get() = maxMillibels / 100f
 }
 
-/**
- * Reproduce audio real de `MediaStore` con [MediaPlayer], pide foco de audio y
- * mantiene el estado que consume Compose.
- *
- * Es un [ViewModel] para que la reproducción sobreviva a la rotación y a los
- * cambios de configuración.
- */
 class PlayerController(context: Context) : ViewModel() {
 
     private val appContext = context.applicationContext
@@ -62,10 +53,7 @@ class PlayerController(context: Context) : ViewModel() {
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
-    /** True si la pausa la provocó una pérdida temporal de foco de audio. */
     private var pausedForFocusLoss = false
-
-    /** Se puede desactivar desde Configuración para seguir sonando al bajar el volumen de otra app. */
     private var pauseOnFocusLoss = true
 
     private var equalizer: Equalizer? = null
@@ -101,6 +89,9 @@ class PlayerController(context: Context) : ViewModel() {
         private set
     var currentIndex by mutableIntStateOf(-1)
         private set
+
+    var onStateChanged: (() -> Unit)? = null
+
     var isPlaying by mutableStateOf(false)
         private set
     var isPreparing by mutableStateOf(false)
@@ -112,17 +103,56 @@ class PlayerController(context: Context) : ViewModel() {
     var error by mutableStateOf<String?>(null)
         private set
 
-    /** Aleatorio activado por el usuario; se conserva al recargar la biblioteca. */
     var shuffle by mutableStateOf(false)
         private set
 
     var repeatMode by mutableStateOf(RepeatMode.Off)
         private set
 
+    var crossfadeSeconds by mutableIntStateOf(0)
+        private set
+
+    fun updateCrossfadeSeconds(seconds: Int) {
+        crossfadeSeconds = seconds
+    }
+
     var eqBands by mutableStateOf<List<EqBand>>(emptyList())
         private set
     var eqError by mutableStateOf<String?>(null)
         private set
+
+    var sleepTimerRemainingMs by mutableLongStateOf(0L)
+        private set
+
+    var stopAtEndOfTrack by mutableStateOf(false)
+        private set
+
+    private var sleepTimerJob: kotlinx.coroutines.Job? = null
+
+    fun setSleepTimer(minutes: Int, atEndOfTrack: Boolean = false) {
+        sleepTimerJob?.cancel()
+        stopAtEndOfTrack = atEndOfTrack
+        if (minutes <= 0) {
+            sleepTimerRemainingMs = 0L
+            return
+        }
+        sleepTimerRemainingMs = minutes * 60_000L
+        sleepTimerJob = scope.launch {
+            while (sleepTimerRemainingMs > 0L && isActive) {
+                delay(1000L)
+                sleepTimerRemainingMs = (sleepTimerRemainingMs - 1000L).coerceAtLeast(0L)
+            }
+            if (sleepTimerRemainingMs == 0L && !stopAtEndOfTrack) {
+                pausePlayback(abandonFocus = true)
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerRemainingMs = 0L
+        stopAtEndOfTrack = false
+    }
 
     val hasEqualizer: Boolean get() = eqBands.isNotEmpty()
 
@@ -132,43 +162,137 @@ class PlayerController(context: Context) : ViewModel() {
         get() = if (durationMs <= 0L) 0f
         else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
 
+    var onTrackSavedStateChanged: ((Long, Long) -> Unit)? = null
+
     init {
         scope.launch {
             while (isActive) {
                 val mediaPlayer = player
                 if (mediaPlayer != null && isPlaying) {
-                    runCatching { positionMs = mediaPlayer.currentPosition.toLong() }
+                    runCatching {
+                        positionMs = mediaPlayer.currentPosition.toLong()
+                        currentTrack?.let { track ->
+                            onTrackSavedStateChanged?.invoke(track.id, positionMs)
+                        }
+                    }
                 }
                 delay(250)
             }
         }
     }
 
-    /**
-     * Sustituye la cola conservando la pista actual si sigue existiendo. Al
-     * recargar la biblioteca no se corta la reproducción en curso.
-     */
-    fun updateQueue(tracks: List<Track>) {
-        val currentId = currentTrack?.id
-        queue = tracks
+    fun restoreLastTrack(trackId: Long, seekMs: Long) {
+        if (trackId < 0L || queue.isEmpty()) return
+        val idx = queue.indexOfFirst { it.id == trackId }
+        if (idx >= 0) {
+            currentIndex = idx
+            durationMs = queue[idx].durationMs
+            positionMs = seekMs
+        }
+    }
 
-        val preservedIndex = tracks.indexOfFirst { it.id == currentId }
+    fun updateQueue(tracks: List<Track>, savedIds: List<Long> = emptyList()) {
+        val currentId = currentTrack?.id
+        val finalQueue = if (savedIds.isNotEmpty() && currentId == null) {
+            val trackMap = tracks.associateBy { it.id }
+            val ordered = savedIds.mapNotNull { trackMap[it] }
+            val missing = tracks.filter { it.id !in savedIds }
+            ordered + missing
+        } else {
+            tracks
+        }
+
+        queue = finalQueue
+
+        val preservedIndex = finalQueue.indexOfFirst { it.id == currentId }
         if (preservedIndex >= 0) {
             currentIndex = preservedIndex
             if (currentTrack != null && durationMs <= 0L) {
                 durationMs = currentTrack?.durationMs ?: 0L
             }
+            onStateChanged?.invoke()
             return
         }
 
         releasePlayer()
-        currentIndex = if (tracks.isNotEmpty()) 0 else -1
+        currentIndex = if (finalQueue.isNotEmpty()) 0 else -1
         positionMs = 0L
-        durationMs = tracks.firstOrNull()?.durationMs ?: 0L
+        durationMs = finalQueue.firstOrNull()?.durationMs ?: 0L
         error = null
+        onStateChanged?.invoke()
     }
 
-    /** Reproduce la pista [index] de la cola desde el principio. */
+    fun updateTrackMetadata(id: Long, title: String, artist: String, album: String, genre: String) {
+        queue = queue.map { track ->
+            if (track.id == id) {
+                track.copy(title = title, artist = artist, album = album, genre = genre)
+            } else track
+        }
+        onStateChanged?.invoke()
+    }
+
+    fun moveQueueItem(fromIndex: Int, toIndex: Int): List<Long> {
+        if (fromIndex !in queue.indices || toIndex !in queue.indices || fromIndex == toIndex) {
+            return queue.map { it.id }
+        }
+        val mutable = queue.toMutableList()
+        val item = mutable.removeAt(fromIndex)
+        mutable.add(toIndex, item)
+
+        val current = currentTrack
+        queue = mutable
+        if (current != null) {
+            currentIndex = queue.indexOfFirst { it.id == current.id }
+        }
+        onStateChanged?.invoke()
+        return queue.map { it.id }
+    }
+
+    fun removeQueueItem(index: Int): List<Long> {
+        if (index !in queue.indices) return queue.map { it.id }
+        val current = currentTrack
+        val isCurrent = (index == currentIndex)
+        val mutable = queue.toMutableList()
+        mutable.removeAt(index)
+        queue = mutable
+
+        if (queue.isEmpty()) {
+            releasePlayer()
+            currentIndex = -1
+            positionMs = 0L
+            durationMs = 0L
+        } else if (isCurrent) {
+            playAt(index.coerceAtMost(queue.lastIndex), autoPlay = isPlaying)
+        } else if (current != null) {
+            currentIndex = queue.indexOfFirst { it.id == current.id }
+        }
+        onStateChanged?.invoke()
+        return queue.map { it.id }
+    }
+
+    fun playRadioStation(name: String, streamUrl: String) {
+        val radioTrack = Track(
+            id = System.currentTimeMillis(),
+            uri = android.net.Uri.parse(streamUrl),
+            title = name,
+            artist = "Radio por Internet",
+            album = "Stream En Vivo",
+            albumId = 0L,
+            genre = "Radio",
+            folder = "Online",
+            durationMs = 0L,
+            sizeBytes = 0L,
+            dateAdded = System.currentTimeMillis() / 1000L,
+        )
+        val existingIndex = queue.indexOfFirst { it.title == name && it.folder == "Online" }
+        if (existingIndex >= 0) {
+            playAt(existingIndex)
+        } else {
+            queue = listOf(radioTrack) + queue
+            playAt(0)
+        }
+    }
+
     fun playAt(index: Int, autoPlay: Boolean = true) {
         val track = queue.getOrNull(index) ?: return
         releasePlayer()
@@ -178,6 +302,7 @@ class PlayerController(context: Context) : ViewModel() {
         durationMs = track.durationMs
         error = null
         isPreparing = true
+        onStateChanged?.invoke()
 
         val mediaPlayer = MediaPlayer()
         player = mediaPlayer
@@ -191,30 +316,54 @@ class PlayerController(context: Context) : ViewModel() {
                 attachEqualizer(prepared.audioSessionId)
                 if (autoPlay) {
                     if (requestFocus()) {
-                        runCatching { prepared.start() }
-                            .onSuccess { isPlaying = true }
-                            .onFailure {
-                                isPlaying = false
-                                error = "No se pudo iniciar «${track.title}»."
+                        if (crossfadeSeconds > 0) {
+                            runCatching {
+                                prepared.setVolume(0f, 0f)
+                                prepared.start()
+                                isPlaying = true
+                                onStateChanged?.invoke()
                             }
+                            scope.launch {
+                                val steps = 10
+                                val duration = (crossfadeSeconds * 1000L) / steps
+                                for (i in 0..steps) {
+                                    val vol = i.toFloat() / steps
+                                    runCatching { prepared.setVolume(vol, vol) }
+                                    delay(duration)
+                                }
+                            }
+                        } else {
+                            runCatching { prepared.start() }
+                                .onSuccess {
+                                    isPlaying = true
+                                    onStateChanged?.invoke()
+                                }
+                                .onFailure {
+                                    isPlaying = false
+                                    error = "No se pudo iniciar «${track.title}»."
+                                    onStateChanged?.invoke()
+                                }
+                        }
                     } else {
                         isPlaying = false
                         error = "Otra aplicación está usando el audio en este momento."
+                        onStateChanged?.invoke()
                     }
                 } else {
                     isPlaying = false
+                    onStateChanged?.invoke()
                 }
             }
             mediaPlayer.setOnCompletionListener {
                 isPlaying = false
-                // Se difiere el cambio de pista para no liberar el reproductor
-                // dentro de su propio callback de finalización.
+                onStateChanged?.invoke()
                 mainHandler.post { advanceFromCompletion() }
             }
             mediaPlayer.setOnErrorListener { _, what, extra ->
                 isPreparing = false
                 isPlaying = false
                 error = "No se pudo reproducir «${track.title}» (código $what/$extra)."
+                onStateChanged?.invoke()
                 true
             }
             mediaPlayer.prepareAsync()
@@ -223,11 +372,11 @@ class PlayerController(context: Context) : ViewModel() {
             isPlaying = false
             error = "No se pudo abrir «${track.title}»: " +
                 (exception.message ?: "archivo no disponible")
+            onStateChanged?.invoke()
             releasePlayer()
         }
     }
 
-    /** Reproduce una pista concreta aunque la lista mostrada esté filtrada. */
     fun play(track: Track) {
         val index = queue.indexOfFirst { it.id == track.id }
         if (index >= 0) playAt(index)
@@ -246,11 +395,18 @@ class PlayerController(context: Context) : ViewModel() {
         }
         if (!requestFocus()) {
             error = "Otra aplicación está usando el audio en este momento."
+            onStateChanged?.invoke()
             return
         }
         runCatching { mediaPlayer.start() }
-            .onSuccess { isPlaying = true }
-            .onFailure { error = "No se pudo reanudar la reproducción." }
+            .onSuccess {
+                isPlaying = true
+                onStateChanged?.invoke()
+            }
+            .onFailure {
+                error = "No se pudo reanudar la reproducción."
+                onStateChanged?.invoke()
+            }
     }
 
     fun next(autoPlay: Boolean = isPlaying) {
@@ -301,13 +457,11 @@ class PlayerController(context: Context) : ViewModel() {
         pauseOnFocusLoss = value
     }
 
-    /** Arranca la cola solo si no hay nada cargado; se usa al abrir la app. */
     fun playIfIdle(index: Int = currentIndex.coerceAtLeast(0)) {
         if (queue.isEmpty() || player != null || isPreparing) return
         playAt(index)
     }
 
-    /** Cambia una banda del ecualizador real del dispositivo. */
     fun setBandLevel(index: Int, millibels: Float) {
         val effect = equalizer ?: return
         val band = eqBands.getOrNull(index) ?: return
@@ -320,14 +474,50 @@ class PlayerController(context: Context) : ViewModel() {
         }
     }
 
-    /** Devuelve todas las bandas a su ganancia neutra. */
+    var currentPresetName by mutableStateOf("Flat")
+        private set
+
+    fun applyPreset(presetName: String, customLevels: Map<Int, Short> = emptyMap()): Map<Int, Short> {
+        currentPresetName = presetName
+        if (equalizer == null || eqBands.isEmpty()) return savedEqualizerLevels
+
+        val newLevels = mutableMapOf<Int, Short>()
+        eqBands.indices.forEach { index ->
+            val band = eqBands[index]
+            val millibels: Short = when (presetName) {
+                "Rock" -> when (index) {
+                    0 -> 400; 1 -> 200; 2 -> -100; 3 -> 300; else -> 500
+                }
+                "Jazz" -> when (index) {
+                    0 -> 300; 1 -> 200; 2 -> 100; 3 -> 200; else -> 300
+                }
+                "Pop" -> when (index) {
+                    0 -> -100; 1 -> 200; 2 -> 400; 3 -> 200; else -> -100
+                }
+                "Classical" -> when (index) {
+                    0 -> 500; 1 -> 300; 2 -> 0; 3 -> 200; else -> 400
+                }
+                "Bass Boost" -> when (index) {
+                    0 -> 600; 1 -> 400; 2 -> 100; else -> 0
+                }
+                "Personalizado" -> customLevels[index] ?: 0
+                else -> 0
+            }.toShort().coerceIn(band.minMillibels, band.maxMillibels)
+
+            setBandLevel(index, millibels.toFloat())
+            newLevels[index] = millibels
+        }
+        return newLevels
+    }
+
     fun resetEqualizer() {
         if (equalizer == null) return
-        eqBands.indices.forEach { index -> setBandLevel(index, 0f) }
+        applyPreset("Flat")
     }
 
     fun clearError() {
         error = null
+        onStateChanged?.invoke()
     }
 
     override fun onCleared() {
@@ -337,11 +527,14 @@ class PlayerController(context: Context) : ViewModel() {
         abandonFocus()
     }
 
-    /**
-     * Se llama al terminar una pista. Con repetición individual se reinicia la
-     * misma; en el último tema sin repetición la reproducción se detiene.
-     */
     private fun advanceFromCompletion() {
+        if (stopAtEndOfTrack) {
+            cancelSleepTimer()
+            isPlaying = false
+            onStateChanged?.invoke()
+            return
+        }
+
         if (repeatMode == RepeatMode.One) {
             playAt(currentIndex, autoPlay = true)
             return
@@ -350,15 +543,12 @@ class PlayerController(context: Context) : ViewModel() {
         val nextIndex = nextIndexOrNull(wrap = repeatMode == RepeatMode.All)
         if (nextIndex == null) {
             positionMs = durationMs
+            onStateChanged?.invoke()
             return
         }
         playAt(nextIndex, autoPlay = true)
     }
 
-    /**
-     * Índice siguiente. [wrap] permite volver al principio; con aleatorio se
-     * elige otra pista distinta para que no se repita la misma dos veces.
-     */
     private fun nextIndexOrNull(wrap: Boolean): Int? {
         if (queue.isEmpty()) return null
         if (queue.size == 1) return if (wrap) currentIndex else null
@@ -386,6 +576,7 @@ class PlayerController(context: Context) : ViewModel() {
             positionMs = mediaPlayer.currentPosition.toLong()
         }
         isPlaying = false
+        onStateChanged?.invoke()
         if (abandonFocus) {
             pausedForFocusLoss = false
             abandonFocus()
@@ -395,25 +586,41 @@ class PlayerController(context: Context) : ViewModel() {
     private fun resumeFromFocusGain() {
         val mediaPlayer = player ?: return
         runCatching { mediaPlayer.start() }
-            .onSuccess { isPlaying = true }
-            .onFailure { error = "No se pudo reanudar la reproducción." }
+            .onSuccess {
+                isPlaying = true
+                onStateChanged?.invoke()
+            }
+            .onFailure {
+                error = "No se pudo reanudar la reproducción."
+                onStateChanged?.invoke()
+            }
     }
 
     private fun releasePlayer() {
         releaseEqualizer()
-        player?.let { mediaPlayer ->
-            runCatching { mediaPlayer.reset() }
-            runCatching { mediaPlayer.release() }
-        }
+        val oldPlayer = player
         player = null
+        if (oldPlayer != null) {
+            if (crossfadeSeconds > 0 && isPlaying) {
+                scope.launch {
+                    val steps = 10
+                    val duration = (crossfadeSeconds * 1000L) / steps
+                    for (i in steps downTo 0) {
+                        val vol = i.toFloat() / steps
+                        runCatching { oldPlayer.setVolume(vol, vol) }
+                        delay(duration)
+                    }
+                    runCatching { oldPlayer.reset(); oldPlayer.release() }
+                }
+            } else {
+                runCatching { oldPlayer.reset(); oldPlayer.release() }
+            }
+        }
         isPlaying = false
         isPreparing = false
+        onStateChanged?.invoke()
     }
 
-    /**
-     * Crea el ecualizador sobre la sesión de audio del reproductor y recupera
-     * los niveles que el usuario ya había elegido.
-     */
     private fun attachEqualizer(sessionId: Int) {
         releaseEqualizer()
         eqError = null
