@@ -101,6 +101,18 @@ class MusicSettings(context: Context) {
         prefs.edit().putString(KEY_REPEAT, value.name).apply()
     }
 
+    var lastTrackId by mutableStateOf(prefs.getLong(KEY_LAST_TRACK_ID, -1L))
+        private set
+
+    var lastPositionMs by mutableStateOf(prefs.getLong(KEY_LAST_POSITION, 0L))
+        private set
+
+    fun updateLastPlayingTrack(id: Long, posMs: Long) {
+        lastTrackId = id
+        lastPositionMs = posMs
+        prefs.edit().putLong(KEY_LAST_TRACK_ID, id).putLong(KEY_LAST_POSITION, posMs).apply()
+    }
+
     var savedQueueIds by mutableStateOf(readSavedQueueIds())
         private set
 
@@ -148,6 +160,8 @@ class MusicSettings(context: Context) {
         const val KEY_SHUFFLE = "shuffle"
         const val KEY_REPEAT = "repeatMode"
         const val KEY_QUEUE_IDS = "savedQueueIds"
+        const val KEY_LAST_TRACK_ID = "lastTrackId"
+        const val KEY_LAST_POSITION = "lastPositionMs"
         const val KEY_CROSSFADE = "crossfadeSeconds"
     }
 }

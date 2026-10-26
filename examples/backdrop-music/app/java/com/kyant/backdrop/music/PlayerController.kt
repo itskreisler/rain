@@ -162,15 +162,32 @@ class PlayerController(context: Context) : ViewModel() {
         get() = if (durationMs <= 0L) 0f
         else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
 
+    var onTrackSavedStateChanged: ((Long, Long) -> Unit)? = null
+
     init {
         scope.launch {
             while (isActive) {
                 val mediaPlayer = player
                 if (mediaPlayer != null && isPlaying) {
-                    runCatching { positionMs = mediaPlayer.currentPosition.toLong() }
+                    runCatching {
+                        positionMs = mediaPlayer.currentPosition.toLong()
+                        currentTrack?.let { track ->
+                            onTrackSavedStateChanged?.invoke(track.id, positionMs)
+                        }
+                    }
                 }
                 delay(250)
             }
+        }
+    }
+
+    fun restoreLastTrack(trackId: Long, seekMs: Long) {
+        if (trackId < 0L || queue.isEmpty()) return
+        val idx = queue.indexOfFirst { it.id == trackId }
+        if (idx >= 0) {
+            currentIndex = idx
+            durationMs = queue[idx].durationMs
+            positionMs = seekMs
         }
     }
 
@@ -267,8 +284,13 @@ class PlayerController(context: Context) : ViewModel() {
             sizeBytes = 0L,
             dateAdded = System.currentTimeMillis() / 1000L,
         )
-        queue = listOf(radioTrack)
-        playAt(0)
+        val existingIndex = queue.indexOfFirst { it.title == name && it.folder == "Online" }
+        if (existingIndex >= 0) {
+            playAt(existingIndex)
+        } else {
+            queue = listOf(radioTrack) + queue
+            playAt(0)
+        }
     }
 
     fun playAt(index: Int, autoPlay: Boolean = true) {

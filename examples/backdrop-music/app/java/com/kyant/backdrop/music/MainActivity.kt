@@ -157,10 +157,11 @@ fun BackdropMusicApp(controller: PlayerController) {
     var eqRequest by remember { mutableIntStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { result ->
-        granted = result
-        if (result) reloadToken++
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val allGranted = results.values.all { it }
+        granted = allGranted
+        if (allGranted) reloadToken++
     }
 
     // Al volver de Ajustes el permiso puede haber cambiado: se revisa en cada
@@ -193,11 +194,18 @@ fun BackdropMusicApp(controller: PlayerController) {
             withContext(Dispatchers.IO) { MusicLibrary.load(context) }
         }.onSuccess { loaded ->
             tracks = loaded
+            if (controller.currentTrack == null && settings.lastTrackId >= 0L) {
+                controller.restoreLastTrack(settings.lastTrackId, settings.lastPositionMs)
+            }
         }.onFailure { failure ->
             loadError = failure.message
                 ?: "El sistema no devolvió la lista de audio."
         }
         loading = false
+    }
+
+    controller.onTrackSavedStateChanged = { id, pos ->
+        settings.updateLastPlayingTrack(id, pos)
     }
 
     // El orden elegido en Configuración se aplica a la cola sin cortar la
@@ -303,7 +311,14 @@ fun BackdropMusicApp(controller: PlayerController) {
                             loading = loading,
                             backdrop = backdrop,
                             onRefresh = {
-                                if (granted) reloadToken++ else permissionLauncher.launch(permission)
+                                if (granted) {
+                                    reloadToken++
+                                } else {
+                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                    } else arrayOf(permission)
+                                    permissionLauncher.launch(perms)
+                                }
                             },
                         )
                     },
@@ -384,8 +399,14 @@ fun BackdropMusicApp(controller: PlayerController) {
                                 backdrop = backdrop,
                                 accent = accent,
                                 onRescan = {
-                                    if (granted) reloadToken++
-                                    else permissionLauncher.launch(permission)
+                                    if (granted) {
+                                        reloadToken++
+                                    } else {
+                                        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                        } else arrayOf(permission)
+                                        permissionLauncher.launch(perms)
+                                    }
                                 },
                                 onOpenEqualizer = {
                                     eqRequest++
@@ -411,7 +432,12 @@ fun BackdropMusicApp(controller: PlayerController) {
                                         "local. No se sube nada a internet: MediaStore y " +
                                         "MediaPlayer trabajan con archivos del teléfono.",
                                     primaryLabel = "Conceder permiso",
-                                    onPrimary = { permissionLauncher.launch(permission) },
+                                    onPrimary = {
+                                        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            arrayOf(permission, Manifest.permission.POST_NOTIFICATIONS)
+                                        } else arrayOf(permission)
+                                        permissionLauncher.launch(perms)
+                                    },
                                     secondaryLabel = "Abrir ajustes",
                                     onSecondary = { openAppSettings(context) },
                                 )
@@ -590,8 +616,13 @@ private fun requiredAudioPermission(): String =
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
-private fun hasAudioPermission(context: Context): Boolean =
-    context.checkSelfPermission(requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED
+private fun hasAudioPermission(context: Context): Boolean {
+    val audioGranted = context.checkSelfPermission(requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED
+    val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    } else true
+    return audioGranted && notifGranted
+}
 
 private fun openAppSettings(context: Context) {
     val intent = Intent(
