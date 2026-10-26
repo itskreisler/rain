@@ -52,6 +52,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -987,6 +988,18 @@ fun GlassNavigationBar(
         NavigationBarItem(
             selected = selected == 3,
             onClick = { onSelect(3) },
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Radio,
+                    contentDescription = "Radio",
+                )
+            },
+            label = { Text("Radio", fontSize = 11.sp) },
+            colors = navigationColors(accent),
+        )
+        NavigationBarItem(
+            selected = selected == 4,
+            onClick = { onSelect(4) },
             icon = {
                 Icon(
                     imageVector = Icons.Rounded.Settings,

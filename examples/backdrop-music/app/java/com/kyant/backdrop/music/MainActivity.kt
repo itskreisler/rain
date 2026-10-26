@@ -5,6 +5,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -100,6 +103,22 @@ class MainActivity : ComponentActivity() {
             PlayerControllerFactory(application),
         )[PlayerController::class.java]
 
+        val serviceIntent = Intent(this, MusicService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        bindService(serviceIntent, object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val binder = service as? MusicService.MusicBinder
+                binder?.getService()?.attachController(controller)
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {}
+        }, Context.BIND_AUTO_CREATE)
+
         setContent {
             BackdropMusicApp(controller)
         }
@@ -118,7 +137,8 @@ private class PlayerControllerFactory(
 private const val TAB_HOME = 0
 private const val TAB_LIBRARY = 1
 private const val TAB_PLAYER = 2
-private const val TAB_SETTINGS = 3
+private const val TAB_RADIO = 3
+private const val TAB_SETTINGS = 4
 
 @Composable
 fun BackdropMusicApp(controller: PlayerController) {
@@ -180,9 +200,12 @@ fun BackdropMusicApp(controller: PlayerController) {
     }
 
     // El orden elegido en Configuración se aplica a la cola sin cortar la
-    // canción que esté sonando.
+    // canción que esté sonando, o bien restablece los IDs guardados.
     LaunchedEffect(tracks, settings.sort) {
-        controller.updateQueue(tracks.sortedFor(settings.sort))
+        controller.updateQueue(
+            tracks.sortedFor(settings.sort),
+            savedIds = settings.savedQueueIds,
+        )
     }
 
     // Las preferencias y el reproductor se mantienen sincronizados en ambos
