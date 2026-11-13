@@ -12,3 +12,8 @@ app/build/
 *.jar
 rain
 rain-baseline
+
+# Un ejemplo puede llevar su propio repositorio mientras se desarrolla. Se
+# ignora el .git anidado para que este repositorio siga versionando sus
+# ficheros con normalidad en vez de tractarlo como un submódulo.
+examples/*/.git

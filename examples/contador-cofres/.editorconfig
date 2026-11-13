@@ -1,0 +1,23 @@
+# Estilo de Kotlin para este ejemplo.
+#
+# ktlint viene con el estilo "ktlint_official", que exige cosas que no
+# encajan con Compose (los composables empiezan en mayúscula y las funciones
+# se declaran con un parámetro por línea). El estilo de Android Studio es el
+# que usan los proyectos de Compose y el que deja el código legible.
+[*.{kt,kts}]
+ktlint_code_style = android_studio
+max_line_length = 120
+indent_size = 4
+insert_final_newline = true
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_allow_trailing_comma_on_call_site = true
+
+# Los composables de Compose se nombran en PascalCase (DashboardScreen,
+# StatTile...), que es la convención del framework y no un error de estilo.
+# La regla se apaga solo en las capas de interfaz; en el dominio sigue
+# activa y avisa de los nombres mal puestos.
+[**/ui/*.kt]
+ktlint_standard_function-naming = disabled
+
+[**/MainActivity.kt]
+ktlint_standard_function-naming = disabled

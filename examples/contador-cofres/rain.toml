@@ -1,0 +1,29 @@
+mode = "completo"
+
+dependencies = [
+    "androidx.activity:activity-compose:1.8.2",
+    "androidx.compose.material3:material3-android:1.5.0-beta01",
+    "androidx.core:core-ktx:1.13.1",
+]
+
+[project]
+name = "Contador"
+package = "com.kleilabs.piratetokencounter"
+version = "1.0"
+
+[build]
+# La superposición flotante usa TYPE_APPLICATION_OVERLAY, que existe desde
+# Android 8.0 (API 26).
+min_sdk = 26
+target_sdk = 36
+
+# Keystore de ejemplo para compilar el APK de release. El fichero
+# `release.keystore` está en el .gitignore del repo, así que el material
+# criptográfico no entra en el control de versiones; estas contraseñas son de
+# usar y tirar. Para una app de verdad, usa tu propia keystore y no la
+# subas a ningún repositorio.
+[signing]
+store_file = "release.keystore"
+store_password = "contador"
+key_alias = "contador"
+key_password = "contador"

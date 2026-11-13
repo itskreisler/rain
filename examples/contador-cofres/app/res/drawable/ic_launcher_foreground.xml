@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Capa principal del icono adaptativo: un cofre del tesoro dorado. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Tapa. -->
+    <path
+        android:fillColor="#FFC857"
+        android:pathData="M32,56 L32,45 Q32,38 39,38 L69,38 Q76,38 76,45 L76,56 Z" />
+
+    <!-- Caja. -->
+    <path
+        android:fillColor="#FFC857"
+        android:pathData="M32,56 L76,56 L76,77 Q76,82 71,82 L37,82 Q32,82 32,77 Z" />
+
+    <!-- Flejes de hierro. -->
+    <path
+        android:fillColor="#C08B2A"
+        android:pathData="M32,49 L76,49 L76,54 L32,54 Z" />
+    <path
+        android:fillColor="#C08B2A"
+        android:pathData="M32,66 L76,66 L76,71 L32,71 Z" />
+
+    <!-- Cerradura. -->
+    <path
+        android:fillColor="#101C2E"
+        android:pathData="M49,53 L59,53 L59,68 L49,68 Z" />
+
+    <!-- Patas. -->
+    <path
+        android:fillColor="#C08B2A"
+        android:pathData="M37,82 L45,82 L45,86 L37,86 Z" />
+    <path
+        android:fillColor="#C08B2A"
+        android:pathData="M63,82 L71,82 L71,86 L63,86 Z" />
+</vector>

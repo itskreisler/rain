@@ -1,0 +1,47 @@
+# Configuración de detekt para este ejemplo.
+#
+# Rain ejecuta detekt con la carpeta del proyecto como directorio de trabajo,
+# así que detekt encuentra este fichero y lo usa en lugar de su configuración
+# por defecto. Los cambios respecto a la configuración de fábrica están
+# comentados: son decisiones, no silencios.
+
+config:
+  validation: false
+
+complexity:
+  LongMethod:
+    active: true
+    # Las pantallas de Compose acumulan declarativo: 60 líneas es demasiado
+    # corto para un composable con estado, secciones y estados vacíos.
+    threshold: 80
+  LongParameterList:
+    active: true
+    functionThreshold: 8
+    constructorThreshold: 10
+  TooManyFunctions:
+    active: true
+    thresholdInFiles: 14
+    thresholdInClasses: 14
+    thresholdInObjects: 14
+    thresholdInEnums: 14
+
+naming:
+  FunctionNaming:
+    active: true
+    # Compose llama a sus funciones en PascalCase y el dominio usa camelCase:
+    # se aceptan las dos convenciones en vez de silenciar la regla en cada
+    # pantalla.
+    functionPattern: '[a-z][a-zA-Z0-9]*|[A-Z][a-zA-Z0-9]*'
+  MatchingDeclarationName:
+    active: false
+
+style:
+  MagicNumber:
+    active: true
+    # En la interfaz los tamaños y los colores son literales de por sí
+    # (16.dp, 56.sp): la regla se mantiene activa en el dominio, donde un
+    # número suelto sí esconde una regla de negocio.
+    excludes: ['**/ui/**', '**/overlay/**', '**/MainActivity.kt']
+    # Las enumeraciones guardan datos (probabilidades, umbrales), no lógica:
+    # un 127 en un enum es un dato publicado, no un número escondido.
+    ignoreEnums: true

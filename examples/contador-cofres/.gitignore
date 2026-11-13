@@ -1,0 +1,16 @@
+# Artefactos de compilación
+build/
+app/build/
+.rain-deps/
+libs/
+cache/
+
+# APK y firmas: nunca se versionan
+*.apk
+*.keystore
+*.jks
+
+# Editores
+.idea/
+*.iml
+.DS_Store

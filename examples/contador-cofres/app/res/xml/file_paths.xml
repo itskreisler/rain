@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Carpeta compartida por el FileProvider: solo se expone el historial
+     exportado en CSV, nunca el resto de datos de la app. -->
+<paths>
+    <files-path name="exports" path="exports/" />
+</paths>
