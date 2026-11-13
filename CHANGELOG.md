@@ -12,6 +12,25 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **`rain fmt`: formatear el código Kotlin.** Reescribe las fuentes con
+  ktlint usando el estilo del proyecto (el `.editorconfig` manda) y avisa de
+  los ficheros que ha tocado. Es la parte de `rain lint` que se puede
+  corregir sola: lo que ktlint no sabe arreglar (nombres, complejidad,
+  "code smells") se sigue viendo en `rain lint`.
+- **`rain lint` respeta la configuración de detekt del proyecto.** Si el
+  proyecto tiene un `detekt.yml`, Rain se lo pasa a detekt. Antes no lo
+  hacía: detekt solo usa su configuración por defecto si se le pasa
+  `--config`, así que un proyecto que quisiera ajustar umbrales o reglas no
+  tenía manera de hacerlo.
+- **`examples/contador-cofres`: contador de cofres para Android.** Port móvil
+  del [Contador de cofres para
+  Windows](https://github.com/Axxon-g/contador-cofres-fornite). En el móvil
+  Fortnite no guarda repeticiones, así que el recuento es manual y la app
+  aporta una superposición flotante por encima del juego (servicio en primer
+  plano, permiso del sistema, arrastrable, plegable y bloqueable), la
+  rejilla de contenedores, el historial por cuenta, los desgloses por tipo y
+  la exportación a CSV.
+
 - **`rain check`: comprobación de tipos sin generar APK.** Compila el código
   (Kotlin y Java) con el mismo `android.jar`, el mismo classpath y el mismo
   plugin de Compose que `rain build`, y se detiene ahí: sin DEX, sin
@@ -67,6 +86,16 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   temporizador, radio por Internet, widgets y Android Auto).
 
 ### Corregido
+
+- **Los manifests de las librerías se quedaban con sus marcadores sin
+  sustituir.** Rain sustituye los marcadores del manifest de la app
+  (`${applicationId}`, `${versionName}`…) antes de fusionarlo con los de las
+  librerías, pero no los del manifest ya fusionado. AndroidX Core declara el
+  permiso `${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` y
+  AndroidX Startup usa `${applicationId}.androidx-startup` como autoridad, y
+  aapt2 no los resuelve: el APK acababa con un permiso de nombre literal y
+  el provider de Startup sin encontrar su paquete. Ahora los marcadores se
+  sustituyen también después de la fusión, como hace Gradle.
 
 - **Los alias de Compose Multiplatform vaciaban el classpath.** Al depender de
   una librería KMP como `io.github.kyant0:backdrop:2.0.1`, su metadata arrastra
