@@ -95,6 +95,7 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newBuildCmd(),
 		newCheckCmd(),
 		newLintCmd(),
+		newFmtCmd(),
 		newDoctorCmd(),
 		newCleanCmd(),
 		newDepsCmd(),

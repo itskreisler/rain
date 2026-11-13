@@ -14,6 +14,8 @@ package lint
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -224,6 +226,68 @@ func findDetekt() (string, bool) {
 //
 //	ruta/fichero.kt:12:5: mensaje (regla)
 var ktlintLine = regexp.MustCompile(`^(.+?):(\d+):(\d+):\s+(.*?)\s*(?:\(([a-z0-9:.\-]+)\))?$`)
+
+// Format reescribe las fuentes Kotlin del proyecto con ktlint y devuelve la
+// lista de ficheros que han cambiado.
+//
+// ktlint sabe corregirse solo la mayor parte de los problemas de estilo
+// (sangría, comas colgantes, imports sin usar, saltos de línea), así que
+// formatear es la parte de "rain lint" que se puede arreglar sin tocar el
+// código a mano. Las reglas que no se pueden corregir se quedan como avisos.
+//
+// Si ktlint no está instalado devuelve un error con la instrucción de
+// instalarlo.
+func Format(ctx context.Context, opts Options) ([]string, error) {
+	if len(opts.KotlinFiles) == 0 {
+		return nil, nil
+	}
+	path, ok := findKtlint()
+	if !ok {
+		return nil, fmt.Errorf("ktlint no está instalado (instálalo con: rain lint --install)")
+	}
+
+	before := make(map[string]string, len(opts.KotlinFiles))
+	for _, file := range opts.KotlinFiles {
+		if sum, err := fileSum(file); err == nil {
+			before[file] = sum
+		}
+	}
+
+	args := []string{"--relative", "--format", "**/*.kt"}
+	args = append(args, sourcePatterns(opts)...)
+	cmd := toolCommand(ctx, path, args)
+	cmd.Dir = opts.ProjectDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// ktlint sale con 1 cuando encuentra problemas: no es un error.
+		if exitCode(err) != 1 {
+			return nil, fmt.Errorf("ktlint falló: %w\n%s", err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	var changed []string
+	for _, file := range opts.KotlinFiles {
+		sum, err := fileSum(file)
+		if err != nil {
+			continue
+		}
+		if previous, ok := before[file]; !ok || previous != sum {
+			changed = append(changed, file)
+		}
+	}
+	sort.Strings(changed)
+	return changed, nil
+}
+
+// fileSum devuelve la suma SHA-256 de un fichero, para detectar cambios.
+func fileSum(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
 
 // runKtlint ejecuta ktlint sobre las fuentes Kotlin.
 func runKtlint(ctx context.Context, path string, opts Options) ([]Finding, error) {
