@@ -279,6 +279,24 @@ func Format(ctx context.Context, opts Options) ([]string, error) {
 	return changed, nil
 }
 
+// findDetektConfig busca la configuración de detekt del proyecto.
+//
+// detekt no la busca solo: sin --config usa siempre su configuración por
+// defecto, así que un proyecto que quiere ajustar reglas tiene que pasarle
+// el fichero.
+func findDetektConfig(projectDir string) string {
+	if projectDir == "" {
+		return ""
+	}
+	for _, name := range []string{"detekt.yml", "detekt.yaml", ".detekt.yml"} {
+		path := filepath.Join(projectDir, name)
+		if fileExists(path) {
+			return path
+		}
+	}
+	return ""
+}
+
 // fileSum devuelve la suma SHA-256 de un fichero, para detectar cambios.
 func fileSum(path string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -373,6 +391,14 @@ func runDetekt(ctx context.Context, path string, opts Options) ([]Finding, error
 	}
 
 	toolArgs := []string{"--input", opts.SourceRoot}
+
+	// detekt solo usa su configuración por defecto si no se le pasa otra. Si
+	// el proyecto tiene un detekt.yml, se respeta: es donde se ajustan
+	// umbrales y reglas al proyecto (y donde se desactivan las que no
+	// encajan con un framework como Compose).
+	if config := findDetektConfig(opts.ProjectDir); config != "" {
+		toolArgs = append(toolArgs, "--config", config)
+	}
 
 	if opts.TypeResolution && len(opts.Classpath) > 0 {
 		toolArgs = append(toolArgs, "--classpath", strings.Join(opts.Classpath, ":"))
