@@ -687,6 +687,19 @@ func Run(cfg Config) error {
 			}
 		}
 
+		// Los manifests de las librerías también traen marcadores y aapt2 no
+		// los resuelve: AndroidX Core declara el permiso
+		// "${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" y
+		// AndroidX Startup usa "${applicationId}.androidx-startup" como
+		// autoridad. Sin sustituirlos, el APK declara un permiso con un
+		// nombre literal y el provider de Startup no encuentra su paquete.
+		// Gradle los resuelve al fusionar, así que se hace aquí también.
+		if resolved, err := substituteManifestPlaceholders(linkManifest, filepath.Join(cfg.BuildDir, "manifest-resolved.xml"), cfg); err != nil {
+			ui.Warn("no se pudieron sustituir los marcadores del manifest fusionado: %v", err)
+		} else if resolved != linkManifest {
+			linkManifest = resolved
+		}
+
 		// AGP inyecta permisos según el targetSdk (hoy POST_NOTIFICATIONS a
 		// partir de API 33). Rain los añade igual para que el APK se comporte
 		// como el de Gradle: sin ellos el sistema descarta las notificaciones
