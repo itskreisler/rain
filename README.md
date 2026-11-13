@@ -134,6 +134,7 @@ my-app/
 | `rain build [dir]` | Build and sign APK (supports flat android2apk layout, auto-detected without `rain.toml`) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
 | `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
 | `rain lint [dir]` | Run static analysis (ktlint, detekt, pmd) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
+| `rain fmt [dir]` | Format Kotlin sources with ktlint | — |
 | `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
 | `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
 | `rain deps` | Dependency management commands | — |
@@ -179,6 +180,38 @@ tools = ["ktlint", "detekt"]  # or ["auto"]
 fail_on = "error"              # never | warning | error
 type_resolution = false        # Enable type resolution for detekt (slower)
 ```
+
+The project can also tune the analyzers themselves. `rain lint` respects:
+
+- `.editorconfig` — ktlint reads it, so the code style of the project (for
+  example `ktlint_code_style = android_studio` for Compose projects) applies.
+- `detekt.yml` — Rain passes it to detekt when the project has one. Detekt
+  does not look for it on its own, so without this it would always use its
+  default thresholds and rules.
+
+## Formatting
+
+`rain fmt` reformats the Kotlin sources with ktlint, in place, using the
+project's own style:
+
+```bash
+rain fmt            # the current directory
+rain fmt path/to/project
+```
+
+It prints the files it touched. Everything ktlint can fix on its own
+(indentation, trailing commas, unused imports, line breaks) is fixed; what it
+cannot (naming, complexity, code smells) keeps showing up in `rain lint`.
+
+## Examples
+
+| Example | What it shows |
+| --- | --- |
+| `examples/compose` | Jetpack Compose with Material 3, icons and an adaptive launcher icon |
+| `examples/liquid-glass` | A glass UI effect over the content behind it |
+| `examples/backdrop-music` | A real audio player: `MediaStore`, `MediaPlayer`, a real equalizer |
+| `examples/hello-buddy` | The flat android2apk layout, without `rain.toml` |
+| `examples/contador-cofres` | A floating overlay over the game with a foreground service, Compose UI and a local JSON history |
 
 ## Migration from android2apk
 
