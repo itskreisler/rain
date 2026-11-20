@@ -44,6 +44,11 @@ func nativeNameFor(base, goos string) string {
 	return base
 }
 
+// needsLibcxx indica si el ZIP de build-tools de ese sistema incluye libc++.so.
+// Solo el wrapper de zipalign de Linux lo necesita; los ZIP de Windows y macOS
+// no lo traen.
+func needsLibcxx(goos string) bool { return goos == "linux" }
+
 const (
 	R8Version = "9.5.28"
 	R8URL     = "https://dl.google.com/dl/android/maven2/com/android/tools/r8/" + R8Version + "/r8-" + R8Version + ".jar"
@@ -224,11 +229,13 @@ func (m *Manager) ensureR8(ctx context.Context) error {
 	return m.download(ctx, R8URL, m.R8Jar(), "R8 "+R8Version)
 }
 
-// ensureBuildTools extrae de un único ZIP las tres herramientas nativas/JAR
-// que Rain necesita. Se descarga solo si falta alguna de ellas.
+// ensureBuildTools extrae de un único ZIP las herramientas nativas/JAR que
+// Rain necesita. Se descarga solo si falta alguna de ellas. libc++.so solo
+// existe en el ZIP de Linux y solo lo usa su wrapper de zipalign.
 func (m *Manager) ensureBuildTools(ctx context.Context) error {
-	if fileExists(m.ApksignerJar()) && fileExists(m.Aapt2()) && fileExists(m.ZipAlign()) &&
-		fileExists(m.libcxxPath()) && fileExists(m.libcxxPath()+".1") {
+	libcxx := needsLibcxx(runtime.GOOS)
+	libcxxReady := !libcxx || (fileExists(m.libcxxPath()) && fileExists(m.libcxxPath()+".1"))
+	if fileExists(m.ApksignerJar()) && fileExists(m.Aapt2()) && fileExists(m.ZipAlign()) && libcxxReady {
 		return m.publishNativeBinaries()
 	}
 
@@ -239,10 +246,11 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 	defer func() { _ = os.Remove(tmp) }()
 
 	tools := []struct {
-		name  string
-		dest  string
-		mode  os.FileMode
-		match func(string) bool
+		name      string
+		dest      string
+		mode      os.FileMode
+		match     func(string) bool
+		linuxOnly bool
 	}{
 		{
 			name: "apksigner.jar", dest: m.ApksignerJar(), mode: 0o644,
@@ -257,15 +265,18 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 			match: func(n string) bool { return filepath.Base(n) == nativeName("zipalign") },
 		},
 		{
-			name: "libc++.so", dest: m.libcxxPath(), mode: 0o644,
+			name: "libc++.so", dest: m.libcxxPath(), mode: 0o644, linuxOnly: true,
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so" },
 		},
 		{
-			name: "libc++.so.1", dest: m.libcxxPath() + ".1", mode: 0o644,
+			name: "libc++.so.1", dest: m.libcxxPath() + ".1", mode: 0o644, linuxOnly: true,
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" },
 		},
 	}
 	for _, tool := range tools {
+		if tool.linuxOnly && !libcxx {
+			continue
+		}
 		if fileExists(tool.dest) {
 			continue
 		}

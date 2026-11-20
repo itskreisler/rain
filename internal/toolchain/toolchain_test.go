@@ -155,6 +155,18 @@ func TestWindowsToolchainPathsAndWrappers(t *testing.T) {
 	}
 }
 
+func TestLibcxxSoloEnLinux(t *testing.T) {
+	for goos, want := range map[string]bool{
+		"linux":   true,
+		"windows": false,
+		"darwin":  false,
+	} {
+		if got := needsLibcxx(goos); got != want {
+			t.Errorf("needsLibcxx(%q) = %t, quiero %t", goos, got, want)
+		}
+	}
+}
+
 func TestExtractOne(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, "build-tools.zip")
