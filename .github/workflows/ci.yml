@@ -116,11 +116,13 @@ jobs:
       - name: Instalar toolchain (aapt2, R8, apksigner, android.jar, kotlinc)
         run: ./rain doctor --fix --profile complex
 
-      - name: Compilar Ejemplo Compose (FireIcon)
+      # Los ejemplos se comprueban en debug y release. En CI no hay keystore
+      # propia: --allow-debug-signing permite validar el pipeline de release.
+      - name: Compilar Ejemplo Compose (FireIcon) [debug]
         working-directory: examples/compose
         run: ../../rain build
 
-      - name: Verificar APK Compose
+      - name: Verificar APK Compose [debug]
         working-directory: examples/compose
         run: |
           set -eu
@@ -130,11 +132,25 @@ jobs:
           unzip -l "$APK" | grep -q 'resources.arsc'
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
-      - name: Compilar Ejemplo Liquid Glass Music Player
+      - name: Compilar Ejemplo Compose (FireIcon) [release]
+        working-directory: examples/compose
+        run: ../../rain build --release --allow-debug-signing
+
+      - name: Verificar APK Compose [release]
+        working-directory: examples/compose
+        run: |
+          set -eu
+          APK=app/build/app-release.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Compilar Ejemplo Liquid Glass Music Player [debug]
         working-directory: examples/liquid-glass
         run: ../../rain build
 
-      - name: Verificar APK Liquid Glass Music Player
+      - name: Verificar APK Liquid Glass Music Player [debug]
         working-directory: examples/liquid-glass
         run: |
           set -eu
@@ -144,15 +160,33 @@ jobs:
           unzip -l "$APK" | grep -q 'resources.arsc'
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
-      - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop)
+      - name: Compilar Ejemplo Liquid Glass Music Player [release]
+        working-directory: examples/liquid-glass
+        run: ../../rain build --release --allow-debug-signing
+
+      - name: Verificar APK Liquid Glass Music Player [release]
+        working-directory: examples/liquid-glass
+        run: |
+          set -eu
+          APK=app/build/app-release.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [debug]
         working-directory: examples/backdrop-music
         run: ../../rain check
 
-      - name: Compilar Ejemplo Layout Plano (Hello Buddy)
+      - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [release]
+        working-directory: examples/backdrop-music
+        run: ../../rain check --release
+
+      - name: Compilar Ejemplo Layout Plano (Hello Buddy) [debug]
         working-directory: examples/hello-buddy
         run: ../../rain build
 
-      - name: Verificar APK Layout Plano
+      - name: Verificar APK Layout Plano [debug]
         working-directory: examples/hello-buddy
         run: |
           set -eu
@@ -162,15 +196,71 @@ jobs:
           unzip -l "$APK" | grep -q 'resources.arsc'
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
-      - name: Compilar Ejemplo Contador de Cofres
+      - name: Compilar Ejemplo Layout Plano (Hello Buddy) [release]
+        working-directory: examples/hello-buddy
+        run: ../../rain build --release --allow-debug-signing
+
+      - name: Verificar APK Layout Plano [release]
+        working-directory: examples/hello-buddy
+        run: |
+          set -eu
+          APK=build/app-release.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Compilar Ejemplo Layout Simple [debug]
+        working-directory: examples/layoutsimple
+        run: ../../rain build
+
+      - name: Verificar APK Layout Simple [debug]
+        working-directory: examples/layoutsimple
+        run: |
+          set -eu
+          APK=build/app-debug.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Compilar Ejemplo Layout Simple [release]
+        working-directory: examples/layoutsimple
+        run: ../../rain build --release --allow-debug-signing
+
+      - name: Verificar APK Layout Simple [release]
+        working-directory: examples/layoutsimple
+        run: |
+          set -eu
+          APK=build/app-release.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Compilar Ejemplo Contador de Cofres [debug]
         working-directory: examples/contador-cofres
         run: ../../rain build
 
-      - name: Verificar APK Contador de Cofres
+      - name: Verificar APK Contador de Cofres [debug]
         working-directory: examples/contador-cofres
         run: |
           set -eu
           APK=app/build/app-debug.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
+          java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
+
+      - name: Compilar Ejemplo Contador de Cofres [release]
+        working-directory: examples/contador-cofres
+        run: ../../rain build --release --allow-debug-signing
+
+      - name: Verificar APK Contador de Cofres [release]
+        working-directory: examples/contador-cofres
+        run: |
+          set -eu
+          APK=app/build/app-release.apk
           test -f "$APK"
           unzip -l "$APK" | grep -q 'classes.dex'
           unzip -l "$APK" | grep -q 'resources.arsc'
@@ -181,9 +271,15 @@ jobs:
           name: apks-ejemplos
           path: |
             examples/compose/app/build/app-debug.apk
+            examples/compose/app/build/app-release.apk
             examples/liquid-glass/app/build/app-debug.apk
+            examples/liquid-glass/app/build/app-release.apk
             examples/hello-buddy/build/app-debug.apk
+            examples/hello-buddy/build/app-release.apk
+            examples/layoutsimple/build/app-debug.apk
+            examples/layoutsimple/build/app-release.apk
             examples/contador-cofres/app/build/app-debug.apk
+            examples/contador-cofres/app/build/app-release.apk
 
   release:
     name: Publicación de Release

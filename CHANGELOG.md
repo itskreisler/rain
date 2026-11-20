@@ -23,6 +23,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   dependencias del sistema que sigan faltando. Admite `--yes` y `--dry-run`.
   `--fix` descarga también `aapt2` y `zipalign` desde build-tools de Google
   para Linux, Windows y macOS, sin root.
+- **CI: smoke test en Windows y cobertura release de los ejemplos.** El job
+  `windows-smoke` compila, analiza y prueba el CLI en `windows-latest` y
+  verifica el script de instalación de Chocolatey. Los ejemplos se compilan
+  ahora en debug y release, con verificación de firma en ambos casos.
 - **`rain fmt`: formatear el código Kotlin.** Reescribe las fuentes con
   ktlint usando el estilo del proyecto (el `.editorconfig` manda) y avisa de
   los ficheros que ha tocado. Es la parte de `rain lint` que se puede
