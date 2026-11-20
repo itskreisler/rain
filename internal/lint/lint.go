@@ -566,7 +566,7 @@ func runDetekt(ctx context.Context, path string, opts Options) ([]Finding, error
 	}
 
 	if opts.TypeResolution && len(opts.Classpath) > 0 {
-		toolArgs = append(toolArgs, "--classpath", strings.Join(opts.Classpath, ":"))
+		toolArgs = append(toolArgs, "--classpath", strings.Join(opts.Classpath, string(os.PathListSeparator)))
 	}
 
 	cmd := toolCommand(ctx, path, toolArgs)
@@ -667,7 +667,7 @@ func pmdArgs(major int, opts Options) []string {
 		if major >= 7 {
 			auxFlag = "--aux-classpath"
 		}
-		args = append(args, auxFlag, strings.Join(opts.Classpath, ":"))
+		args = append(args, auxFlag, strings.Join(opts.Classpath, string(os.PathListSeparator)))
 	}
 	return args
 }

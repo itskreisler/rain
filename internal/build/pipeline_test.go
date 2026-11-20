@@ -21,6 +21,14 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestJoinClasspathUsesPlatformSeparator(t *testing.T) {
+	got := joinClasspath([]string{"android.jar", "dependencia.jar"})
+	want := strings.Join([]string{"android.jar", "dependencia.jar"}, string(os.PathListSeparator))
+	if got != want {
+		t.Fatalf("classpath = %q, quiero %q", got, want)
+	}
+}
+
 func TestSourceRootPrefersGradleLayout(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "src", "main", "AndroidManifest.xml"), "<manifest/>")

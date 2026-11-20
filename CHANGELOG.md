@@ -10,6 +10,8 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ## [No publicado]
 
+- Plantilla `completo`: demo liviano de Compose con ConfettiKit y un botón que lanza confeti.
+
 ### Añadido
 
 - **Binarios de Windows en los releases.** Junto a Linux amd64/arm64 se publican

@@ -161,10 +161,12 @@ func scaffold(template, name, pkg, version string) (map[string]string, config.Co
 		cfg.Dependencies = []string{}
 	case "completo":
 		files[filepath.ToSlash(filepath.Join("app/java", pkgPath, "MainActivity.kt"))] = kotlinComposeMainActivity(pkg)
-		// Cierre mínimo de Compose; rain resuelve el resto en modo completo.
+		// Demo liviano de Compose con un único confeti ligero; Rain resuelve
+		// las dependencias transitivas en modo completo.
 		cfg.Dependencies = []string{
 			"androidx.activity:activity-compose:1.8.2",
 			"androidx.compose.material3:material3-android:1.5.0-beta01",
+			"io.github.vinceglb:confettikit:0.9.0",
 		}
 	default:
 		return nil, cfg, usageErr("plantilla inválida %q", template)

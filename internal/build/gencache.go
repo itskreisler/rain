@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/itskreisler/rain/internal/ui"
 )
@@ -55,7 +54,7 @@ func compileGeneratedJava(cfg Config, objDir string, sources []string) error {
 	genClasspath = append(genClasspath, cfg.AndroidJar)
 	genClasspath = append(genClasspath, cfg.libraryJars()...)
 	genArgs := []string{"-d", cacheDir, "--release", fmt.Sprint(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
-		"-classpath", strings.Join(genClasspath, ":")}
+		"-classpath", joinClasspath(genClasspath)}
 	genArgs = append(genArgs, sources...)
 
 	var genErr bytes.Buffer

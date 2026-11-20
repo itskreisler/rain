@@ -117,6 +117,16 @@ func TestInitCompletoScaffoldsCompose(t *testing.T) {
 	if len(cfg.Dependencies) == 0 {
 		t.Error("la plantilla completo debería declarar dependencias de Compose")
 	}
+	hasConfettiKit := false
+	for _, dependency := range cfg.Dependencies {
+		if dependency == "io.github.vinceglb:confettikit:0.9.0" {
+			hasConfettiKit = true
+			break
+		}
+	}
+	if !hasConfettiKit {
+		t.Errorf("la plantilla completo debería declarar ConfettiKit: %v", cfg.Dependencies)
+	}
 
 	// El nombre con espacios produce un package válido derivado.
 	if !strings.HasPrefix(cfg.Project.Package, "com.rain.") {
@@ -130,6 +140,11 @@ func TestInitCompletoScaffoldsCompose(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "setContent") || !strings.Contains(string(src), "@Composable") {
 		t.Errorf("la plantilla completo debería usar Compose:\n%s", src)
+	}
+	for _, want := range []string{"ConfettiKit", "rememberConfettiKitState", "Lanzar confeti", "confetiState.reset()"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("la plantilla completo debería incluir %q:\n%s", want, src)
+		}
 	}
 }
 

@@ -112,7 +112,7 @@ func runKapt(cfg Config, kotlinFiles []string, objDir, kaptDir string) (string, 
 
 	args := []string{
 		"-d", objDir,
-		"-classpath", strings.Join(classpath, ":"),
+		"-classpath", joinClasspath(classpath),
 		"-jvm-target", kotlinJVMTarget(cfg.jvmTarget()),
 		"-Kapt-mode=stubsAndApt",
 		"-Kapt-sources=" + sourcesDir,
