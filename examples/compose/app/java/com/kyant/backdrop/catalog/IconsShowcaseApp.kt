@@ -56,8 +56,10 @@ val iconList = listOf(
     IconItem(id = "cloudsync", name = "CloudSyncIcon"),
     IconItem(id = "bot", name = "BotIcon"),
     IconItem(id = "playpause", name = "PlayPauseIcon", color = Color(0xFF2196F3)),
+    IconItem(id = "morph-crossfade", name = "CrossfadePlayPauseIcon", color = Color(0xFF4CAF50)),
+    IconItem(id = "morph-shape", name = "MorphPlayPauseIcon", color = Color(0xFF9C27B0)),
     IconItem(id = "mochi", name = "Mochi"),
-)
+) + lucideIconItems
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -161,12 +163,15 @@ fun GalleryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         when (item.id) {
+                            "fire" -> FireIcon(size = 40.dp, color = item.color)
                             "flame" -> FlameIcon(size = 40.dp, color = item.color)
                             "cloudsync" -> CloudSyncIcon(size = 40.dp, color = item.color)
                             "bot" -> BotIcon(size = 40.dp, color = item.color)
                             "playpause" -> PlayPauseIcon(size = 40.dp, color = item.color)
+                            "morph-crossfade" -> CrossfadePlayPauseIcon(size = 40.dp, color = item.color)
+                            "morph-shape" -> MorphPlayPauseIcon(size = 40.dp, color = item.color)
                             "mochi" -> FireIconFlat(size = 40.dp)
-                            else -> FireIcon(size = 40.dp, color = item.color)
+                            else -> LucideGalleryIcon(item.id, item.color)
                         }
                         Text(
                             text = item.name,
@@ -192,6 +197,9 @@ fun IconDetailBottomSheet(
     val cloudSyncState = rememberCloudSyncIconState()
     val botState = rememberBotIconState()
     val playPauseState = rememberPlayPauseIconState()
+    val crossfadeState = rememberPlayPauseMorphState()
+    val morphState = rememberPlayPauseMorphState()
+    val lucideStates = rememberLucideIconStates()
 
     // Demostración del hook: cuenta cuántas animaciones terminaron de verdad.
     var animationEndCount by remember { mutableStateOf(0) }
@@ -235,8 +243,10 @@ fun IconDetailBottomSheet(
                     "cloudsync" -> "CloudSyncIcon"
                     "bot" -> "BotIcon"
                     "playpause" -> "PlayPauseIcon"
+                    "morph-crossfade" -> "CrossfadePlayPauseIcon"
+                    "morph-shape" -> "MorphPlayPauseIcon"
                     "mochi" -> "Mochi"
-                    else -> "FireIcon"
+                    else -> if (iconId == "fire") "FireIcon" else lucideTitle(iconId) ?: "FireIcon"
                 },
                 color = Color.White,
                 fontSize = 22.sp,
@@ -266,13 +276,25 @@ fun IconDetailBottomSheet(
                         "cloudsync" -> cloudSyncState.startAnimation()
                         "bot" -> botState.startAnimation()
                         // PlayPauseIcon gestiona su propio clic para no alternar dos veces.
+                        "fire" -> fireState.startAnimation()
+                        // Los tres iconos de play/pause gestionan su propio clic.
                         "playpause" -> Unit
-                        else -> if (iconId != "mochi") fireState.startAnimation()
+                        "morph-crossfade" -> Unit
+                        "morph-shape" -> Unit
+                        "mochi" -> Unit
+                        else -> lucideStart(iconId, lucideStates)
                     }
                 },
             contentAlignment = Alignment.Center,
         ) {
             when (iconId) {
+                "fire" ->
+                    FireIcon(
+                        size = iconSize.dp,
+                        color = selectedColor,
+                        duration = animationDuration,
+                        state = fireState,
+                    )
                 "flame" ->
                     FlameIcon(
                         size = iconSize.dp,
@@ -301,23 +323,42 @@ fun IconDetailBottomSheet(
                         duration = animationDuration,
                         state = playPauseState,
                     )
-                "mochi" -> FireIconFlat(size = iconSize.dp)
-                else ->
-                    FireIcon(
+                "morph-crossfade" ->
+                    CrossfadePlayPauseIcon(
                         size = iconSize.dp,
                         color = selectedColor,
                         duration = animationDuration,
-                        state = fireState,
+                        state = crossfadeState,
+                    )
+                "morph-shape" ->
+                    MorphPlayPauseIcon(
+                        size = iconSize.dp,
+                        color = selectedColor,
+                        duration = animationDuration,
+                        state = morphState,
+                    )
+                "mochi" -> FireIconFlat(size = iconSize.dp)
+                else ->
+                    LucideDetailIcon(
+                        id = iconId,
+                        size = iconSize.dp,
+                        color = selectedColor,
+                        duration = animationDuration,
+                        states = lucideStates,
                     )
             }
         }
 
         Text(
-            text = if (iconId == "playpause") {
-                if (playPauseState.isPlaying) "Pause → play al terminar (fin: $animationEndCount)"
-                else "Play → pause al terminar (fin: $animationEndCount)"
-            } else {
-                "Toca el icono para animar"
+            text = when (iconId) {
+                "playpause" ->
+                    if (playPauseState.isPlaying) "Pause → play al terminar (fin: $animationEndCount)"
+                    else "Play → pause al terminar (fin: $animationEndCount)"
+                "morph-crossfade", "morph-shape" -> {
+                    val playing = if (iconId == "morph-crossfade") crossfadeState.isPlaying else morphState.isPlaying
+                    if (playing) "Reproduciendo → pausa al terminar" else "Pausado → play al terminar"
+                }
+                else -> "Toca el icono para animar"
             },
             color = Color.White.copy(alpha = 0.6f),
             fontSize = 12.sp,
@@ -343,30 +384,36 @@ fun IconDetailBottomSheet(
             Button(
                 onClick = {
                     when (iconId) {
+                        "fire" -> fireState.startAnimation()
                         "flame" -> flameState.startAnimation()
                         "cloudsync" -> cloudSyncState.startAnimation()
                         "bot" -> botState.startAnimation()
                         "playpause" -> playPauseState.toggle()
-                        else -> if (iconId != "mochi") fireState.startAnimation()
+                        "morph-crossfade" -> crossfadeState.toggle()
+                        "morph-shape" -> morphState.toggle()
+                        "mochi" -> Unit
+                        else -> lucideStart(iconId, lucideStates)
                     }
                 },
                 modifier = Modifier.weight(1f),
                 enabled = iconId != "mochi",
             ) {
-                Text(if (iconId == "playpause") "Alternar" else "Iniciar")
+                Text(if (iconId.startsWith("playpause") || iconId.startsWith("morph-")) "Alternar" else "Iniciar")
             }
             Button(
                 onClick = {
                     when (iconId) {
+                        "fire" -> fireState.stopAnimation()
                         "flame" -> flameState.stopAnimation()
                         "cloudsync" -> cloudSyncState.stopAnimation()
                         "bot" -> botState.stopAnimation()
                         "playpause" -> Unit
-                        else -> if (iconId != "mochi") fireState.stopAnimation()
+                        "mochi" -> Unit
+                        else -> lucideStop(iconId, lucideStates)
                     }
                 },
                 modifier = Modifier.weight(1f),
-                enabled = iconId != "mochi" && iconId != "playpause",
+                enabled = iconId != "mochi" && iconId != "playpause" && !iconId.startsWith("morph-"),
             ) {
                 Text("Detener/Pausar")
             }
