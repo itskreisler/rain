@@ -1296,14 +1296,20 @@ func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
 	// el código Kotlin pueda referenciar R y BuildConfig.
 	kotlinClasspath = append(kotlinClasspath, objDir)
 
-	kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
+	var kotlincArgs []string
+	// PREFIX solo existe en Termux; sin él la ruta /lib/jansi no tiene
+	// sentido y kotlinc la interpretaba como fichero fuente en Windows.
+	if prefix := os.Getenv("PREFIX"); prefix != "" {
+		kotlincArgs = append(kotlincArgs, "-J-Dlibrary.jansi.path="+prefix+"/lib/jansi")
+	}
+	kotlincArgs = append(kotlincArgs,
 		"-d", objDir,
 		"-classpath", joinClasspath(kotlinClasspath),
 		"-jvm-target", kotlinJVMTarget(jvmTarget),
 		// El codegen de kotlinc usa un solo hilo por defecto. En un proyecto
 		// Compose el frontend sigue siendo secuencial, pero repartir el
 		// backend entre los núcleos disponibles reduce la fase de generación.
-		"-Xbackend-threads=0"}
+		"-Xbackend-threads=0")
 
 	// La JVM de kotlinc reserva por defecto 1/4 de la RAM física. En
 	// un contenedor con poca memoria libre eso es un OOM asegurado,

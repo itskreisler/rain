@@ -436,8 +436,18 @@ func (m *Manager) writeWindowsWrappers(complex bool) error {
 			"java -Xmx%HEAP% %RAIN_JAVA_OPTS% -jar \"%USERPROFILE%\\.rain\\toolchain\\apksigner.jar\" %*\r\n",
 	}
 	if complex {
+		// %* separa los argumentos con ; y = al reexpandirlos, así que el
+		// classpath de Windows y las opciones -X=... llegaban partidos a
+		// kotlinc. Reencuotamos cada argumento antes de pasarlos.
 		wrappers["kotlinc.cmd"] = "@echo off\r\n" +
-			"\"%USERPROFILE%\\.rain\\toolchain\\kotlinc\\bin\\kotlinc.bat\" %*\r\n"
+			"set \"args=\"\r\n" +
+			":quote\r\n" +
+			"if \"%~1\"==\"\" goto launch\r\n" +
+			"set \"args=%args% \"%~1\"\"\r\n" +
+			"shift\r\n" +
+			"goto quote\r\n" +
+			":launch\r\n" +
+			"\"%USERPROFILE%\\.rain\\toolchain\\kotlinc\\bin\\kotlinc.bat\" %args%\r\n"
 	}
 
 	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
