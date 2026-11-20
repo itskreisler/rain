@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/itskreisler/rain/internal/httpx"
@@ -97,7 +98,7 @@ func DownloadPOM(coordinate string, destDir string) (string, error) {
 	groupPath := strings.ReplaceAll(group, ".", "/")
 
 	// Verificar caché primero
-	path := fmt.Sprintf("%s/%s-%s.pom", destDir, artifact, version)
+	path := filepath.Join(destDir, artifact+"-"+version+".pom")
 	if !needFetch(path) {
 		return path, nil
 	}

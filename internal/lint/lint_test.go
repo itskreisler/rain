@@ -182,10 +182,13 @@ func TestSourcePatternsAgrupaPorDirectorio(t *testing.T) {
 }
 
 func TestRelativePath(t *testing.T) {
-	if got := relativePath("/proj/app/src/Main.kt", "/proj"); got != "app/src/Main.kt" {
+	projectDir := t.TempDir()
+	main := filepath.Join(projectDir, "app", "src", "Main.kt")
+	if got := relativePath(main, projectDir); got != filepath.Join("app", "src", "Main.kt") {
 		t.Errorf("relativePath = %q", got)
 	}
-	if got := relativePath("/otro/Main.kt", "/proj"); got != "/otro/Main.kt" {
+	outside := filepath.Join(t.TempDir(), "Main.kt")
+	if got := relativePath(outside, projectDir); got != outside {
 		t.Errorf("relativePath fuera del proyecto = %q", got)
 	}
 	if got := relativePath("/proj/Main.kt", ""); got != "/proj/Main.kt" {
