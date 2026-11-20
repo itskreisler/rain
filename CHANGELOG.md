@@ -12,6 +12,17 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **`rain doctor`: informe alineado con un contrato por herramienta.** Cada
+  comprobación muestra ahora `instalado` (con su versión), `no instalado`,
+  `no se encuentra` o `advertencia`, y las fallidas incluyen el comando
+  concreto para arreglarlas. El JSON incorpora `status`, `reason` e `install`
+  (esquema `2`). Se corrige el parser de versiones, que confundía los avisos
+  de cgroup de la JVM (`[0.001s]`) con la versión de `javac`.
+- **`rain doctor --install`:** descarga el toolchain gestionado y, con el
+  gestor detectado (`apt`, `apk`, `pkg`, `winget` o `choco`), instala las
+  dependencias del sistema que sigan faltando. Admite `--yes` y `--dry-run`.
+  `--fix` descarga también `aapt2` y `zipalign` desde build-tools de Google
+  para Linux, Windows y macOS, sin root.
 - **`rain fmt`: formatear el código Kotlin.** Reescribe las fuentes con
   ktlint usando el estilo del proyecto (el `.editorconfig` manda) y avisa de
   los ficheros que ha tocado. Es la parte de `rain lint` que se puede

@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"archive/zip"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,6 +80,8 @@ func TestFirstVersion(t *testing.T) {
 		{"Android Asset Packaging Tool (aapt) 2.20-android-16.0.0_r2", "2.20"},
 		{"kotlinc-jvm 2.4.21 (JRE 17.0.20+8)", "2.4.21"},
 		{"Zip 3.0", "3.0"},
+		{"[0.001s][warning][os,container] cgroup movido\njavac 21.0.12.1", "21.0.12.1"},
+		{"[0.002s][warning][os,container] cgroup movido\nopenjdk version \"17.0.20\"", "17.0.20"},
 		{"sin numeros", ""},
 	}
 	for _, tc := range tests {
@@ -167,7 +170,7 @@ func TestFindAndroidJarInvalidReturnsPath(t *testing.T) {
 func TestDetectPlatform(t *testing.T) {
 	got := DetectPlatform()
 	switch got {
-	case Alpine, Termux, Ubuntu, Generic:
+	case Alpine, Termux, Ubuntu, Windows, MacOS, Generic:
 	default:
 		t.Errorf("DetectPlatform devolvió %q, que no es una plataforma conocida", got)
 	}
@@ -262,9 +265,12 @@ func TestRunVersionIgnoraLosComandosQueFallan(t *testing.T) {
 	fakeCommand(t, dir, "falso", "#!/bin/sh\nexit 1\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	path, _ := runVersion("falso", "--version")
-	if path != "" {
-		t.Errorf("runVersion con un comando que falla = %q, want \"\"", path)
+	path, _, err := runVersion(context.Background(), "falso", "--version")
+	if err == nil {
+		t.Error("runVersion con un comando que falla debería devolver error")
+	}
+	if path != filepath.Join(dir, "falso") {
+		t.Errorf("runVersion debería conservar la ruta del comando que falla, got %q", path)
 	}
 }
 
@@ -273,7 +279,10 @@ func TestRunVersionAceptaLosComandosQueFuncionan(t *testing.T) {
 	fakeCommand(t, dir, "bueno", "#!/bin/sh\necho 1.2.3\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	path, out := runVersion("bueno", "--version")
+	path, out, err := runVersion(context.Background(), "bueno", "--version")
+	if err != nil {
+		t.Fatalf("runVersion con un comando que funciona: %v", err)
+	}
 	if path == "" {
 		t.Fatal("runVersion devolvió una ruta vacía para un comando que funciona")
 	}
@@ -302,6 +311,15 @@ func TestDiagnoseNoCuentaUnLanzadorRotoComoDisponible(t *testing.T) {
 			if check.OK {
 				t.Errorf("el check %q aparece como disponible con un lanzador roto", check.Name)
 			}
+			if check.Status != StatusBroken {
+				t.Errorf("el check %q tiene status %q, quiero broken", check.Name, check.Status)
+			}
+			if check.Path == "" {
+				t.Errorf("el check %q debería conservar la ruta encontrada para diagnosticarlo", check.Name)
+			}
+			if check.Reason != ReasonUnavailable {
+				t.Errorf("el check %q tiene reason %q, quiero unavailable", check.Name, check.Reason)
+			}
 		}
 	}
 	if report.Ready {
@@ -309,6 +327,79 @@ func TestDiagnoseNoCuentaUnLanzadorRotoComoDisponible(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(report.Missing, ","), "d8") {
 		t.Errorf("Missing = %v, se esperaba d8", report.Missing)
+	}
+}
+
+func TestPlatformFromRelease(t *testing.T) {
+	tests := []struct {
+		goos, id, idLike string
+		want             Platform
+	}{
+		{"linux", "debian", "", Ubuntu},
+		{"linux", "ubuntu", "", Ubuntu},
+		{"linux", "linuxmint", "ubuntu", Ubuntu},
+		{"linux", "alpine", "", Alpine},
+		{"linux", "fedora", "", Generic},
+		{"windows", "", "", Windows},
+		{"darwin", "", "", MacOS},
+	}
+	for _, tc := range tests {
+		if got := platformFromRelease(tc.goos, tc.id, tc.idLike); got != tc.want {
+			t.Errorf("platformFromRelease(%q,%q,%q) = %q, quiero %q", tc.goos, tc.id, tc.idLike, got, tc.want)
+		}
+	}
+}
+
+func TestInstallCommandEsEspecificoPorHerramienta(t *testing.T) {
+	tests := []struct {
+		platform Platform
+		tool     string
+		want     string
+	}{
+		{Ubuntu, "javac", "sudo apt install -y openjdk-17-jdk-headless"},
+		{Ubuntu, "zipalign", "rain doctor --fix --profile complex"},
+		{Alpine, "java", "apk add openjdk17-jdk"},
+		{Termux, "zip", "pkg install zip"},
+		{Windows, "javac", "winget install --id EclipseAdoptium.Temurin.17.JDK -e"},
+		{Ubuntu, "ktlint", "rain doctor --fix --profile complex --lint"},
+	}
+	for _, tc := range tests {
+		got := InstallCommand(tc.platform, tc.tool, Complex)
+		if got != tc.want {
+			t.Errorf("InstallCommand(%q,%q) = %q, quiero %q", tc.platform, tc.tool, got, tc.want)
+		}
+	}
+}
+
+func TestApiLevelOf(t *testing.T) {
+	if got := apiLevelOf("/sdk/platforms/android-35/android.jar"); got != "35" {
+		t.Errorf("apiLevelOf = %q, quiero 35", got)
+	}
+	if got := apiLevelOf("/home/user/.rain/toolchain/android.jar"); got != "36" {
+		t.Errorf("apiLevelOf = %q, quiero 36 por defecto", got)
+	}
+}
+
+func TestContratoDeCheck(t *testing.T) {
+	missing := makeCheck("javac", true, StatusMissing, ReasonNotInstalled, "", "", "", "apt install")
+	if missing.OK || missing.Status != StatusMissing || missing.Reason != ReasonNotInstalled {
+		t.Errorf("check faltante incorrecto: %+v", missing)
+	}
+	if missing.Detail != "no instalado" {
+		t.Errorf("Detail = %q, quiero \"no instalado\"", missing.Detail)
+	}
+
+	broken := makeCheck("aapt2", true, StatusBroken, ReasonUnavailable, "", "/bin/aapt2", "", "")
+	if broken.OK || broken.Status != StatusBroken || broken.Detail != "no se encuentra" {
+		t.Errorf("check roto incorrecto: %+v", broken)
+	}
+
+	ok := makeCheck("java", true, StatusOK, ReasonNone, "21.0.12.1", "/bin/java", "", "")
+	if !ok.OK || ok.Status != StatusOK || ok.Version != "21.0.12.1" {
+		t.Errorf("check correcto incorrecto: %+v", ok)
+	}
+	if SchemaVersion == "1" {
+		t.Error("el esquema JSON debe cambiar al añadir status/reason/install")
 	}
 }
 

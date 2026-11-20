@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -15,7 +16,35 @@ import (
 const (
 	BuildToolsURL = "https://dl.google.com/android/repository/build-tools_r36_linux.zip"
 	PlatformURL   = "https://dl.google.com/android/repository/platform-36_r02.zip"
+)
 
+// buildToolsURLs son los artefactos oficiales de build-tools 36. Se usan para
+// extraer apksigner.jar, aapt2 y zipalign sin depender del gestor de paquetes.
+var buildToolsURLs = map[string]string{
+	"linux":   BuildToolsURL,
+	"windows": "https://dl.google.com/android/repository/build-tools_r36_windows.zip",
+	"darwin":  "https://dl.google.com/android/repository/build-tools_r36_macosx.zip",
+}
+
+func buildToolsURL() string { return buildToolsURLFor(runtime.GOOS) }
+
+func buildToolsURLFor(goos string) string {
+	if url, ok := buildToolsURLs[goos]; ok {
+		return url
+	}
+	return BuildToolsURL
+}
+
+func nativeName(base string) string { return nativeNameFor(base, runtime.GOOS) }
+
+func nativeNameFor(base, goos string) string {
+	if goos == "windows" {
+		return base + ".exe"
+	}
+	return base
+}
+
+const (
 	R8Version = "9.5.28"
 	R8URL     = "https://dl.google.com/dl/android/maven2/com/android/tools/r8/" + R8Version + "/r8-" + R8Version + ".jar"
 
@@ -57,6 +86,12 @@ func (m *Manager) R8Jar() string      { return filepath.Join(m.ToolDir(), "r8.ja
 func (m *Manager) ApksignerJar() string {
 	return filepath.Join(m.ToolDir(), "apksigner.jar")
 }
+func (m *Manager) Aapt2() string {
+	return filepath.Join(m.ToolDir(), nativeName("aapt2"))
+}
+func (m *Manager) ZipAlign() string {
+	return filepath.Join(m.ToolDir(), nativeName("zipalign"))
+}
 func (m *Manager) Kotlinc() string { return filepath.Join(m.ToolDir(), "kotlinc", "bin", "kotlinc") }
 func (m *Manager) KtlintJar() string {
 	return filepath.Join(m.ToolDir(), "ktlint-cli.jar")
@@ -82,7 +117,7 @@ func (m *Manager) Ensure(ctx context.Context, complex bool) error {
 		fn   func(context.Context) error
 	}{
 		{"R8 " + R8Version, m.ensureR8},
-		{"apksigner", m.ensureApksigner},
+		{"build-tools 36 (apksigner, aapt2, zipalign)", m.ensureBuildTools},
 		{"android.jar (API 36)", m.ensureAndroidJar},
 	}
 	if complex {
@@ -138,20 +173,93 @@ func (m *Manager) ensureR8(ctx context.Context) error {
 	return m.download(ctx, R8URL, m.R8Jar(), "R8 "+R8Version)
 }
 
-func (m *Manager) ensureApksigner(ctx context.Context) error {
-	if fileExists(m.ApksignerJar()) {
-		return nil
+// ensureBuildTools extrae de un único ZIP las tres herramientas nativas/JAR
+// que Rain necesita. Se descarga solo si falta alguna de ellas.
+func (m *Manager) ensureBuildTools(ctx context.Context) error {
+	if fileExists(m.ApksignerJar()) && fileExists(m.Aapt2()) && fileExists(m.ZipAlign()) &&
+		fileExists(m.libcxxPath()) && fileExists(m.libcxxPath()+".1") {
+		return m.publishNativeBinaries()
 	}
 
-	tmp, err := m.downloadTemp(ctx, BuildToolsURL, "build-tools 36")
+	tmp, err := m.downloadTemp(ctx, buildToolsURL(), "build-tools 36")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(tmp) }()
 
-	return extractOne(tmp, func(name string) bool {
-		return strings.HasSuffix(name, "/lib/apksigner.jar")
-	}, m.ApksignerJar())
+	tools := []struct {
+		name  string
+		dest  string
+		mode  os.FileMode
+		match func(string) bool
+	}{
+		{
+			name: "apksigner.jar", dest: m.ApksignerJar(), mode: 0o644,
+			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") },
+		},
+		{
+			name: nativeName("aapt2"), dest: m.Aapt2(), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("aapt2") },
+		},
+		{
+			name: nativeName("zipalign"), dest: m.ZipAlign(), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("zipalign") },
+		},
+		{
+			name: "libc++.so", dest: m.libcxxPath(), mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so" },
+		},
+		{
+			name: "libc++.so.1", dest: m.libcxxPath() + ".1", mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" },
+		},
+	}
+	for _, tool := range tools {
+		if fileExists(tool.dest) {
+			continue
+		}
+		if err := extractOneMode(tmp, tool.match, tool.dest, tool.mode); err != nil {
+			return fmt.Errorf("%s: %w", tool.name, err)
+		}
+	}
+	return m.publishNativeBinaries()
+}
+
+func (m *Manager) libcxxPath() string {
+	return filepath.Join(m.ToolDir(), "lib64", "libc++.so")
+}
+
+// publishNativeBinaries deja en ~/.rain/bin (que el CLI antepone al PATH)
+// los ejecutables que el pipeline invoca por su nombre. zipalign necesita un
+// wrapper: el binario de Google enlaza libc++.so, que no está en Ubuntu.
+func (m *Manager) publishNativeBinaries() error {
+	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
+		return err
+	}
+	for _, name := range []string{nativeName("aapt2"), nativeName("zipalign")} {
+		src := filepath.Join(m.ToolDir(), name)
+		if !fileExists(src) {
+			continue
+		}
+		dst := filepath.Join(m.BinDir(), name)
+		content, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		if name == "zipalign" {
+			content = []byte("#!/bin/sh\n" +
+				"# Lanzador de Rain para zipalign (necesita libc++ de build-tools).\n" +
+				"LD_LIBRARY_PATH=\"$HOME/.rain/toolchain/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" " +
+				"exec \"$HOME/.rain/toolchain/zipalign\" \"$@\"\n")
+		}
+		if existing, err := os.ReadFile(dst); err == nil && string(content) == string(existing) {
+			continue
+		}
+		if err := os.WriteFile(dst, content, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) ensureAndroidJar(ctx context.Context) error {
@@ -206,6 +314,9 @@ func (m *Manager) RefreshWrappers() error {
 }
 
 func (m *Manager) writeWrappers(complex bool) error {
+	if runtime.GOOS == "windows" {
+		return m.writeWindowsWrappers(complex)
+	}
 	wrappers := map[string]string{
 		"d8": "#!/bin/sh\n" +
 			"# Lanzador de Rain para d8 (R8).\n" +
@@ -236,6 +347,40 @@ func (m *Manager) writeWrappers(complex bool) error {
 		return err
 	}
 
+	for name, content := range wrappers {
+		path := filepath.Join(m.BinDir(), name)
+		if current, err := os.ReadFile(path); err == nil && string(current) == content {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeWindowsWrappers genera lanzadores .cmd: exec.LookPath en Windows
+// reconoce PATHEXT, así que "d8" resuelve a "d8.cmd" sin tocar el PATH del
+// usuario de forma permanente.
+func (m *Manager) writeWindowsWrappers(complex bool) error {
+	wrappers := map[string]string{
+		"d8.cmd": "@echo off\r\n" +
+			"set HEAP=%RAIN_JAVA_MAX_HEAP%\r\n" +
+			"if \"%HEAP%\"==\"\" set HEAP=1g\r\n" +
+			"java -Xmx%HEAP% %RAIN_JAVA_OPTS% -cp \"%USERPROFILE%\\.rain\\toolchain\\r8.jar\" com.android.tools.r8.D8 %*\r\n",
+		"apksigner.cmd": "@echo off\r\n" +
+			"set HEAP=%RAIN_JAVA_MAX_HEAP%\r\n" +
+			"if \"%HEAP%\"==\"\" set HEAP=512m\r\n" +
+			"java -Xmx%HEAP% %RAIN_JAVA_OPTS% -jar \"%USERPROFILE%\\.rain\\toolchain\\apksigner.jar\" %*\r\n",
+	}
+	if complex {
+		wrappers["kotlinc.cmd"] = "@echo off\r\n" +
+			"\"%USERPROFILE%\\.rain\\toolchain\\kotlinc\\bin\\kotlinc.bat\" %*\r\n"
+	}
+
+	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
+		return err
+	}
 	for name, content := range wrappers {
 		path := filepath.Join(m.BinDir(), name)
 		if current, err := os.ReadFile(path); err == nil && string(current) == content {
@@ -300,6 +445,10 @@ func (m *Manager) downloadTemp(ctx context.Context, url, label string) (string, 
 }
 
 func extractOne(zipPath string, match func(string) bool, dest string) error {
+	return extractOneMode(zipPath, match, dest, 0o644)
+}
+
+func extractOneMode(zipPath string, match func(string) bool, dest string, mode os.FileMode) error {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
@@ -314,7 +463,7 @@ func extractOne(zipPath string, match func(string) bool, dest string) error {
 			return err
 		}
 		tmp := dest + ".part"
-		if err := copyZipFile(f, tmp, 0o644); err != nil {
+		if err := copyZipFile(f, tmp, mode); err != nil {
 			_ = os.Remove(tmp)
 			return err
 		}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,7 +49,14 @@ func TestEnsureIsIdempotentWithCachedFiles(t *testing.T) {
 	if err := os.MkdirAll(manager.ToolDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{manager.R8Jar(), manager.ApksignerJar(), manager.AndroidJar()} {
+	for _, path := range []string{
+		manager.R8Jar(), manager.ApksignerJar(), manager.AndroidJar(), manager.Aapt2(), manager.ZipAlign(),
+		filepath.Join(manager.ToolDir(), "lib64", "libc++.so"),
+		filepath.Join(manager.ToolDir(), "lib64", "libc++.so.1"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte("fake"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -65,6 +73,65 @@ func TestEnsureIsIdempotentWithCachedFiles(t *testing.T) {
 		}
 		if info.Mode().Perm() != 0o755 {
 			t.Errorf("wrapper %s permisos = %v, quiero 0755", name, info.Mode().Perm())
+		}
+	}
+}
+
+func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Root = filepath.Join(t.TempDir(), ".rain")
+	if err := os.MkdirAll(manager.ToolDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"aapt2", "zipalign"} {
+		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("binario"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.publishNativeBinaries(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(filepath.Join(manager.BinDir(), "zipalign"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "LD_LIBRARY_PATH") || !strings.Contains(string(out), "lib64") {
+		t.Errorf("el wrapper de zipalign no fija LD_LIBRARY_PATH:\n%s", out)
+	}
+}
+
+func TestWindowsToolchainPathsAndWrappers(t *testing.T) {
+	if got := nativeNameFor("aapt2", "windows"); got != "aapt2.exe" {
+		t.Errorf("nativeNameFor(aapt2, windows) = %q, quiero aapt2.exe", got)
+	}
+	if got := nativeNameFor("zipalign", "linux"); got != "zipalign" {
+		t.Errorf("nativeNameFor(zipalign, linux) = %q, quiero zipalign", got)
+	}
+	if got := buildToolsURLFor("windows"); !strings.HasSuffix(got, "build-tools_r36_windows.zip") {
+		t.Errorf("buildToolsURLFor(windows) = %q", got)
+	}
+	if got := buildToolsURLFor("darwin"); !strings.HasSuffix(got, "build-tools_r36_macosx.zip") {
+		t.Errorf("buildToolsURLFor(darwin) = %q", got)
+	}
+
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Root = filepath.Join(t.TempDir(), ".rain")
+	if err := manager.writeWindowsWrappers(true); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"d8.cmd", "apksigner.cmd", "kotlinc.cmd"} {
+		out, err := os.ReadFile(filepath.Join(manager.BinDir(), name))
+		if err != nil {
+			t.Fatalf("wrapper %s no creado: %v", name, err)
+		}
+		if !strings.Contains(string(out), "@echo off") {
+			t.Errorf("el wrapper %s no es un .cmd válido:\n%s", name, out)
 		}
 	}
 }

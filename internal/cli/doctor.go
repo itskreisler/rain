@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -21,6 +22,9 @@ func newDoctorCmd() *cobra.Command {
 		printInstall bool
 		fix          bool
 		lintTools    bool
+		install      bool
+		assumeYes    bool
+		dryRun       bool
 	)
 
 	cmd := &cobra.Command{
@@ -32,6 +36,9 @@ func newDoctorCmd() *cobra.Command {
 			"Perfiles:\n" +
 			"  simple   Java + recursos, sin Kotlin ni AndroidX\n" +
 			"  complex  Kotlin + Compose + AndroidX (R8 y Kotlin modernos)\n\n" +
+			"--install descarga primero el toolchain gestionado y después intenta\n" +
+			"instalar las dependencias del sistema con el gestor detectado (apt,\n" +
+			"apk, pkg, winget o choco). Pide confirmación salvo con --yes.\n\n" +
 			"ktlint y detekt aparecen como opcionales: no hacen falta para\n" +
 			"compilar, pero " + "\"rain lint\"" + " los usa si están instalados.",
 		Args: cobra.NoArgs,
@@ -40,10 +47,18 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return usageErr("%v", err)
 			}
+			devlog("doctor.RunE", fmt.Sprintf("profile=%s, fix=%t, lint=%t, install=%t, yes=%t, dryRun=%t, json=%t",
+				p, fix, lintTools, install, assumeYes, dryRun, jsonOut), "Ejecuta el diagnóstico del entorno")
 
-			if fix {
-				if err := runDoctorFix(cmd, p); err != nil {
+			if install {
+				if err := runDoctorInstall(cmd.Context(), p, cmd, dryRun, assumeYes); err != nil {
 					return err
+				}
+			} else {
+				if fix {
+					if err := runDoctorFix(cmd, p); err != nil {
+						return err
+					}
 				}
 				if lintTools {
 					if err := runDoctorFixLint(cmd); err != nil {
@@ -79,11 +94,50 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&printInstall, "print-install", false, "mostrar solo los comandos de instalación")
 	cmd.Flags().BoolVar(&fix, "fix", false, "descargar el toolchain propio en ~/.rain (sin root)")
 	cmd.Flags().BoolVar(&lintTools, "lint", false, "con --fix, descargar también los analizadores estáticos (ktlint, detekt)")
+	cmd.Flags().BoolVar(&install, "install", false, "instalar automáticamente lo que falte (toolchain + paquetes del sistema)")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "con --install, no pedir confirmación")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "con --install, mostrar qué haría sin ejecutarlo")
 
 	return cmd
 }
 
-// runDoctorFixLint descarga los analizadores estáticos opcionales.
+// runDoctorInstall prepara el toolchain gestionado y, si aún faltan
+// dependencias del sistema, ejecuta los comandos concretos de cada herramienta.
+func runDoctorInstall(ctx context.Context, profile doctor.Profile, cmd *cobra.Command, dryRun, yes bool) error {
+	devlog("runDoctorInstall", fmt.Sprintf("profile=%s, dryRun=%t, yes=%t", profile, dryRun, yes), "Instala el toolchain gestionado y las dependencias del sistema que falten")
+
+	if dryRun {
+		preview := doctor.Diagnose(profile)
+		_, err := doctor.InstallMissing(ctx, preview, doctor.InstallOptions{
+			DryRun: true, Out: cmd.OutOrStdout(),
+		})
+		return err
+	}
+
+	if err := runDoctorFix(cmd, profile); err != nil {
+		return err
+	}
+	if err := runDoctorFixLint(cmd); err != nil {
+		return fmt.Errorf("descargando analizadores estáticos: %w", err)
+	}
+
+	remaining := doctor.DiagnoseContext(ctx, profile)
+	_, err := doctor.InstallMissing(ctx, remaining, doctor.InstallOptions{
+		AssumeYes: yes,
+		Confirm: func(command string) bool {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "¿Ejecutar %q? [s/N] ", command)
+			var answer string
+			if _, scanErr := fmt.Fscanln(cmd.InOrStdin(), &answer); scanErr != nil {
+				return false
+			}
+			answer = strings.ToLower(strings.TrimSpace(answer))
+			return answer == "s" || answer == "si" || answer == "y" || answer == "yes"
+		},
+		Out: cmd.OutOrStdout(),
+	})
+	return err
+}
+
 func runDoctorFixLint(cmd *cobra.Command) error {
 	devlog("runDoctorFixLint", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga los analizadores estáticos opcionales para doctor")
 	manager, err := toolchain.New()
@@ -117,35 +171,98 @@ func runDoctorFix(cmd *cobra.Command, profile doctor.Profile) error {
 }
 
 func printDoctorReport(cmd *cobra.Command, report doctor.Report, onlyInstall bool) {
-	devlog("printDoctorReport", fmt.Sprintf("cmd=%s, report=%+v, onlyInstall=%t", cmd.Name(), report, onlyInstall), "Imprime en consola el reporte del diagnóstico de doctor")
+	devlog("printDoctorReport", fmt.Sprintf("cmd=%s, checks=%d, perfil=%s, listo=%t", cmd.Name(), len(report.Checks), report.Profile, report.Ready), "Imprime en consola el reporte del diagnóstico de doctor")
 	out := cmd.OutOrStdout()
+
+	// Auxiliares de render: se definen aquí para no llenar la tabla de líneas
+	// DEVLOG con una entrada por herramienta.
+	statusText := func(check doctor.Check) string {
+		switch check.Status {
+		case doctor.StatusOK:
+			return "instalado"
+		case doctor.StatusBroken:
+			return "no se encuentra"
+		case doctor.StatusWarning:
+			return "advertencia"
+		case doctor.StatusMissing:
+			if !check.Required {
+				return "opcional"
+			}
+			return "no instalado"
+		default:
+			return "desconocido"
+		}
+	}
+	paint := func(code, text string) string {
+		if ui.NoColor {
+			return text
+		}
+		return code + text + ui.Reset
+	}
+	widthOf := func(value func(doctor.Check) string) int {
+		width := 0
+		for _, check := range report.Checks {
+			if n := len(value(check)); n > width {
+				width = n
+			}
+		}
+		return width
+	}
 
 	if !onlyInstall {
 		fmt.Fprintf(out, "Rain doctor — perfil: %s\n", report.Profile)
 		fmt.Fprintf(out, "Plataforma: %s (%s/%s)\n\n", report.Platform, report.OS, report.Arch)
 
+		nameW := widthOf(func(c doctor.Check) string { return c.Name })
+		statusW := widthOf(statusText)
+		if nameW < len("HERRAMIENTA") {
+			nameW = len("HERRAMIENTA")
+		}
+		if statusW < len("ESTADO") {
+			statusW = len("ESTADO")
+		}
+		versionW := len("VERSIÓN")
 		for _, check := range report.Checks {
-			symbol := "✅"
-			if !check.OK {
-				if check.Required {
-					symbol = "❌"
-				} else {
-					symbol = "⚠️ "
-				}
+			version := check.Version
+			if version == "" {
+				version = "—"
 			}
+			if len(version) > versionW {
+				versionW = len(version)
+			}
+		}
 
-			detail := check.Version
-			if detail == "" {
+		fmt.Fprintf(out, "%-*s  %-*s  %-*s  %s\n", nameW, "HERRAMIENTA", statusW, "ESTADO", versionW, "VERSIÓN", "DETALLE / INSTALACIÓN")
+		fmt.Fprintf(out, "%s  %s  %s  %s\n", strings.Repeat("─", nameW), strings.Repeat("─", statusW), strings.Repeat("─", versionW), strings.Repeat("─", 20))
+
+		for _, check := range report.Checks {
+			version := check.Version
+			if version == "" {
+				version = "—"
+			}
+			detail := check.Detail
+			if check.OK && check.Path != "" {
 				detail = check.Path
 			}
-			if detail == "" {
-				detail = check.Detail
-			}
-			if check.OK && check.Detail != "" {
-				detail = check.Detail
+			if check.Path != "" && !check.OK && detail != "" {
+				detail += " (" + check.Path + ")"
 			}
 
-			fmt.Fprintf(out, "%s %-15s %s\n", symbol, check.Name, detail)
+			text := statusText(check)
+			padded := fmt.Sprintf("%-*s", statusW, text)
+			code := ui.Green
+			if !check.OK {
+				code = ui.Red
+				if check.Status == doctor.StatusWarning {
+					code = ui.Yellow
+				}
+			}
+			padded = paint(code, text) + padded[len(text):]
+
+			fmt.Fprintf(out, "%-*s  %s  %-*s  %s\n", nameW, check.Name, padded, versionW, version, detail)
+			if !check.OK && check.Install != "" {
+				fmt.Fprintf(out, "%s  → %s\n", strings.Repeat(" ", nameW+2+statusW+2+versionW+2), check.Install)
+			}
 		}
 
 		fmt.Fprintln(out)

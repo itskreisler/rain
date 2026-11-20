@@ -49,6 +49,50 @@ jobs:
         with:
           version: v2.5.0
 
+  windows-smoke:
+    name: Smoke test en Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Compilar, vet y tests
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+      - name: Compilar binario y probar CLI
+        shell: pwsh
+        run: |
+          go build -trimpath -o rain.exe .
+          .\rain.exe version
+          .\rain.exe doctor --help
+
+      # doctor devuelve 3 cuando faltan herramientas del sistema; en un runner
+      # limpio es esperado, pero queremos comprobar que el JSON se genera.
+      - name: Generar informe doctor en JSON
+        shell: pwsh
+        continue-on-error: true
+        run: .\rain.exe doctor --json
+
+      # windows-latest ya trae Chocolatey, pero ejecutamos el script oficial
+      # para verificar que la instalación documentada sigue funcionando.
+      - name: Verificar script de instalación de Chocolatey
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+      - name: Chocolatey disponible para --install
+        shell: pwsh
+        run: choco --version
+
   build-and-test-examples:
     name: Build de Ejemplos con Rain
     needs: test

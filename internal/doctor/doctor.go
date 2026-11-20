@@ -42,21 +42,50 @@ const (
 	Alpine  Platform = "alpine"
 	Termux  Platform = "termux"
 	Ubuntu  Platform = "ubuntu"
+	Windows Platform = "windows"
+	MacOS   Platform = "macos"
 	Generic Platform = "generic"
+)
+
+// Status es el contrato de presentación de cada herramienta. Es independiente
+// de que la comprobación sea obligatoria u opcional: eso lo dice Required.
+type Status string
+
+const (
+	StatusOK      Status = "ok"      // instalada y utilizable: se muestra su versión
+	StatusMissing Status = "missing" // no instalada: no está en PATH ni en rutas gestionadas
+	StatusBroken  Status = "broken"  // hay una ruta, pero no funciona
+	StatusWarning Status = "warning" // presente pero con una advertencia (memoria, opcionales)
+)
+
+// Reason es la causa tipada detrás de un Status. La UI usa Detail para el
+// texto libre y Reason para decidir el icono y el comando de instalación.
+type Reason string
+
+const (
+	ReasonNone          Reason = ""
+	ReasonNotInstalled  Reason = "not-installed"
+	ReasonUnavailable   Reason = "unavailable"
+	ReasonIncompatible  Reason = "incompatible"
+	ReasonAdvisory      Reason = "advisory"
+	ReasonManagedRepair Reason = "managed-repair"
 )
 
 type Check struct {
 	Name     string `json:"name"`
 	Required bool   `json:"required"`
-	OK       bool   `json:"ok"`
+	OK       bool   `json:"ok"` // derivado de Status, se conserva por compatibilidad
+	Status   Status `json:"status"`
+	Reason   Reason `json:"reason,omitempty"`
 	Version  string `json:"version,omitempty"`
 	Path     string `json:"path,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	Install  string `json:"install,omitempty"`
 }
 
-// SchemaVersion identifica la versión del esquema JSON de doctor. Los
-// consumidores (CI, scripts) deben comprobarla antes de parsear el resto.
-const SchemaVersion = "1"
+// SchemaVersion cambia porque el contrato de Check incorpora status/reason/
+// install. Los consumidores deben comprobarla antes de parsear el resto.
+const SchemaVersion = "2"
 
 type Report struct {
 	SchemaVersion string         `json:"schemaVersion"`
@@ -71,7 +100,13 @@ type Report struct {
 	Commands      []string       `json:"commands,omitempty"`
 }
 
+// Diagnose mantiene la firma histórica. DiagnoseContext es la versión
+// cancelable que usan los comandos que pueden instalar herramientas.
 func Diagnose(profile Profile) Report {
+	return DiagnoseContext(context.Background(), profile)
+}
+
+func DiagnoseContext(ctx context.Context, profile Profile) Report {
 	report := Report{
 		SchemaVersion: SchemaVersion,
 		Profile:       profile,
@@ -81,199 +116,122 @@ func Diagnose(profile Profile) Report {
 	}
 
 	add := func(check Check) {
+		if check.Install == "" {
+			check.Install = InstallCommand(report.Platform, check.Name, profile)
+		}
+		if check.Detail == "" {
+			check.Detail = reasonText(check.Reason)
+		}
 		report.Checks = append(report.Checks, check)
 	}
 
-	javaPath, javaOut := runVersion("java", "-version")
-	javaVersion := parseJavaVersion(javaOut)
-	javaOK := javaPath != "" && majorOf(javaVersion) >= 17
-	add(Check{
-		Name:     "java",
-		Required: true,
-		OK:       javaOK,
-		Version:  javaVersion,
-		Path:     javaPath,
-		Detail:   javaDetail(javaPath, javaOK),
-	})
+	probes := []toolProbe{
+		{
+			name: "java", command: "java", args: []string{"-version"}, required: true,
+			parse: parseJavaVersion, valid: func(v string) bool { return majorOf(v) >= 17 },
+			invalidDetail: "se requiere Java 17 o superior",
+		},
+		{
+			name: "javac", command: "javac", args: []string{"-version"}, required: true,
+			parse: firstVersion, valid: func(v string) bool { return majorOf(v) >= 17 },
+			invalidDetail: "se requiere Java 17 o superior",
+		},
+		{name: "keytool", command: "keytool", args: []string{"-help"}, required: true},
+		{name: "aapt2", command: "aapt2", args: []string{"version"}, required: true, parse: firstVersion},
+		// zipalign no tiene --version: ejecutarlo sin argumentos devuelve
+		// error de uso, así que solo comprobamos que exista en PATH.
+		{name: "zipalign", command: "zipalign", required: true, presenceOnly: true},
+		{name: "zip", command: "zip", args: []string{"-v"}, required: true, parse: firstVersion},
+	}
+	for _, p := range probes {
+		add(p.check(ctx, report.Platform, profile))
+	}
 
-	javacPath, javacOut := runVersion("javac", "-version")
-	javacVersion := firstVersion(javacOut)
-	javacOK := javacPath != "" && majorOf(javacVersion) >= 17
-	add(Check{
-		Name:     "javac",
-		Required: true,
-		OK:       javacOK,
-		Version:  javacVersion,
-		Path:     javacPath,
-		Detail:   javaDetail(javacPath, javacOK),
-	})
-
-	keytoolPath, _ := runVersion("keytool", "-help")
-	add(Check{
-		Name:     "keytool",
-		Required: true,
-		OK:       keytoolPath != "",
-		Path:     keytoolPath,
-		Detail:   missingDetail(keytoolPath),
-	})
-
-	aapt2Path, aapt2Out := runVersion("aapt2", "version")
-	add(Check{
-		Name:     "aapt2",
-		Required: true,
-		OK:       aapt2Path != "",
-		Version:  firstVersion(aapt2Out),
-		Path:     aapt2Path,
-		Detail:   missingDetail(aapt2Path),
-	})
-
-	zipalignPath, _ := findCommand("zipalign")
-	add(Check{
-		Name:     "zipalign",
-		Required: true,
-		OK:       zipalignPath != "",
-		Path:     zipalignPath,
-		Detail:   missingDetail(zipalignPath),
-	})
-
-	zipPath, zipOut := runVersion("zip", "-v")
-	add(Check{
-		Name:     "zip",
-		Required: true,
-		OK:       zipPath != "",
-		Version:  firstVersion(zipOut),
-		Path:     zipPath,
-		Detail:   missingDetail(zipPath),
-	})
-
-	d8Path, d8Out := runVersion("d8", "--version")
-	d8Version := firstVersion(d8Out)
-	if d8Path == "" {
-		if managed := managedTool("r8.jar"); managed != "" {
-			d8Path = managed
-			d8Version = toolchain.R8Version
-		} else if managed := managedTool("d8.jar"); managed != "" {
-			d8Path = managed
-			d8Version = "build-tools 36"
+	d8 := toolProbe{name: "d8", command: "d8", args: []string{"--version"}, required: true, parse: firstVersion}.
+		check(ctx, report.Platform, profile)
+	if !d8.OK {
+		if jar := managedTool("r8.jar"); jar != "" {
+			d8 = managedCheck(d8, jar, toolchain.R8Version)
 		}
 	}
-	d8OK := d8Path != "" && javaOK
-	add(Check{
-		Name:     "d8",
-		Required: true,
-		OK:       d8OK,
-		Version:  d8Version,
-		Path:     d8Path,
-		Detail:   javaToolDetail(d8Path, d8OK, javaOK),
-	})
+	add(d8)
 
-	apksignerPath, apksignerOut := runVersion("apksigner", "version")
-	if apksignerPath == "" {
-		if managed := managedTool("apksigner.jar"); managed != "" {
-			apksignerPath = managed
-			apksignerOut = "build-tools 36"
+	apksigner := toolProbe{name: "apksigner", command: "apksigner", args: []string{"version"}, required: true, parse: firstVersion}.
+		check(ctx, report.Platform, profile)
+	if !apksigner.OK {
+		if jar := managedTool("apksigner.jar"); jar != "" {
+			apksigner = managedCheck(apksigner, jar, "build-tools 36")
 		}
 	}
-	apksignerOK := apksignerPath != "" && javaOK
-	add(Check{
-		Name:     "apksigner",
-		Required: true,
-		OK:       apksignerOK,
-		Version:  firstVersion(apksignerOut),
-		Path:     apksignerPath,
-		Detail:   javaToolDetail(apksignerPath, apksignerOK, javaOK),
-	})
+	add(apksigner)
 
 	jarPath, jarOK := FindAndroidJar()
-	jarDetail := ""
 	switch {
 	case jarPath == "":
-		jarDetail = "no encontrado"
+		add(makeCheck("android.jar", true, StatusMissing, ReasonNotInstalled, "", "", "", ""))
 	case !jarOK:
-		jarDetail = "archivo inválido: no parece un android.jar"
+		add(makeCheck("android.jar", true, StatusBroken, ReasonIncompatible, "", jarPath,
+			"archivo inválido: no parece un android.jar", ""))
+	default:
+		add(makeCheck("android.jar", true, StatusOK, ReasonNone, "API "+apiLevelOf(jarPath), jarPath, "", ""))
 	}
-	add(Check{
-		Name:     "android.jar",
-		Required: true,
-		OK:       jarOK,
-		Version:  "API 36",
-		Path:     jarPath,
-		Detail:   jarDetail,
-	})
 
 	if profile == Complex {
-		kotlincPath, kotlincOut := runVersion("kotlinc", "-version")
-		if kotlincPath == "" {
-			kotlincPath = managedTool(filepath.Join("kotlinc", "bin", "kotlinc"))
+		kotlinc := toolProbe{name: "kotlinc", command: "kotlinc", args: []string{"-version"}, required: true, parse: firstVersion}.
+			check(ctx, report.Platform, profile)
+		if !kotlinc.OK {
+			if path := managedTool(filepath.Join("kotlinc", "bin", "kotlinc")); path != "" {
+				kotlinc = managedCheck(kotlinc, path, toolchain.KotlinVersion)
+			}
 		}
-		add(Check{
-			Name:     "kotlinc",
-			Required: true,
-			OK:       kotlincPath != "",
-			Version:  firstVersion(kotlincOut),
-			Path:     kotlincPath,
-			Detail:   missingDetail(kotlincPath),
-		})
+		add(kotlinc)
 
-		plugin := findComposePlugin(kotlincPath)
-		add(Check{
-			Name:     "compose-plugin",
-			Required: true,
-			OK:       plugin != "",
-			Path:     plugin,
-			Detail:   missingDetail(plugin),
-		})
+		plugin := findComposePlugin(kotlinc.Path)
+		if plugin == "" {
+			add(makeCheck("compose-plugin", true, StatusMissing, ReasonNotInstalled, "", "", "", ""))
+		} else {
+			add(makeCheck("compose-plugin", true, StatusOK, ReasonNone, "", plugin, "", ""))
+		}
 
 		if report.Platform == Termux {
 			jansi := termuxJansi()
-			add(Check{
-				Name:     "libjansi",
-				Required: false,
-				OK:       jansi != "",
-				Path:     jansi,
-				Detail:   "recomendado para kotlinc en Termux",
-			})
+			if jansi == "" {
+				add(makeCheck("libjansi", false, StatusWarning, ReasonAdvisory, "", "",
+					"recomendado para kotlinc en Termux", ""))
+			} else {
+				add(makeCheck("libjansi", false, StatusOK, ReasonNone, "", jansi, "", ""))
+			}
 		}
 	}
 
-	// Analizadores estáticos opcionales: no hacen falta para compilar, pero
-	// "rain lint" los usa si están instalados.
-	for _, lt := range []struct {
-		name    string
-		version string
-	}{
+	// Los analizadores opcionales no bloquean: "rain lint" los usa si están.
+	for _, lt := range []struct{ name, version string }{
 		{"ktlint", toolchain.KtlintVersion},
 		{"detekt", toolchain.DetektVersion},
 	} {
 		path, version := findLintTool(lt.name)
-		detail := "opcional: no instalado (rain doctor --fix --lint)"
-		if path != "" {
-			detail = "opcional: disponible para rain lint"
+		if path == "" {
+			add(makeCheck(lt.name, false, StatusWarning, ReasonAdvisory, "", "",
+				"opcional: no instalado (rain doctor --fix --lint)", ""))
+			continue
 		}
-		add(Check{
-			Name:     lt.name,
-			Required: false,
-			OK:       path != "",
-			Version:  version,
-			Path:     path,
-			Detail:   detail,
-		})
+		if version == "" {
+			version = lt.version
+		}
+		add(makeCheck(lt.name, false, StatusOK, ReasonNone, version, path,
+			"opcional: disponible para rain lint", ""))
 	}
 
-	// La memoria es la causa habitual de fallos en contenedores: la JVM
-	// reserva 1/4 de la RAM física y el runtime de Go puede morir por
-	// presión de memoria. No es un requisito, pero conviene avisar.
 	mem := memenv.Detect()
 	memDetail := memenv.Describe()
 	if hint := memenv.Hint(); hint != "" {
-		memDetail = memDetail + " → " + hint
+		memDetail += " → " + hint
 	}
-	add(Check{
-		Name:     "memoria",
-		Required: false,
-		OK:       !mem.Tight(),
-		Detail:   memDetail,
-	})
+	memStatus, memReason := StatusOK, ReasonNone
+	if mem.Tight() {
+		memStatus, memReason = StatusWarning, ReasonAdvisory
+	}
+	add(makeCheck("memoria", false, memStatus, memReason, "", "", memDetail, ""))
 
 	report.Compat = compat.CheckMatrix(versionsFromChecks(report.Checks))
 
@@ -288,8 +246,84 @@ func Diagnose(profile Profile) Report {
 	return report
 }
 
-// versionsFromChecks reúne las versiones detectadas para la matriz de
-// compatibilidad (T2.3).
+// toolProbe describe una comprobación de una herramienta de línea de comandos.
+type toolProbe struct {
+	name          string
+	command       string
+	args          []string
+	required      bool
+	presenceOnly  bool
+	parse         func(string) string
+	valid         func(string) bool
+	invalidDetail string
+}
+
+func (p toolProbe) check(ctx context.Context, platform Platform, profile Profile) Check {
+	if p.presenceOnly {
+		path, _ := findCommand(p.command)
+		if path == "" {
+			return makeCheck(p.name, p.required, StatusMissing, ReasonNotInstalled, "", "", "",
+				InstallCommand(platform, p.name, profile))
+		}
+		return makeCheck(p.name, p.required, StatusOK, ReasonNone, "", path, "",
+			InstallCommand(platform, p.name, profile))
+	}
+
+	path, out, err := runVersion(ctx, p.command, p.args...)
+	version := ""
+	if p.parse != nil {
+		version = p.parse(out)
+	}
+
+	status, reason, detail := StatusOK, ReasonNone, ""
+	switch {
+	case err != nil && path == "":
+		status, reason = StatusMissing, ReasonNotInstalled
+	case err != nil:
+		status, reason = StatusBroken, ReasonUnavailable
+		detail = "no se puede ejecutar: " + err.Error()
+	case p.valid != nil && !p.valid(version):
+		status, reason, detail = StatusBroken, ReasonIncompatible, p.invalidDetail
+	}
+	return makeCheck(p.name, p.required, status, reason, version, path, detail,
+		InstallCommand(platform, p.name, profile))
+}
+
+func makeCheck(name string, required bool, status Status, reason Reason, version, path, detail, install string) Check {
+	if detail == "" {
+		detail = reasonText(reason)
+	}
+	return Check{
+		Name: name, Required: required, Status: status, OK: status == StatusOK,
+		Reason: reason, Version: version, Path: path, Detail: detail, Install: install,
+	}
+}
+
+func managedCheck(base Check, path, version string) Check {
+	base.Status, base.Reason, base.OK = StatusOK, ReasonManagedRepair, true
+	base.Path = path
+	if base.Version == "" {
+		base.Version = version
+	}
+	base.Detail = "gestionado por Rain"
+	return base
+}
+
+func reasonText(reason Reason) string {
+	switch reason {
+	case ReasonNotInstalled:
+		return "no instalado"
+	case ReasonUnavailable:
+		return "no se encuentra"
+	case ReasonIncompatible:
+		return "no funciona"
+	case ReasonManagedRepair:
+		return "gestionado por Rain"
+	default:
+		return ""
+	}
+}
+
 func versionsFromChecks(checks []Check) compat.Versions {
 	versions := compat.Versions{CompileSDK: 36}
 	for _, check := range checks {
@@ -307,66 +341,172 @@ func versionsFromChecks(checks []Check) compat.Versions {
 	return versions
 }
 
+// DetectPlatform prioriza señales explícitas del entorno (Termux, GOOS) antes
+// que los gestores de paquetes disponibles en PATH.
 func DetectPlatform() Platform {
+	if runtime.GOOS == "windows" {
+		return Windows
+	}
+	if runtime.GOOS == "darwin" {
+		return MacOS
+	}
 	if strings.Contains(os.Getenv("PREFIX"), "com.termux") {
 		return Termux
 	}
-	if _, err := exec.LookPath("pkg"); err == nil {
+	if runtime.GOOS == "android" {
 		return Termux
 	}
-	if data, err := os.ReadFile("/etc/os-release"); err == nil {
-		content := strings.ToLower(string(data))
-		if strings.Contains(content, "alpine") {
-			return Alpine
-		}
-		if strings.Contains(content, "ubuntu") || strings.Contains(content, "debian") {
-			return Ubuntu
+
+	if id, idLike := readOSRelease(); id != "" {
+		if p := platformFromRelease(runtime.GOOS, id, idLike); p != Generic {
+			return p
 		}
 	}
 	if _, err := exec.LookPath("apk"); err == nil {
 		return Alpine
 	}
-	if _, err := exec.LookPath("apt"); err == nil {
+	if _, err := exec.LookPath("apt-get"); err == nil {
 		return Ubuntu
 	}
-	if _, err := exec.LookPath("apt-get"); err == nil {
+	if _, err := exec.LookPath("apt"); err == nil {
 		return Ubuntu
 	}
 	return Generic
 }
 
+// platformFromRelease es pura para poder probar la detección sin depender del
+// /etc/os-release de la máquina que ejecuta los tests.
+func platformFromRelease(goos, id, idLike string) Platform {
+	switch {
+	case goos == "windows":
+		return Windows
+	case goos == "darwin":
+		return MacOS
+	case id == "alpine" || hasToken(idLike, "alpine"):
+		return Alpine
+	case id == "termux":
+		return Termux
+	case id == "ubuntu" || id == "debian" || hasToken(idLike, "debian") || hasToken(idLike, "ubuntu"):
+		return Ubuntu
+	default:
+		return Generic
+	}
+}
+
+func readOSRelease() (id, idLike string) {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		value = strings.Trim(strings.ToLower(strings.TrimSpace(value)), `"'`)
+		switch strings.TrimSpace(key) {
+		case "ID":
+			id = value
+		case "ID_LIKE":
+			idLike = value
+		}
+	}
+	return id, idLike
+}
+
+func hasToken(list, token string) bool {
+	for _, part := range strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(list)) {
+		if part == token {
+			return true
+		}
+	}
+	return false
+}
+
+// InstallCommand devuelve el comando concreto para una herramienta fallida.
+// Las herramientas que Rain puede descargar por su cuenta se arreglan con
+// --fix; el resto depende del gestor de paquetes de la plataforma.
+func InstallCommand(platform Platform, tool string, profile Profile) string {
+	fix := "rain doctor --fix --profile " + string(profile)
+	switch tool {
+	case "d8", "apksigner", "android.jar", "aapt2", "zipalign", "kotlinc", "compose-plugin":
+		return fix
+	case "ktlint", "detekt":
+		return fix + " --lint"
+	}
+
+	switch platform {
+	case Ubuntu:
+		switch tool {
+		case "java", "javac", "keytool":
+			return "sudo apt install -y openjdk-17-jdk-headless"
+		case "zip":
+			return "sudo apt install -y zip"
+		}
+	case Alpine:
+		switch tool {
+		case "java", "javac", "keytool":
+			return "apk add openjdk17-jdk"
+		case "zip":
+			return "apk add zip"
+		}
+	case Termux:
+		switch tool {
+		case "java", "javac", "keytool":
+			return "pkg install openjdk-17"
+		case "zip":
+			return "pkg install zip"
+		}
+	case Windows:
+		switch tool {
+		case "java", "javac", "keytool":
+			return "winget install --id EclipseAdoptium.Temurin.17.JDK -e"
+		case "zip":
+			return "choco install zip -y"
+		}
+	case MacOS:
+		switch tool {
+		case "java", "javac", "keytool":
+			return "brew install openjdk@17"
+		case "zip":
+			return "brew install zip"
+		}
+	}
+	return fix
+}
+
 func Recommendations(platform Platform, profile Profile) []string {
+	fix := "rain doctor --fix --profile " + string(profile)
 	switch platform {
 	case Termux:
-		commands := []string{
-			"pkg install openjdk-17 aapt2 d8 apksigner zipalign zip",
-		}
+		commands := []string{"pkg install openjdk-17 zip"}
 		if profile == Complex {
 			commands = append(commands, "pkg install kotlin libjansi")
 		}
-		return append(commands, "rain doctor --fix --profile "+string(profile))
-
+		return append(commands, fix)
 	case Alpine:
-		commands := []string{
+		return []string{
 			"apk add openjdk17-jdk zip",
 			"apk add --repository https://dl-cdn.alpinelinux.org/alpine/edge/main --repository https://dl-cdn.alpinelinux.org/alpine/edge/community --repository https://dl-cdn.alpinelinux.org/alpine/edge/testing android-build-tools",
+			fix,
 		}
-		return append(commands, "rain doctor --fix --profile "+string(profile))
-
 	case Ubuntu:
-		commands := []string{
-			"sudo apt update && sudo apt install -y openjdk-17-jdk zip zipalign aapt",
+		return []string{"sudo apt install -y openjdk-17-jdk-headless zip", fix}
+	case Windows:
+		return []string{
+			"winget install --id EclipseAdoptium.Temurin.17.JDK -e",
+			"choco install zip -y",
+			fix,
 		}
-		return append(commands, "rain doctor --fix --profile "+string(profile))
-
+	case MacOS:
+		return []string{"brew install openjdk@17 zip", fix}
 	default:
-		commands := []string{
-			"# Termux: pkg install openjdk-17 aapt2 d8 apksigner zipalign zip",
-			"# Ubuntu/Debian: sudo apt update && sudo apt install -y openjdk-17-jdk zip zipalign aapt",
+		return []string{
+			"# Termux: pkg install openjdk-17 zip",
+			"# Ubuntu/Debian: sudo apt install -y openjdk-17-jdk-headless zip",
 			"# Alpine: apk add openjdk17-jdk zip",
-			"rain doctor --fix --profile " + string(profile),
+			fix,
 		}
-		return commands
 	}
 }
 
@@ -403,7 +543,6 @@ func androidJarCandidates() []string {
 		}
 	}
 
-	// Cualquier plataforma android-XX instalada, de la más nueva a la más vieja.
 	if base := os.Getenv("ANDROID_HOME"); base != "" {
 		if entries, err := os.ReadDir(filepath.Join(base, "platforms")); err == nil {
 			for i := len(entries) - 1; i >= 0; i-- {
@@ -429,6 +568,15 @@ func validAndroidJar(path string) bool {
 	return false
 }
 
+var apiLevelRe = regexp.MustCompile(`android-(\d+)`)
+
+func apiLevelOf(path string) string {
+	if match := apiLevelRe.FindStringSubmatch(filepath.ToSlash(path)); len(match) == 2 {
+		return match[1]
+	}
+	return "36"
+}
+
 func managedTool(name string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -445,8 +593,6 @@ func managedTool(name string) string {
 	return ""
 }
 
-// findLintTool localiza un analizador estático: primero el toolchain de Rain
-// (~/.rain/toolchain) y después el PATH del sistema.
 func findLintTool(name string) (string, string) {
 	switch name {
 	case "ktlint":
@@ -461,10 +607,6 @@ func findLintTool(name string) (string, string) {
 			return jar, toolchain.DetektVersion
 		}
 		if path, err := exec.LookPath("detekt"); err == nil {
-			return path, ""
-		}
-	case "pmd":
-		if path, err := exec.LookPath("pmd"); err == nil {
 			return path, ""
 		}
 	}
@@ -515,23 +657,19 @@ func termuxJansi() string {
 
 // runVersion localiza un comando y lo ejecuta para obtener su versión.
 //
-// Devuelve la ruta y la salida solo si el comando **funciona**: un lanzador de
-// ~/.rain/bin que apunta a un toolchain que no se ha descargado existe en el
-// PATH pero falla al ejecutarse, y contarlo como disponible sería un check
-// mentiroo.
-func runVersion(name string, args ...string) (string, string) {
+// A diferencia de la versión anterior, conserva la ruta cuando el comando
+// falla: así doctor puede distinguir "no instalado" (sin ruta) de
+// "encontrado pero no funciona" (con ruta y error).
+func runVersion(ctx context.Context, name string, args ...string) (string, string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
-		return "", ""
+		return "", "", fmt.Errorf("no encontrado en PATH: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
-	if err != nil {
-		return "", ""
-	}
-	return path, strings.TrimSpace(string(out))
+	out, err := exec.CommandContext(runCtx, path, args...).CombinedOutput()
+	return path, strings.TrimSpace(string(out)), err
 }
 
 func findCommand(name string) (string, string) {
@@ -545,6 +683,7 @@ func findCommand(name string) (string, string) {
 var (
 	javaVersionRe = regexp.MustCompile(`version "([^"]+)"`)
 	numberRe      = regexp.MustCompile(`\d+(?:\.\d+)+`)
+	warningLineRe = regexp.MustCompile(`^\[\d+(?:\.\d+)?s\]`)
 )
 
 func parseJavaVersion(output string) string {
@@ -554,8 +693,20 @@ func parseJavaVersion(output string) string {
 	return firstVersion(output)
 }
 
+// firstVersion ignora las líneas de avisos de la JVM (p. ej.
+// "[0.001s][warning][os,container] ..."), que antes se confundían con la
+// versión: "javac 0.001" en vez de "javac 21.0.12.1".
 func firstVersion(output string) string {
-	return numberRe.FindString(output)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || warningLineRe.MatchString(line) {
+			continue
+		}
+		if version := numberRe.FindString(line); version != "" {
+			return version
+		}
+	}
+	return ""
 }
 
 func majorOf(version string) int {
@@ -570,6 +721,7 @@ func majorOf(version string) int {
 	return major
 }
 
+// Estas tres funciones se conservan porque las usan otros paquetes y tests.
 func javaDetail(path string, ok bool) string {
 	if path == "" {
 		return "no encontrado"
