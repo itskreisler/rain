@@ -13,7 +13,7 @@ permissions:
 
 # Tokens en el mensaje del commit para saltar jobs completos:
 #   [skip test]      -> Test y Verificación del CLI
-#   [skip windows]   -> Smoke test en Windows
+#   [skip windows]   -> Smoke test y build de APK en Windows
 #   [skip examples]  -> Build de Ejemplos con Rain
 #   [skip release]   -> Publicación de Release
 # Un job saltado no bloquea el release; un job que falle de verdad sí lo bloquea.
@@ -58,7 +58,7 @@ jobs:
           version: v2.15.0
 
   windows-smoke:
-    name: Smoke test en Windows
+    name: Smoke test y build de APK en Windows
     if: ${{ !contains(github.event.head_commit.message, '[skip windows]') }}
     runs-on: windows-latest
     steps:
@@ -101,6 +101,31 @@ jobs:
       - name: Chocolatey disponible para --install
         shell: pwsh
         run: choco --version
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Plantilla simple: Java sin dependencias, así que el build es rápido y
+      # comprueba el pipeline completo (aapt2, d8, zipalign y apksigner) en
+      # Windows sin descargar AndroidX/Compose.
+      - name: Generar y compilar APK con la plantilla simple
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\rain.exe doctor --fix --profile simple
+          .\rain.exe init --template simple --name SmokeWindows --non-interactive --dir smoke-windows
+          Push-Location smoke-windows
+          try {
+            ..\rain.exe --devlog build
+            if (-not (Test-Path 'app/build/app-debug.apk')) {
+              throw 'No se generó app/build/app-debug.apk'
+            }
+            Get-Item 'app/build/app-debug.apk' | Select-Object FullName, Length
+          } finally {
+            Pop-Location
+          }
 
   build-and-test-examples:
     name: Build de Ejemplos con Rain
@@ -323,10 +348,10 @@ jobs:
 
   release:
     name: Publicación de Release
-    needs: [test, build-and-test-examples]
+    needs: [test, windows-smoke, build-and-test-examples]
     # always() permite publicar aunque los jobs previos se hayan saltado,
     # pero sigue bloqueando si cualquiera de ellos falló de verdad.
-    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.build-and-test-examples.result == 'success' || needs.build-and-test-examples.result == 'skipped') && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') && !contains(github.event.head_commit.message, '[skip release]') }}
+    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.windows-smoke.result == 'success' || needs.windows-smoke.result == 'skipped') && (needs.build-and-test-examples.result == 'success' || needs.build-and-test-examples.result == 'skipped') && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') && !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -357,7 +382,7 @@ jobs:
           go-version: 'stable'
           cache: true
 
-      - name: Compilar binarios estáticos (linux amd64/arm64)
+      - name: Compilar binarios estáticos (linux y windows amd64/arm64)
         if: steps.ver.outputs.bump == 'true'
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -365,11 +390,15 @@ jobs:
           COMMIT="$(git rev-parse --short HEAD)"
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 \
-              go build -trimpath -ldflags "${LDFLAGS}" -o "rain-linux-${arch}" .
+          for os in linux windows; do
+            for arch in amd64 arm64; do
+              out="rain-${os}-${arch}"
+              if [ "${os}" = windows ]; then out="${out}.exe"; fi
+              GOOS="${os}" GOARCH="${arch}" CGO_ENABLED=0 \
+                go build -trimpath -ldflags "${LDFLAGS}" -o "${out}" .
+            done
           done
-          sha256sum rain-linux-* > SHA256SUMS
+          sha256sum rain-linux-* rain-windows-* > SHA256SUMS
 
       - name: Crear tag anotado
         if: steps.ver.outputs.bump == 'true'
@@ -389,4 +418,6 @@ jobs:
           files: |
             rain-linux-amd64
             rain-linux-arm64
+            rain-windows-amd64.exe
+            rain-windows-arm64.exe
             SHA256SUMS

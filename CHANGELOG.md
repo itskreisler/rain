@@ -12,6 +12,12 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **Binarios de Windows en los releases.** Junto a Linux amd64/arm64 se publican
+  `rain-windows-amd64.exe` y `rain-windows-arm64.exe`, con sus hashes en
+  `SHA256SUMS`.
+- **CI: APK de prueba en Windows.** El job `windows-smoke` crea un proyecto con
+  `rain init --template simple`, compila su APK debug y verifica que se genera
+  `app/build/app-debug.apk`, sin descargar AndroidX/Compose.
 - **PMD gestionado por Rain para Java y Kotlin.** `rain lint --install` (y
   `rain doctor --fix --lint`) descargan PMD en `~/.rain/toolchain`, así que
   `rain lint --tools pmd` funciona sin instalarlo a mano. Se puede usar un
@@ -145,6 +151,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **`doctor --fix` fallaba en Windows.** El toolchain intentaba extraer
+  `libc++.so` del paquete de build-tools de Windows, que solo existe en el de
+  Linux. Ahora `libc++.so` se usa únicamente en Linux, donde lo necesita el
+  wrapper de `zipalign`.
 - **`rain lint --tools pmd` funcionaba solo con PMD 7.** Rain ahora detecta la
   versión instalada y usa la sintaxis correcta: `check` y `--aux-classpath` en
   PMD 7, y los flags clásicos en PMD 6.

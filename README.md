@@ -35,6 +35,8 @@ go build -o rain .
 cp rain $PREFIX/bin/
 ```
 
+Prebuilt binaries for Linux (amd64 and arm64) and Windows (amd64 and arm64) are attached to every [release](https://github.com/itskreisler/rain/releases). `SHA256SUMS` contains the checksums for all four files.
+
 ## Quick Start
 
 ### 1. Install the toolchain
