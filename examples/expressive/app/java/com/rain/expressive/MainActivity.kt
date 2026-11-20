@@ -1,4 +1,4 @@
-package com.kyant.expressive
+package com.rain.expressive
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity

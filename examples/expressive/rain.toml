@@ -7,7 +7,7 @@ dependencies = [
 
 [project]
 name = "ExpressiveShowcase"
-package = "com.kyant.expressive"
+package = "com.rain.expressive"
 version = "1.0"
 
 [build]

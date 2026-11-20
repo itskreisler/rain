@@ -12,6 +12,9 @@ app/build/
 *.jar
 rain
 rain-baseline
+# `com.rain.*` es el paquete por defecto de `rain init`: es código fuente,
+# no el binario `rain`, así que se re-incluye en los ejemplos.
+!examples/*/app/java/com/rain/
 
 # Un ejemplo puede llevar su propio repositorio mientras se desarrolla. Se
 # ignora el .git anidado para que este repositorio siga versionando sus
