@@ -23,6 +23,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   dependencias del sistema que sigan faltando. Admite `--yes` y `--dry-run`.
   `--fix` descarga también `aapt2` y `zipalign` desde build-tools de Google
   para Linux, Windows y macOS, sin root.
+- **CI: smoke test en Windows y cobertura release de los ejemplos.** El job
+  `windows-smoke` compila, analiza y prueba el CLI en `windows-latest` y
+  verifica el script de instalación de Chocolatey. Los ejemplos se compilan
+  ahora en debug y release, con verificación de firma en ambos casos.
 - **`rain fmt`: formatear el código Kotlin.** Reescribe las fuentes con
   ktlint usando el estilo del proyecto (el `.editorconfig` manda) y avisa de
   los ficheros que ha tocado. Es la parte de `rain lint` que se puede
@@ -70,6 +74,15 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   reutiliza en lugar de volver a descargarlos y extraerlos: en un proyecto con
   Compose son decenas de artefactos y se ahorran entre 8 y 14 s por
   ejecución.
+- **Store global de AAR/JAR entre proyectos.** Los bytes originales de cada
+  dependencia descargada se guardan en `~/.rain/store/v1`, con una clave por
+  repositorio y coordenada. Cada proyecto enlaza simbólicamente esos originales
+  en su `.rain-deps/`, de modo que varios builds comparten una sola descarga
+  sin copiarla. Al pasar de un ejemplo a otro solo se descargan las
+  coordenadas nuevas (p. ej. `compose` llena el store con 72 originales y
+  `liquid-glass` añade solo 3 pese a compartir Material 3). No se comparte la
+  extracción preparada: el orden del classpath y las regresiones KMP se
+  mantienen intactos.
 - Repositorios Maven por coordenada: JitPack se consulta solo para grupos
   `com.github.*`/`io.github.*`, y `[repositories].extra` en `rain.toml` permite
   declarar repos de terceros sin afectar al resto de builds.
