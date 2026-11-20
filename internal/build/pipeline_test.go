@@ -55,7 +55,7 @@ func TestJoinClasspathUsesPlatformSeparator(t *testing.T) {
 
 func TestD8JavaArgs(t *testing.T) {
 	got := d8JavaArgs(
-		[]string{"--output", "app\\build\\dexapp", "--lib", "C:\\android.jar", "--classpath", "C:\\lib.jar"},
+		"C:\\Users\\runner\\AppData\\Local\\Temp\\rain-d8-123.txt",
 		"C:\\Users\\runner\\.rain\\toolchain\\r8.jar",
 		"2g",
 	)
@@ -63,12 +63,31 @@ func TestD8JavaArgs(t *testing.T) {
 		"-Xmx2g",
 		"-cp", "C:\\Users\\runner\\.rain\\toolchain\\r8.jar",
 		"com.android.tools.r8.D8",
-		"--output", "app\\build\\dexapp",
-		"--lib", "C:\\android.jar",
-		"--classpath", "C:\\lib.jar",
+		"@C:\\Users\\runner\\AppData\\Local\\Temp\\rain-d8-123.txt",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("d8JavaArgs() = %v, quiero %v", got, want)
+	}
+}
+
+func TestWriteD8ArgFile(t *testing.T) {
+	path, err := writeD8ArgFile([]string{
+		"--output",
+		"C:\\Users\\runner admin\\app\\build\\dexapp",
+		"C:\\app\\clase.jar",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "--output\n\"C:\\Users\\runner admin\\app\\build\\dexapp\"\nC:\\app\\clase.jar\n"
+	if string(content) != want {
+		t.Fatalf("archivo de argumentos = %q, quiero %q", string(content), want)
 	}
 }
 

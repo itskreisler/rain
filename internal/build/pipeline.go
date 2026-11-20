@@ -455,8 +455,13 @@ func runD8(args []string) error {
 		if d8Jar == "" {
 			return fmt.Errorf("no se encontró d8.jar para R8")
 		}
+		argFile, err := writeD8ArgFile(args)
+		if err != nil {
+			return fmt.Errorf("creando archivo de argumentos de d8: %w", err)
+		}
+		defer os.Remove(argFile)
 		heap := memenv.HeapLimit("2g")
-		javaArgs := d8JavaArgs(args, d8Jar, heap)
+		javaArgs := d8JavaArgs(argFile, d8Jar, heap)
 		cmd = exec.Command("java", javaArgs...)
 	} else {
 		cmd = exec.Command("d8", args...)
@@ -470,9 +475,32 @@ func runD8(args []string) error {
 	return cmd.Run()
 }
 
-func d8JavaArgs(args []string, d8Jar, heap string) []string {
+func d8JavaArgs(argFile, d8Jar, heap string) []string {
 	javaArgs := []string{"-Xmx" + heap, "-cp", d8Jar, "com.android.tools.r8.D8"}
-	return append(javaArgs, args...)
+	return append(javaArgs, "@"+argFile)
+}
+
+func writeD8ArgFile(args []string) (string, error) {
+	f, err := os.CreateTemp("", "rain-d8-*.txt")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	for _, arg := range args {
+		if strings.ContainsAny(arg, " \t\r\n") {
+			arg = `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
+		}
+		if _, err := fmt.Fprintln(f, arg); err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return "", err
+		}
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 // buildSplitDex genera el DEX de debug en dos pasadas: dependencias (cacheado
