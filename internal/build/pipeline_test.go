@@ -53,6 +53,25 @@ func TestJoinClasspathUsesPlatformSeparator(t *testing.T) {
 	}
 }
 
+func TestD8JavaArgs(t *testing.T) {
+	got := d8JavaArgs(
+		[]string{"--output", "app\\build\\dexapp", "--lib", "C:\\android.jar", "--classpath", "C:\\lib.jar"},
+		"C:\\Users\\runner\\.rain\\toolchain\\r8.jar",
+		"2g",
+	)
+	want := []string{
+		"-Xmx2g",
+		"-cp", "C:\\Users\\runner\\.rain\\toolchain\\r8.jar",
+		"com.android.tools.r8.D8",
+		"--output", "app\\build\\dexapp",
+		"--lib", "C:\\android.jar",
+		"--classpath", "C:\\lib.jar",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("d8JavaArgs() = %v, quiero %v", got, want)
+	}
+}
+
 func TestSourceRootPrefersGradleLayout(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "src", "main", "AndroidManifest.xml"), "<manifest/>")

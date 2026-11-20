@@ -449,7 +449,18 @@ func dexFilesIn(dir string) []string {
 
 // runD8 ejecuta d8 con el límite de heap que usa Rain en el resto del build.
 func runD8(args []string) error {
-	cmd := exec.Command("d8", args...)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		d8Jar := findD8Jar()
+		if d8Jar == "" {
+			return fmt.Errorf("no se encontró d8.jar para R8")
+		}
+		heap := memenv.HeapLimit("2g")
+		javaArgs := d8JavaArgs(args, d8Jar, heap)
+		cmd = exec.Command("java", javaArgs...)
+	} else {
+		cmd = exec.Command("d8", args...)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// Con 1g d8 pasa minutos haciendo GC en proyectos Compose; el wrapper de
@@ -457,6 +468,11 @@ func runD8(args []string) error {
 	// tiene memoria y respeta lo que fije el usuario.
 	cmd.Env = append(os.Environ(), memenv.EnvJavaMaxHeap+"="+memenv.HeapLimit("2g"))
 	return cmd.Run()
+}
+
+func d8JavaArgs(args []string, d8Jar, heap string) []string {
+	javaArgs := []string{"-Xmx" + heap, "-cp", d8Jar, "com.android.tools.r8.D8"}
+	return append(javaArgs, args...)
 }
 
 // buildSplitDex genera el DEX de debug en dos pasadas: dependencias (cacheado
