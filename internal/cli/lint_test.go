@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestLintCommandAyuda(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lint --help: %v", err)
 	}
-	for _, want := range []string{"ktlint", "detekt", "--install", "--fail-on", "--type-resolution"} {
+	for _, want := range []string{"ktlint", "detekt", "pmd", "--install", "--fail-on", "--type-resolution"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("la ayuda de lint no menciona %q:\n%s", want, out)
 		}
@@ -52,6 +53,18 @@ func TestLintCommandAyuda(t *testing.T) {
 	// el malentendido más habitual.
 	if !strings.Contains(out, "NO detectan los errores de tipos") {
 		t.Errorf("la ayuda de lint debería aclarar que no detecta errores de tipos:\n%s", out)
+	}
+}
+
+func TestFmtHelpMencionaJava(t *testing.T) {
+	out, err := runCmd(t, "fmt", "--help")
+	if err != nil {
+		t.Fatalf("fmt --help: %v", err)
+	}
+	for _, want := range []string{"Kotlin", "Java", "google-java-format", "rain lint --install", "--check"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("la ayuda de fmt no menciona %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -85,6 +98,56 @@ func TestLintEnUnDirectorioInexistente(t *testing.T) {
 	_, err := runCmd(t, "lint", filepath.Join(t.TempDir(), "no-existe"))
 	if err == nil {
 		t.Fatal("lint en un directorio inexistente debería fallar")
+	}
+}
+
+func TestResolvePmdRuleset(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	detected := filepath.Join(configDir, "pmd-ruleset.xml")
+	if err := os.WriteFile(detected, []byte("<ruleset/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolvePmdRuleset(dir, ""); got != detected {
+		t.Errorf("ruleset detectado = %q, quiero %q", got, detected)
+	}
+
+	configured := filepath.Join(dir, "reglas.xml")
+	if got := resolvePmdRuleset(dir, "reglas.xml"); got != configured {
+		t.Errorf("ruleset relativo = %q, quiero %q", got, configured)
+	}
+	if got := resolvePmdRuleset(dir, configured); got != configured {
+		t.Errorf("ruleset absoluto = %q, quiero %q", got, configured)
+	}
+	if got := resolvePmdRuleset(t.TempDir(), ""); got != "" {
+		t.Errorf("sin ruleset = %q, quiero vacío", got)
+	}
+}
+
+func TestResolvePmdBaseline(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	detected := filepath.Join(configDir, "pmd-baseline.txt")
+	if err := os.WriteFile(detected, []byte("Main.java|UnusedImports\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolvePmdBaseline(dir, ""); got != detected {
+		t.Errorf("línea base detectada = %q, quiero %q", got, detected)
+	}
+	configured := filepath.Join(dir, "avisos.txt")
+	if got := resolvePmdBaseline(dir, "avisos.txt"); got != configured {
+		t.Errorf("línea base relativa = %q, quiero %q", got, configured)
+	}
+	if got := resolvePmdBaseline(t.TempDir(), ""); got != "" {
+		t.Errorf("sin línea base = %q, quiero vacío", got)
 	}
 }
 

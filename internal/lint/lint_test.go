@@ -3,6 +3,7 @@ package lint
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,91 @@ func TestParsePMD(t *testing.T) {
 	}
 }
 
+func TestParsePmdMajorVersion(t *testing.T) {
+	cases := map[string]int{
+		"PMD 6.55.0\n": 6,
+		"\n  ████\nPMD 7.29.0 (abc, 2026-10-30)\n": 7,
+		"sin versión": 0,
+	}
+	for output, want := range cases {
+		if got := parsePmdMajorVersion(output); got != want {
+			t.Errorf("parsePmdMajorVersion(%q) = %d, quiero %d", output, got, want)
+		}
+	}
+}
+
+func TestPmdArgsSegunLaVersion(t *testing.T) {
+	opts := Options{
+		SourceRoot: "/proj/app/java",
+		JavaFiles:  []string{"/proj/app/java/Main.java"},
+		Classpath:  []string{"/proj/android.jar", "/proj/libs/a.jar"},
+	}
+	want7 := []string{
+		"check", "-d", "/proj/app/java/Main.java", "-R", "rulesets/java/quickstart.xml",
+		"-f", "text", "--no-cache", "--aux-classpath", "/proj/android.jar:/proj/libs/a.jar",
+	}
+	if got := pmdArgs(7, opts); !reflect.DeepEqual(got, want7) {
+		t.Errorf("pmdArgs(7) = %v, quiero %v", got, want7)
+	}
+
+	want6 := []string{
+		"-d", "/proj/app/java/Main.java", "-R", "rulesets/java/quickstart.xml",
+		"-f", "text", "--no-cache", "--auxclasspath", "/proj/android.jar:/proj/libs/a.jar",
+	}
+	if got := pmdArgs(6, opts); !reflect.DeepEqual(got, want6) {
+		t.Errorf("pmdArgs(6) = %v, quiero %v", got, want6)
+	}
+}
+
+func TestGoogleJavaFormatArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want []string
+	}{
+		{
+			name: "por defecto",
+			opts: Options{},
+			want: []string{"--aosp", "--max-line-length", "120", "-i"},
+		},
+		{
+			name: "google sin saltar imports",
+			opts: Options{JavaFormat: JavaFormatOptions{
+				Style: "google", LineLength: 100,
+			}},
+			want: []string{"--max-line-length", "100", "-i"},
+		},
+		{
+			name: "aosp saltando imports",
+			opts: Options{JavaFormat: JavaFormatOptions{
+				Style: "aosp", LineLength: 120, SkipImports: true,
+			}},
+			want: []string{"--aosp", "--max-line-length", "120", "--skip-sorting-imports", "--skip-removing-unused-imports", "-i"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := googleJavaFormatArgs(tt.opts); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("googleJavaFormatArgs = %v, quiero %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPmdArgsConRulesetPropioYKotlin(t *testing.T) {
+	opts := Options{
+		SourceRoot:  "/proj/app/java",
+		KotlinFiles: []string{"/proj/app/java/Main.kt"},
+		PmdRuleset:  "/proj/config/pmd.xml",
+	}
+	want := []string{
+		"check", "-d", "/proj/app/java/Main.kt", "-R", "/proj/config/pmd.xml", "-f", "text", "--no-cache",
+	}
+	if got := pmdArgs(7, opts); !reflect.DeepEqual(got, want) {
+		t.Errorf("pmdArgs con ruleset = %v, quiero %v", got, want)
+	}
+}
+
 func TestFailOnLevel(t *testing.T) {
 	cases := map[string]Severity{
 		"":            SeverityWarning,
@@ -154,6 +240,21 @@ func TestCollectSources(t *testing.T) {
 	}
 }
 
+func TestCollectSourcesIgnoraDirectoriosGenerados(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "Main.java"), "class Main {}")
+	writeFile(t, filepath.Join(dir, "build", "gen", "R.java"), "class R {}")
+	writeFile(t, filepath.Join(dir, ".rain-deps", "Extra.java"), "class Extra {}")
+
+	_, java, err := CollectSources(dir)
+	if err != nil {
+		t.Fatalf("CollectSources: %v", err)
+	}
+	if len(java) != 1 || filepath.Base(java[0]) != "Main.java" {
+		t.Errorf("java = %v, quiero solo Main.java", java)
+	}
+}
+
 func TestCollectSourcesConDirectorioInexistente(t *testing.T) {
 	kotlin, java, err := CollectSources(filepath.Join(t.TempDir(), "nada"))
 	if err != nil {
@@ -215,5 +316,38 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("escribiendo %s: %v", path, err)
+	}
+}
+
+func TestLoadBaselineYApplyBaseline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pmd-baseline.txt")
+	writeFile(t, path, "# avisos ya revisados\napp/java/Main.java|UnusedImports\n\napp/java/Other.java|NoPackage\n")
+
+	baseline, err := LoadBaseline(path)
+	if err != nil {
+		t.Fatalf("LoadBaseline: %v", err)
+	}
+	if len(baseline) != 2 {
+		t.Fatalf("baseline = %v, quiero 2 entradas", baseline)
+	}
+
+	findings := []Finding{
+		{Tool: "pmd", File: "app/java/Main.java", Rule: "UnusedImports"},
+		{Tool: "pmd", File: "app/java/Main.java", Rule: "NuevaRegla"},
+		{Tool: "ktlint", File: "app/java/Other.java", Rule: "NoPackage"},
+	}
+	got := ApplyBaseline(findings, baseline)
+	if len(got) != 2 {
+		t.Fatalf("hallazgos tras la línea base = %+v, quiero 2", got)
+	}
+	if got[0].Rule != "NuevaRegla" || got[1].Tool != "ktlint" {
+		t.Errorf("la línea base debería silenciar solo PMD conocido: %+v", got)
+	}
+}
+
+func TestLoadBaselineSinFichero(t *testing.T) {
+	baseline, err := LoadBaseline("")
+	if err != nil || baseline != nil {
+		t.Errorf("LoadBaseline(\"\") = %v, %v; quiero nil, nil", baseline, err)
 	}
 }

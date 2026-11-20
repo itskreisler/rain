@@ -58,6 +58,17 @@ const (
 
 	DetektVersion = "1.23.8"
 	DetektURL     = "https://github.com/detekt/detekt/releases/download/v" + DetektVersion + "/detekt-cli-" + DetektVersion + "-all.jar"
+
+	// PMD analiza fuentes Java (y Kotlin). Rain gestiona su distribución porque
+	// la CLI cambió de sintaxis en la versión 7 y así todos los proyectos usan
+	// una versión conocida.
+	PmdVersion = "7.29.0"
+	PmdURL     = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F" + PmdVersion + "/pmd-dist-" + PmdVersion + "-bin.zip"
+
+	// google-java-format reescribe Java en "rain fmt". El jar "all-deps" evita
+	// resolver dependencias Maven en el equipo del usuario.
+	GoogleJavaFormatVersion = "2.0.0"
+	GoogleJavaFormatURL     = "https://repo1.maven.org/maven2/com/google/googlejavaformat/google-java-format/" + GoogleJavaFormatVersion + "/google-java-format-" + GoogleJavaFormatVersion + "-all-deps.jar"
 )
 
 // Manager gestiona el toolchain propio de Rain en ~/.rain, sin root.
@@ -99,6 +110,19 @@ func (m *Manager) KtlintJar() string {
 func (m *Manager) DetektJar() string {
 	return filepath.Join(m.ToolDir(), "detekt-cli.jar")
 }
+func (m *Manager) PmdDir() string {
+	return filepath.Join(m.ToolDir(), "pmd-bin-"+PmdVersion)
+}
+func (m *Manager) PmdBin() string {
+	name := "pmd"
+	if runtime.GOOS == "windows" {
+		name = "pmd.bat"
+	}
+	return filepath.Join(m.PmdDir(), "bin", name)
+}
+func (m *Manager) GoogleJavaFormatJar() string {
+	return filepath.Join(m.ToolDir(), "google-java-format.jar")
+}
 func (m *Manager) ComposePlugin() string {
 	return filepath.Join(m.ToolDir(), "kotlinc", "lib", "compose-compiler-plugin.jar")
 }
@@ -136,9 +160,9 @@ func (m *Manager) Ensure(ctx context.Context, complex bool) error {
 	return m.writeWrappers(complex)
 }
 
-// EnsureLint descarga los analizadores estáticos opcionales (ktlint y detekt)
-// en el toolchain de Rain. No son necesarios para compilar: solo los usa
-// "rain lint".
+// EnsureLint descarga las herramientas opcionales de "rain lint" y "rain fmt"
+// (ktlint, detekt, pmd y google-java-format) en el toolchain de Rain. No son
+// necesarias para compilar.
 func (m *Manager) EnsureLint(ctx context.Context) error {
 	if err := os.MkdirAll(m.ToolDir(), 0o755); err != nil {
 		return err
@@ -148,6 +172,12 @@ func (m *Manager) EnsureLint(ctx context.Context) error {
 	}
 	if err := m.ensureDetekt(ctx); err != nil {
 		return fmt.Errorf("detekt: %w", err)
+	}
+	if err := m.ensurePmd(ctx); err != nil {
+		return fmt.Errorf("pmd: %w", err)
+	}
+	if err := m.ensureGoogleJavaFormat(ctx); err != nil {
+		return fmt.Errorf("google-java-format: %w", err)
 	}
 	return nil
 }
@@ -164,6 +194,27 @@ func (m *Manager) ensureDetekt(ctx context.Context) error {
 		return nil
 	}
 	return m.download(ctx, DetektURL, m.DetektJar(), "detekt "+DetektVersion)
+}
+
+// ensurePmd extrae la distribución oficial en ~/.rain/toolchain/pmd-bin-X.
+// Rain la detecta desde ahí antes de mirar el PATH.
+func (m *Manager) ensurePmd(ctx context.Context) error {
+	if fileExists(m.PmdBin()) {
+		return nil
+	}
+	tmp, err := m.downloadTemp(ctx, PmdURL, "pmd "+PmdVersion)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+	return extractPrefix(tmp, "pmd-bin-"+PmdVersion+"/", m.ToolDir())
+}
+
+func (m *Manager) ensureGoogleJavaFormat(ctx context.Context) error {
+	if fileExists(m.GoogleJavaFormatJar()) {
+		return nil
+	}
+	return m.download(ctx, GoogleJavaFormatURL, m.GoogleJavaFormatJar(), "google-java-format "+GoogleJavaFormatVersion)
 }
 
 func (m *Manager) ensureR8(ctx context.Context) error {

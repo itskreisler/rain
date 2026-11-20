@@ -134,7 +134,7 @@ my-app/
 | `rain build [dir]` | Build and sign APK (supports flat android2apk layout, auto-detected without `rain.toml`) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
 | `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
 | `rain lint [dir]` | Run static analysis (ktlint, detekt, pmd) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
-| `rain fmt [dir]` | Format Kotlin sources with ktlint | — |
+| `rain fmt [dir]` | Format Kotlin (ktlint) and Java (google-java-format) sources | `--check` |
 | `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
 | `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
 | `rain deps` | Dependency management commands | — |
@@ -166,7 +166,7 @@ A linter cannot replace type checking—`check` compiles the code, `lint` analyz
 
 ## Lint Configuration
 
-Install linters:
+Install lint and format tools:
 ```bash
 rain lint --install
 # or
@@ -176,9 +176,18 @@ rain doctor --fix --lint
 Configure in `rain.toml`:
 ```toml
 [lint]
-tools = ["ktlint", "detekt"]  # or ["auto"]
-fail_on = "error"              # never | warning | error
-type_resolution = false        # Enable type resolution for detekt (slower)
+tools = ["ktlint", "detekt", "pmd"]  # or ["auto"]
+fail_on = "error"                    # never | warning | error
+type_resolution = false              # Enable type resolution for detekt (slower)
+pmd_ruleset = "config/pmd-ruleset.xml"  # Optional custom PMD ruleset
+pmd_baseline = "config/pmd-baseline.txt" # Known PMD findings to ignore
+
+[format]
+java_style = "aosp"           # google | aosp
+java_line_length = 120        # Max columns
+java_skip_imports = true      # Keep existing import order
+java_files = ["app/java/**/New*.java"] # Optional include globs
+java_exclude = ["**/Generated.java"]   # Optional exclude globs
 ```
 
 The project can also tune the analyzers themselves. `rain lint` respects:
@@ -188,20 +197,32 @@ The project can also tune the analyzers themselves. `rain lint` respects:
 - `detekt.yml` — Rain passes it to detekt when the project has one. Detekt
   does not look for it on its own, so without this it would always use its
   default thresholds and rules.
+- `pmd-ruleset.xml` (or `config/pmd-ruleset.xml`) — Rain uses it for PMD
+  instead of the bundled quickstart rules. You can also point to any file with
+  `pmd_ruleset` in `rain.toml`.
+- `pmd-baseline.txt` (or `config/pmd-baseline.txt`) — one `path|rule` per line.
+  Known PMD findings are hidden, so `--fail-on warning` only fails on new ones.
+  Kotlin/Java formatters are never silenced by this file.
 
 ## Formatting
 
-`rain fmt` reformats the Kotlin sources with ktlint, in place, using the
-project's own style:
+`rain fmt` reformats Kotlin with ktlint and Java with google-java-format, in
+place. Kotlin takes its style from `.editorconfig`; Java uses `[format]` in
+`rain.toml` (AOSP style, 120 columns and preserved imports by default). Use
+`java_files` and `java_exclude` in `[format]` to format only the files you want
+in a project that vendors code from elsewhere. Patterns accept `*`, `?` and
+`**`; `!` also works inside `java_files`:
 
 ```bash
 rain fmt            # the current directory
 rain fmt path/to/project
+rain fmt --check    # dry run: fail if any file needs formatting
 ```
 
-It prints the files it touched. Everything ktlint can fix on its own
-(indentation, trailing commas, unused imports, line breaks) is fixed; what it
-cannot (naming, complexity, code smells) keeps showing up in `rain lint`.
+It prints the files it touched. `--check` leaves the sources untouched and
+exits with code 1 when formatting is needed, so it can replace a separate
+format-check script in CI. What the formatters cannot fix on their own
+(naming, complexity, code smells) keeps showing up in `rain lint`.
 
 ## Examples
 

@@ -18,6 +18,7 @@ type Config struct {
 	Modules      []Module     `toml:"modules"`
 	Repositories Repositories `toml:"repositories"`
 	Lint         Lint         `toml:"lint"`
+	Format       Format       `toml:"format"`
 }
 
 // Kapt configura los annotation processors que se ejecutan antes de compilar
@@ -48,6 +49,32 @@ type Lint struct {
 	// TypeResolution pasa el classpath del proyecto a detekt. Detecta más
 	// cosas, pero es más lento y puede fallar con algunas versiones.
 	TypeResolution bool `toml:"type_resolution"`
+	// PmdRuleset permite usar un ruleset propio en lugar del quickstart de
+	// PMD. La ruta es relativa a la raíz del proyecto.
+	PmdRuleset string `toml:"pmd_ruleset"`
+	// PmdBaseline lista los avisos de PMD ya aceptados, en formato
+	// "fichero|regla". La ruta es relativa a la raíz del proyecto.
+	PmdBaseline string `toml:"pmd_baseline"`
+}
+
+// Format configura "rain fmt". Solo tiene opciones para Java: Kotlin ya toma
+// su estilo de .editorconfig a través de ktlint.
+type Format struct {
+	// JavaStyle es "google" (2 espacios) o "aosp" (4 espacios). Por defecto,
+	// "aosp", que es lo habitual en proyectos Android.
+	JavaStyle string `toml:"java_style"`
+	// JavaLineLength es la columna máxima. 0 usa 120.
+	JavaLineLength int `toml:"java_line_length"`
+	// JavaSkipImports conserva el orden de los imports y no elimina los que
+	// parecen sin usar. Por defecto se hace así para no reescribir código
+	// heredado. Ponlo a false para dejar que google-java-format los ordene.
+	JavaSkipImports *bool `toml:"java_skip_imports"`
+	// JavaFiles limita el formateo a estas rutas o globs (relativos a la raíz
+	// del proyecto). Vacío significa todos los .java del módulo.
+	JavaFiles []string `toml:"java_files"`
+	// JavaExclude quita del formateo los ficheros que encajen con estos
+	// patrones. Tiene prioridad sobre JavaFiles.
+	JavaExclude []string `toml:"java_exclude"`
 }
 
 // Repositories permite declarar repositorios Maven adicionales. Google Maven y

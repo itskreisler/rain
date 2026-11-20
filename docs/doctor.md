@@ -29,20 +29,24 @@ muere con `fatal error: found pointer to free object`.
 
 Ver [memoria.md](memoria.md) para el detalle de las variables de entorno.
 
-### Analizadores estáticos (ktlint y detekt)
+### Analizadores estáticos y formato (ktlint, detekt, pmd y google-java-format)
 
 `rain doctor` incluye dos comprobaciones **opcionales**: `ktlint` y `detekt`.
 No hacen falta para compilar un APK, así que no bloquean el estado `Ready`;
-solo avisan de si están disponibles para `rain lint`.
+solo avisan de si están disponibles para `rain lint`. PMD y
+google-java-format no salen en el informe, pero `rain lint` y `rain fmt` los
+detectan igual que a los otros dos.
 
-| Check | Obligatorio | Qué significa |
+| Herramienta | Obligatoria | Qué significa |
 | --- | --- | --- |
-| `ktlint` | No | Analizador de estilo de Kotlin. Si no está, se instala con `rain doctor --fix --lint`. |
+| `ktlint` | No | Analizador y formateador de estilo de Kotlin. Se instala con `rain doctor --fix --lint`. |
 | `detekt` | No | Analizador de "code smells" de Kotlin. Igual que ktlint. |
+| `pmd` | No | Analizador de Java y Kotlin. Se instala con `rain doctor --fix --lint` o `rain lint --install`. |
+| `google-java-format` | No | Formateador de Java usado por `rain fmt`. Igual que PMD. |
 
-Los dos se buscan primero en el toolchain de Rain (`~/.rain/toolchain`) y
-después en el `PATH`. `pmd` no aparece en el informe: se usa si está
-instalado en el sistema y se detecta por el `PATH`.
+Las cuatro se buscan primero en el toolchain de Rain (`~/.rain/toolchain`) y
+después en el `PATH`. Rain gestiona PMD porque su CLI cambió de sintaxis en la
+versión 7; detecta la versión instalada y adapta los argumentos.
 
 ## Ejemplo
 

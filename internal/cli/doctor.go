@@ -41,8 +41,9 @@ func newDoctorCmd() *cobra.Command {
 			"apk, pkg, winget o choco). Pide confirmación salvo con --yes.\n\n" +
 			"--print-install muestra solo los comandos que faltan, sin el resto\n" +
 			"del informe; útil para copiarlos y ejecutarlos a mano.\n\n" +
-			"ktlint y detekt aparecen como opcionales: no hacen falta para\n" +
-			"compilar, pero " + "\"rain lint\"" + " los usa si están instalados.",
+			"ktlint, detekt, pmd y google-java-format son opcionales: no\n" +
+			"hacen falta para compilar, pero " + "\"rain lint\"" + " y " +
+			"\"rain fmt\"" + " los usan si están instalados.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := doctor.ParseProfile(profile)
@@ -95,7 +96,7 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "salida en JSON")
 	cmd.Flags().BoolVar(&printInstall, "print-install", false, "mostrar solo los comandos de instalación")
 	cmd.Flags().BoolVar(&fix, "fix", false, "descargar el toolchain propio en ~/.rain (sin root)")
-	cmd.Flags().BoolVar(&lintTools, "lint", false, "con --fix, descargar también los analizadores estáticos (ktlint, detekt)")
+	cmd.Flags().BoolVar(&lintTools, "lint", false, "con --fix, descargar también ktlint, detekt, pmd y google-java-format")
 	cmd.Flags().BoolVar(&install, "install", false, "instalar automáticamente lo que falte (toolchain + paquetes del sistema)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "con --install, no pedir confirmación")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "con --install, mostrar qué haría sin ejecutarlo")
@@ -148,7 +149,7 @@ func runDoctorFixLint(cmd *cobra.Command) error {
 	}
 	manager.Out = cmd.OutOrStdout()
 
-	ui.Info("Descargando analizadores estáticos (ktlint, detekt)...")
+	ui.Info("Descargando herramientas de lint y formato (ktlint, detekt, pmd, google-java-format)...")
 	if err := manager.EnsureLint(cmd.Context()); err != nil {
 		return fmt.Errorf("descargando analizadores estáticos: %w", err)
 	}

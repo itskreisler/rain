@@ -81,6 +81,43 @@ func TestFileSumDetectaLosCambios(t *testing.T) {
 	}
 }
 
+// TestFormatCheckNoDejaCambios comprueba que --check detecta el formato
+// incorrecto sin modificar los ficheros. Solo se ejecuta si el formateador
+// de Java está instalado.
+func TestFormatCheckNoDejaCambios(t *testing.T) {
+	if _, ok := findGoogleJavaFormat(); !ok {
+		t.Skip("google-java-format no está instalado")
+	}
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "Main.java")
+	original := "class   Main{int  x=1;}\n"
+	if err := os.WriteFile(file, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		ProjectDir: dir,
+		SourceRoot: dir,
+		JavaFiles:  []string{file},
+		Check:      true,
+	}
+	changed, err := Format(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("ficheros cambiados = %d, quiero 1: %+v", len(changed), changed)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Errorf("--check modificó el fichero:\n%s", data)
+	}
+}
+
 // TestFormatReescribeElCodigo comprueba que el formateador deja el código
 // como lo deja ktlint. Solo se ejecuta si ktlint está instalado.
 func TestFormatReescribeElCodigo(t *testing.T) {

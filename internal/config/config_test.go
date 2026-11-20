@@ -44,6 +44,49 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadOpcionesDeLintYFormato(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+	contenido := `[lint]
+tools = ["pmd"]
+pmd_ruleset = "config/pmd-ruleset.xml"
+pmd_baseline = "config/pmd-baseline.txt"
+
+[format]
+java_style = "aosp"
+java_line_length = 120
+java_skip_imports = false
+java_files = ["app/java/Mirrors.java", "test/java/WizardFlowTest.java"]
+java_exclude = ["**/R.java"]
+`
+	if err := os.WriteFile(path, []byte(contenido), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Lint.PmdRuleset != "config/pmd-ruleset.xml" {
+		t.Errorf("PmdRuleset = %q", got.Lint.PmdRuleset)
+	}
+	if got.Lint.PmdBaseline != "config/pmd-baseline.txt" {
+		t.Errorf("PmdBaseline = %q", got.Lint.PmdBaseline)
+	}
+	if got.Format.JavaStyle != "aosp" || got.Format.JavaLineLength != 120 {
+		t.Errorf("Format = %+v", got.Format)
+	}
+	if got.Format.JavaSkipImports == nil || *got.Format.JavaSkipImports {
+		t.Errorf("JavaSkipImports = %v, quiero false explícito", got.Format.JavaSkipImports)
+	}
+	if len(got.Format.JavaFiles) != 2 {
+		t.Errorf("JavaFiles = %v, quiero 2 rutas", got.Format.JavaFiles)
+	}
+	if len(got.Format.JavaExclude) != 1 || got.Format.JavaExclude[0] != "**/R.java" {
+		t.Errorf("JavaExclude = %v", got.Format.JavaExclude)
+	}
+}
+
 func TestReadMissingFile(t *testing.T) {
 	if _, err := Read(filepath.Join(t.TempDir(), "noexiste.toml")); err == nil {
 		t.Fatal("Read con archivo inexistente debería fallar")

@@ -12,6 +12,23 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **PMD gestionado por Rain para Java y Kotlin.** `rain lint --install` (y
+  `rain doctor --fix --lint`) descargan PMD en `~/.rain/toolchain`, así que
+  `rain lint --tools pmd` funciona sin instalarlo a mano. Se puede usar un
+  ruleset propio con `pmd_ruleset` en `[lint]` o con `pmd-ruleset.xml` /
+  `config/pmd-ruleset.xml` en la raíz del proyecto.
+- **Línea base de PMD en `rain lint`.** Con `pmd_baseline` en `[lint]` (o con
+  `pmd-baseline.txt` / `config/pmd-baseline.txt`) se ocultan los avisos ya
+  aceptados, así que `--fail-on warning` solo falla por avisos nuevos. El
+  formato es `fichero|regla`, una entrada por línea.
+- **`rain fmt` también formatea Java.** Usa google-java-format con estilo AOSP,
+  120 columnas e imports respetados por defecto. Se ajusta con `[format]` en
+  `rain.toml` (`java_style`, `java_line_length`, `java_skip_imports`,
+  `java_files` para acotarlo a archivos nuevos) y se instala con
+  `rain lint --install`. `java_files` acepta globs con `**` y exclusiones con
+  `!`, así que no hay que listar los ficheros uno a uno. `rain fmt --check`
+  comprueba el formato sin escribir y falla si algún fichero lo necesita,
+  para sustituir los scripts de validación externos.
 - **Ejemplo de Material 3 Expressive.** `examples/expressive` muestra en una
   sola app la guía de atención, los *hero moments*, los springs espaciales y de
   efectos del `MotionScheme`, los estilos enfatizados con peso variable, las 35
@@ -128,6 +145,9 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **`rain lint --tools pmd` funcionaba solo con PMD 7.** Rain ahora detecta la
+  versión instalada y usa la sintaxis correcta: `check` y `--aux-classpath` en
+  PMD 7, y los flags clásicos en PMD 6.
 - **Los manifests de las librerías se quedaban con sus marcadores sin
   sustituir.** Rain sustituye los marcadores del manifest de la app
   (`${applicationId}`, `${versionName}`…) antes de fusionarlo con los de las

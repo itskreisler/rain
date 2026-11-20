@@ -57,7 +57,7 @@ func newLintCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&install, "install", false, "descargar ktlint y detekt en ~/.rain/toolchain")
+	cmd.Flags().BoolVar(&install, "install", false, "descargar ktlint, detekt, pmd y google-java-format en ~/.rain/toolchain")
 	cmd.Flags().StringVar(&toolsFlag, "tools", "", "analizadores a ejecutar (auto,ktlint,detekt,pmd)")
 	cmd.Flags().StringVar(&failOn, "fail-on", "", "cuándo fallar: never|warning|error")
 	cmd.Flags().BoolVar(&typeRes, "type-resolution", false, "resolver tipos (detekt): más avisos, más lento")
@@ -67,28 +67,30 @@ func newLintCmd() *cobra.Command {
 
 // runLintInstall descarga los analizadores estáticos que gestiona Rain.
 func runLintInstall(cmd *cobra.Command) error {
-	devlog("runLintInstall", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga e instala los analizadores estáticos ktlint y detekt")
+	devlog("runLintInstall", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga e instala ktlint, detekt, pmd y google-java-format")
 	manager, err := toolchain.New()
 	if err != nil {
 		return err
 	}
 	manager.Out = cmd.OutOrStdout()
 
-	ui.Info("Descargando analizadores estáticos (ktlint, detekt)...")
+	ui.Info("Descargando herramientas de lint y formato (ktlint, detekt, pmd, google-java-format)...")
 	if err := manager.EnsureLint(cmd.Context()); err != nil {
 		return fmt.Errorf("descargando analizadores estáticos: %w", err)
 	}
-	ui.Success("Analizadores estáticos listos en %s", manager.ToolDir())
+	ui.Success("Herramientas de lint y formato listas en %s", manager.ToolDir())
 	return nil
 }
 
 // lintTarget es un módulo que se va a analizar.
 type lintTarget struct {
-	projectDir string
-	sourceRoot string
-	kotlin     []string
-	java       []string
-	classpath  []string
+	projectDir  string
+	sourceRoot  string
+	kotlin      []string
+	java        []string
+	classpath   []string
+	pmdRuleset  string
+	pmdBaseline string
 }
 
 // runLint analiza el proyecto indicado.
@@ -116,6 +118,8 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 		Tools:          cfg.Lint.Tools,
 		FailOn:         cfg.Lint.FailOn,
 		TypeResolution: cfg.Lint.TypeResolution,
+		PmdRuleset:     cfg.Lint.PmdRuleset,
+		PmdBaseline:    cfg.Lint.PmdBaseline,
 	}
 	if toolsFlag != "" {
 		lintCfg.Tools = splitList(toolsFlag)
@@ -149,6 +153,7 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 	var findings []lint.Finding
 	for _, target := range targets {
 		for _, t := range tools {
+			devlog("runLint:analizando", fmt.Sprintf("tool=%s, sourceRoot=%s, java=%d, kotlin=%d, ruleset=%s, baseline=%s", t.Name, target.sourceRoot, len(target.java), len(target.kotlin), target.pmdRuleset, target.pmdBaseline), "Registra las fuentes y opciones reales pasadas a cada analizador")
 			ui.Info("%s: %s", t.Name, target.projectDir)
 			found, err := t.Run(cmd.Context(), t.Path, lint.Options{
 				ProjectDir:     target.projectDir,
@@ -157,6 +162,7 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 				JavaFiles:      target.java,
 				Classpath:      target.classpath,
 				TypeResolution: lintCfg.TypeResolution,
+				PmdRuleset:     target.pmdRuleset,
 			})
 			if err != nil {
 				return fmt.Errorf("%s: %w", t.Name, err)
@@ -164,6 +170,20 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 			findings = append(findings, found...)
 		}
 	}
+
+	baseline := map[string]bool{}
+	for _, target := range targets {
+		known, err := lint.LoadBaseline(target.pmdBaseline)
+		if err != nil {
+			return fmt.Errorf("leyendo línea base de PMD: %w", err)
+		}
+		for key := range known {
+			baseline[key] = true
+		}
+	}
+	rawCount := len(findings)
+	findings = lint.ApplyBaseline(findings, baseline)
+	devlog("runLint:baseline", fmt.Sprintf("entradas=%d, hallazgosCrudos=%d, hallazgosVisibles=%d", len(baseline), rawCount, len(findings)), "Registra cuántos avisos oculta la línea base de PMD")
 
 	printFindings(cmd, findings)
 
@@ -218,14 +238,54 @@ func lintTargets(absDir string, cfg config.Config) ([]lintTarget, error) {
 		}
 
 		targets = append(targets, lintTarget{
-			projectDir: absDir,
-			sourceRoot: sourceRoot,
-			kotlin:     kotlin,
-			java:       java,
-			classpath:  lintClasspath(absDir, modDir, androidJar),
+			projectDir:  absDir,
+			sourceRoot:  sourceRoot,
+			kotlin:      kotlin,
+			java:        java,
+			classpath:   lintClasspath(absDir, modDir, androidJar),
+			pmdRuleset:  resolvePmdRuleset(absDir, cfg.Lint.PmdRuleset),
+			pmdBaseline: resolvePmdBaseline(absDir, cfg.Lint.PmdBaseline),
 		})
 	}
 	return targets, nil
+}
+
+// resolvePmdRuleset devuelve la ruta absoluta del ruleset configurado. Si no
+// hay configuración, usa los nombres habituales del proyecto.
+func resolvePmdRuleset(absDir, configured string) string {
+	devlog("resolvePmdRuleset", fmt.Sprintf("absDir=%s, configured=%s", absDir, configured), "Resuelve el ruleset de PMD indicado en rain.toml o el detectado en el proyecto")
+	if configured != "" {
+		if filepath.IsAbs(configured) {
+			return configured
+		}
+		return filepath.Join(absDir, configured)
+	}
+	for _, rel := range []string{"pmd-ruleset.xml", filepath.Join("config", "pmd-ruleset.xml")} {
+		path := filepath.Join(absDir, rel)
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+// resolvePmdBaseline devuelve la ruta absoluta de la línea base configurada,
+// o la de los nombres habituales del proyecto.
+func resolvePmdBaseline(absDir, configured string) string {
+	devlog("resolvePmdBaseline", fmt.Sprintf("absDir=%s, configured=%s", absDir, configured), "Resuelve la línea base de PMD indicada en rain.toml o la detectada en el proyecto")
+	if configured != "" {
+		if filepath.IsAbs(configured) {
+			return configured
+		}
+		return filepath.Join(absDir, configured)
+	}
+	for _, rel := range []string{"pmd-baseline.txt", filepath.Join("config", "pmd-baseline.txt")} {
+		path := filepath.Join(absDir, rel)
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	return ""
 }
 
 // lintClasspath construye el classpath para la resolución de tipos: el
