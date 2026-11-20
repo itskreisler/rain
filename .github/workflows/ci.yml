@@ -138,6 +138,30 @@ jobs:
             Pop-Location
           }
 
+      # Plantilla completo: Compose + ConfettiKit. Comprueba que las rutas y
+      # classpaths de Kotlin/Compose también funcionan en Windows.
+      - name: Generar y compilar APK con la plantilla completo (ConfettiKit)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\rain.exe doctor --fix --profile complex
+          if ($LASTEXITCODE -ne 0) { throw "doctor complex falló con código $LASTEXITCODE" }
+          .\rain.exe init --template completo --name SmokeConfetti --non-interactive --dir smoke-confetti
+          if ($LASTEXITCODE -ne 0) { throw "rain init falló con código $LASTEXITCODE" }
+          Push-Location smoke-confetti
+          try {
+            ..\rain.exe --devlog build
+            if ($LASTEXITCODE -ne 0) { throw "rain build falló con código $LASTEXITCODE" }
+            if (-not (Test-Path 'app/build/app-debug.apk')) {
+              throw 'No se generó app/build/app-debug.apk'
+            }
+            java -jar "$env:USERPROFILE\.rain\toolchain\apksigner.jar" verify --verbose 'app/build/app-debug.apk'
+            if ($LASTEXITCODE -ne 0) { throw "apksigner falló con código $LASTEXITCODE" }
+            Get-Item 'app/build/app-debug.apk' | Select-Object FullName, Length
+          } finally {
+            Pop-Location
+          }
+
   build-and-test-examples:
     name: Build de Ejemplos con Rain
     needs: test

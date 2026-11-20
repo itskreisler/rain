@@ -17,9 +17,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 - **Binarios de Windows en los releases.** Junto a Linux amd64/arm64 se publican
   `rain-windows-amd64.exe` y `rain-windows-arm64.exe`, con sus hashes en
   `SHA256SUMS`.
-- **CI: APK de prueba en Windows.** El job `windows-smoke` crea un proyecto con
-  `rain init --template simple`, compila su APK debug y verifica que se genera
-  `app/build/app-debug.apk`, sin descargar AndroidX/Compose.
+- **CI: APK de prueba en Windows.** El job `windows-smoke` crea proyectos con
+  `rain init --template simple` y `rain init --template completo`, compila sus
+  APK debug y verifica que se genera `app/build/app-debug.apk`. La plantilla
+  `completo` cubre además Compose y ConfettiKit en Windows.
 - **PMD gestionado por Rain para Java y Kotlin.** `rain lint --install` (y
   `rain doctor --fix --lint`) descargan PMD en `~/.rain/toolchain`, así que
   `rain lint --tools pmd` funciona sin instalarlo a mano. Se puede usar un
