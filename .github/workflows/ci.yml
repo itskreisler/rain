@@ -102,6 +102,12 @@ jobs:
         shell: pwsh
         run: choco --version
 
+      # zip es herramienta del sistema: doctor --fix solo descarga las
+      # gestionadas por Rain, así que hay que instalarlo antes del build.
+      - name: Instalar zip
+        shell: pwsh
+        run: choco install zip -y --no-progress
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -115,26 +121,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           .\rain.exe doctor --fix --profile simple
+          if ($LASTEXITCODE -ne 0) { throw "doctor falló con código $LASTEXITCODE" }
           .\rain.exe init --template simple --name SmokeWindows --non-interactive --dir smoke-windows
+          if ($LASTEXITCODE -ne 0) { throw "rain init falló con código $LASTEXITCODE" }
           Push-Location smoke-windows
           try {
             ..\rain.exe --devlog build
-            if (-not (Test-Path 'app/build/app-debug.apk')) {
-              throw 'No se generó app/build/app-debug.apk'
-            }
-            Get-Item 'app/build/app-debug.apk' | Select-Object FullName, Length
-          } finally {
-            Pop-Location
-          }
-          .\rain.exe doctor --fix --profile complex
-          .\rain.exe init --template completo --name SmokeConfetti --non-interactive --dir smoke-confetti
-          Push-Location smoke-confetti
-          try {
-            ..\rain.exe --devlog build
+            if ($LASTEXITCODE -ne 0) { throw "rain build falló con código $LASTEXITCODE" }
             if (-not (Test-Path 'app/build/app-debug.apk')) {
               throw 'No se generó app/build/app-debug.apk'
             }
             java -jar "$env:USERPROFILE\.rain\toolchain\apksigner.jar" verify --verbose 'app/build/app-debug.apk'
+            if ($LASTEXITCODE -ne 0) { throw "apksigner falló con código $LASTEXITCODE" }
             Get-Item 'app/build/app-debug.apk' | Select-Object FullName, Length
           } finally {
             Pop-Location

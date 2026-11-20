@@ -10,10 +10,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ## [No publicado]
 
-- Plantilla `completo`: demo liviano de Compose con ConfettiKit y un botón que lanza confeti.
-
 ### Añadido
 
+- **Plantilla `completo` con demo de confeti.** Incluye ConfettiKit y un botón
+  que lanza confeti.
 - **Binarios de Windows en los releases.** Junto a Linux amd64/arm64 se publican
   `rain-windows-amd64.exe` y `rain-windows-arm64.exe`, con sus hashes en
   `SHA256SUMS`.
@@ -153,6 +153,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **Los classpaths JVM usaban el separador de Unix en Windows.** `javac`,
+  `kotlinc`, kapt, Detekt y PMD unían las entradas con `:` en lugar de `;`, así
+  que no encontraban `android.jar` y el build fallaba. Ahora usan
+  `os.PathListSeparator` en todas las invocaciones.
 - **`doctor --fix` fallaba en Windows.** El toolchain intentaba extraer
   `libc++.so` del paquete de build-tools de Windows, que solo existe en el de
   Linux. Ahora `libc++.so` se usa únicamente en Linux, donde lo necesita el

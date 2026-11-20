@@ -109,9 +109,10 @@ func TestPmdArgsSegunLaVersion(t *testing.T) {
 		JavaFiles:  []string{"/proj/app/java/Main.java"},
 		Classpath:  []string{"/proj/android.jar", "/proj/libs/a.jar"},
 	}
+	classpath := strings.Join([]string{"/proj/android.jar", "/proj/libs/a.jar"}, string(os.PathListSeparator))
 	want7 := []string{
 		"check", "-d", "/proj/app/java/Main.java", "-R", "rulesets/java/quickstart.xml",
-		"-f", "text", "--no-cache", "--aux-classpath", "/proj/android.jar:/proj/libs/a.jar",
+		"-f", "text", "--no-cache", "--aux-classpath", classpath,
 	}
 	if got := pmdArgs(7, opts); !reflect.DeepEqual(got, want7) {
 		t.Errorf("pmdArgs(7) = %v, quiero %v", got, want7)
@@ -119,7 +120,7 @@ func TestPmdArgsSegunLaVersion(t *testing.T) {
 
 	want6 := []string{
 		"-d", "/proj/app/java/Main.java", "-R", "rulesets/java/quickstart.xml",
-		"-f", "text", "--no-cache", "--auxclasspath", "/proj/android.jar:/proj/libs/a.jar",
+		"-f", "text", "--no-cache", "--auxclasspath", classpath,
 	}
 	if got := pmdArgs(6, opts); !reflect.DeepEqual(got, want6) {
 		t.Errorf("pmdArgs(6) = %v, quiero %v", got, want6)
