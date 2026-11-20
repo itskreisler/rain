@@ -11,9 +11,17 @@ on:
 permissions:
   contents: write
 
+# Tokens en el mensaje del commit para saltar jobs completos:
+#   [skip test]      -> Test y Verificación del CLI
+#   [skip windows]   -> Smoke test en Windows
+#   [skip examples]  -> Build de Ejemplos con Rain
+#   [skip release]   -> Publicación de Release
+# Un job saltado no bloquea el release; un job que falle de verdad sí lo bloquea.
+
 jobs:
   test:
     name: Test y Verificación del CLI
+    if: ${{ !contains(github.event.head_commit.message, '[skip test]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +59,7 @@ jobs:
 
   windows-smoke:
     name: Smoke test en Windows
+    if: ${{ !contains(github.event.head_commit.message, '[skip windows]') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +105,9 @@ jobs:
   build-and-test-examples:
     name: Build de Ejemplos con Rain
     needs: test
+    # always() para que [skip test] no arrastre este job; se sigue exigiendo
+    # que test haya pasado o se haya saltado, nunca que haya fallado.
+    if: ${{ always() && !contains(github.event.head_commit.message, '[skip examples]') && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -283,8 +295,10 @@ jobs:
 
   release:
     name: Publicación de Release
-    needs: build-and-test-examples
-    if: (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') && !contains(github.event.head_commit.message, '[skip release]')
+    needs: [test, build-and-test-examples]
+    # always() permite publicar aunque los jobs previos se hayan saltado,
+    # pero sigue bloqueando si cualquiera de ellos falló de verdad.
+    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.build-and-test-examples.result == 'success' || needs.build-and-test-examples.result == 'skipped') && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') && !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
