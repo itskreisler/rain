@@ -70,6 +70,7 @@ Prioritize solutions that improve the overall product while preserving stability
 ## Convenciones de código y producto
 
 - En `internal/cli`, toda función nueva no-test debe empezar con `devlog("nombre", fmt.Sprintf(...), "descripción")`. Al tocar el paquete, audita que todas las funciones no-test tengan su `devlog`; `devlog` es local a `cli` y no existe en los demás paquetes.
+- Los packages Android siguen dominio invertido y se eligen con `rain init --package`; si no se indica, `defaultPackage` genera `com.rain.<nombre>`. No hay prefijo obligatorio (`com.`/`org.`/`me.`): `validatePackage` solo exige identificadores Java válidos. Los ejemplos propios usan `com.rain.*`; los que reproducen una librería externa conservan su namespace (p. ej. `com.kyant.*` en `examples/compose` y `examples/liquid-glass`).
 - Al crear o modificar una app o un ejemplo, cuida la UI/UX desde el primer commit: jerarquía visual, estados vacío/carga/error, tamaños táctiles, contraste/tema y comportamiento en pantallas pequeñas. No entregues UI de relleno.
 
 ## Estado y cachés
