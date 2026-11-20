@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1332,7 +1333,18 @@ func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
 	kotlincArgs = append(kotlincArgs, kotlinFiles...)
 
 	var kotlinStderr bytes.Buffer
-	cmd := exec.Command("kotlinc", kotlincArgs...)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		preloaderJar := findKotlinLibJar("kotlin-preloader.jar")
+		compilerJar := findKotlinLibJar("kotlin-compiler.jar")
+		if preloaderJar == "" || compilerJar == "" {
+			return fmt.Errorf("no se encontró el compilador Kotlin (rain doctor --fix --profile complex)")
+		}
+		kotlinHome := filepath.Dir(filepath.Dir(preloaderJar))
+		cmd = exec.Command("java", kotlinJavaArgs(kotlincArgs, kotlinHome, preloaderJar, compilerJar)...)
+	} else {
+		cmd = exec.Command("kotlinc", kotlincArgs...)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = &kotlinStderr
 	if err := cmd.Run(); err != nil {
@@ -1752,6 +1764,42 @@ func findKotlinStdlib() string {
 		}
 	}
 	return ""
+}
+
+// findKotlinLibJar localiza un jar de lib/ de la distribución de Kotlin.
+func findKotlinLibJar(name string) string {
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		filepath.Join(home, ".rain", "toolchain", "kotlinc", "lib", name),
+		filepath.Join(home, "kotlin", "kotlinc", "lib", name),
+		os.Getenv("KOTLIN_HOME") + "/lib/" + name,
+	}
+	for _, p := range paths {
+		if p != "" && fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// kotlinJavaArgs traduce los argumentos del script kotlinc a una invocación
+// directa de java, igual que hace el lanzador oficial: las opciones -J van
+// antes del preloader y el resto son argumentos del compilador.
+func kotlinJavaArgs(kotlincArgs []string, kotlinHome, preloaderJar, compilerJar string) []string {
+	jvmArgs := make([]string, 0, len(kotlincArgs)+1)
+	compilerArgs := make([]string, 0, len(kotlincArgs))
+	for _, arg := range kotlincArgs {
+		if strings.HasPrefix(arg, "-J") {
+			jvmArgs = append(jvmArgs, strings.TrimPrefix(arg, "-J"))
+			continue
+		}
+		compilerArgs = append(compilerArgs, arg)
+	}
+	jvmArgs = append(jvmArgs, "-Dkotlin.home="+kotlinHome)
+	args := append(jvmArgs,
+		"-cp", preloaderJar, "org.jetbrains.kotlin.preloading.Preloader",
+		"-cp", compilerJar, "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+	return append(args, compilerArgs...)
 }
 
 // r8LibraryJars devuelve los jars que R8 debe tratar como librerías (--lib)

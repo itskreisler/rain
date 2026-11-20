@@ -153,18 +153,6 @@ func TestWindowsToolchainPathsAndWrappers(t *testing.T) {
 			t.Errorf("el wrapper %s no es un .cmd válido:\n%s", name, out)
 		}
 	}
-
-	// El wrapper de kotlinc debe reencuotar cada argumento: %* parte el
-	// classpath (;) y las opciones -X=... (=) al pasarlos a kotlinc.bat.
-	kotlincWrapper, err := os.ReadFile(filepath.Join(manager.BinDir(), "kotlinc.cmd"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fragment := range []string{"set \"args=", "%~1", "shift", "%args%"} {
-		if !strings.Contains(string(kotlincWrapper), fragment) {
-			t.Errorf("el wrapper de kotlinc no reencuota argumentos: falta %q:\n%s", fragment, kotlincWrapper)
-		}
-	}
 }
 
 func TestLibcxxSoloEnLinux(t *testing.T) {

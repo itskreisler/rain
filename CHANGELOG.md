@@ -155,10 +155,11 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 ### Corregido
 
 - **La plantilla `completo` no compilaba en Windows.** El wrapper `kotlinc.cmd`
-  reexpandía `%*` y partía el classpath (`;`) y las opciones `-X=...` (`=`), así
-  que kotlinc interpretaba los jars como fuentes. Ahora reencuota cada
-  argumento. Tampoco se pasa `-J-Dlibrary.jansi.path=/lib/jansi` cuando no
-  existe `PREFIX`.
+  hacía que `cmd.exe` partiera el classpath (`;`) y las opciones `-X=...` (`=`),
+  así que kotlinc interpretaba los jars como fuentes. En Windows Rain llama
+  directamente a `K2JVMCompiler` con `java.exe`, sin pasar por `cmd.exe`.
+  Tampoco se pasa `-J-Dlibrary.jansi.path=/lib/jansi` cuando no existe
+  `PREFIX`.
 - **Los classpaths JVM usaban el separador de Unix en Windows.** `javac`,
   `kotlinc`, kapt, Detekt y PMD unían las entradas con `:` en lugar de `;`, así
   que no encontraban `android.jar` y el build fallaba. Ahora usan

@@ -5,11 +5,35 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/itskreisler/rain/internal/aar"
 )
+
+func TestKotlinJavaArgs(t *testing.T) {
+	got := kotlinJavaArgs([]string{
+		"-J-Xmx1g",
+		"-d", "obj",
+		"-classpath", "C:\\a.jar;C:\\b.jar",
+		"-Xbackend-threads=0",
+		"-Xplugin=C:\\plugin.jar",
+	}, "C:\\kotlin", "C:\\kotlin\\lib\\kotlin-preloader.jar", "C:\\kotlin\\lib\\kotlin-compiler.jar")
+	want := []string{
+		"-Xmx1g",
+		"-Dkotlin.home=C:\\kotlin",
+		"-cp", "C:\\kotlin\\lib\\kotlin-preloader.jar", "org.jetbrains.kotlin.preloading.Preloader",
+		"-cp", "C:\\kotlin\\lib\\kotlin-compiler.jar", "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+		"-d", "obj",
+		"-classpath", "C:\\a.jar;C:\\b.jar",
+		"-Xbackend-threads=0",
+		"-Xplugin=C:\\plugin.jar",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("kotlinJavaArgs() = %v, quiero %v", got, want)
+	}
+}
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
