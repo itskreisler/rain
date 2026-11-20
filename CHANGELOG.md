@@ -12,6 +12,12 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Añadido
 
+- **Ayuda del CLI más completa y en español.** `rain --help` muestra ahora el
+  flujo típico (doctor → init → build), dónde están el toolchain y el store
+  compartido, y las variables de entorno (`RAIN_ANDROID_JAR`,
+  `RAIN_JAVA_MAX_HEAP`, `RAIN_GOMEMLIMIT`, `RAIN_GOGC`, `NO_COLOR`). Los
+  textos automáticos de Cobra (comandos, flags y encabezados) están traducidos,
+  y `clean`, `deps tree`, `doctor`, `build` y `check` explican mejor su alcance.
 - **`rain doctor`: informe alineado con un contrato por herramienta.** Cada
   comprobación muestra ahora `instalado` (con su versión), `no instalado`,
   `no se encuentra` o `advertencia`, y las fallidas incluyen el comando

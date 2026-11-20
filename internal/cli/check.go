@@ -45,7 +45,8 @@ func newCheckCmd() *cobra.Command {
 			"un fichero que no se recompila puede no aparecer.\n\n" +
 			"Sin rain.toml también acepta el layout plano: si el directorio actual\n" +
 			"tiene un AndroidManifest.xml (en la raíz o en src/main/), lo compila\n" +
-			"igual que \"rain check <dir>\".",
+			"igual que \"rain check <dir>\".\n\n" +
+			"RAIN_ANDROID_JAR permite forzar el android.jar sin pasar --android-jar.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jar := androidJar

@@ -18,7 +18,11 @@ func newDepsCmd() *cobra.Command {
 	treeCmd := &cobra.Command{
 		Use:   "tree [dir]",
 		Short: "Muestra el árbol de dependencias resueltas",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Lee el rain.toml del directorio actual (o del indicado) y muestra\n" +
+			"las dependencias declaradas con sus transitivas.\n\n" +
+			"Resuelve los POMs desde la caché local en cache/ y descarga los que\n" +
+			"falten. Los archivos originales compartidos están en ~/.rain/store/v1.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {

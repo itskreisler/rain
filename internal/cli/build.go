@@ -39,7 +39,8 @@ func newBuildCmd() *cobra.Command {
 			"Con [dir] compila un proyecto completo o un layout plano estilo android2apk\n" +
 			"(AndroidManifest.xml, java/ y res/ en la raíz).\n\n" +
 			"Si se omite --android-jar, rain busca el android.jar instalado por\n" +
-			"\"rain doctor --fix\" o en el SDK del sistema.",
+			"\"rain doctor --fix\" o en el SDK del sistema. La variable\n" +
+			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jar := androidJar

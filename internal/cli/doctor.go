@@ -39,6 +39,8 @@ func newDoctorCmd() *cobra.Command {
 			"--install descarga primero el toolchain gestionado y después intenta\n" +
 			"instalar las dependencias del sistema con el gestor detectado (apt,\n" +
 			"apk, pkg, winget o choco). Pide confirmación salvo con --yes.\n\n" +
+			"--print-install muestra solo los comandos que faltan, sin el resto\n" +
+			"del informe; útil para copiarlos y ejecutarlos a mano.\n\n" +
 			"ktlint y detekt aparecen como opcionales: no hacen falta para\n" +
 			"compilar, pero " + "\"rain lint\"" + " los usa si están instalados.",
 		Args: cobra.NoArgs,

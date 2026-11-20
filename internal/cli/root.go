@@ -67,7 +67,20 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		Use:   "rain",
 		Short: "Build system ligero para Android",
 		Long: "Rain compila APKs Android sin Gradle ni Android Studio.\n" +
-			"Pensado para Termux y contenedores Alpine, sin daemon y sin JVM persistente.",
+			"Pensado para Termux y contenedores Alpine, sin daemon y sin JVM persistente.\n\n" +
+			"El toolchain gestionado se guarda en ~/.rain: los lanzadores en bin/,\n" +
+			"las herramientas en toolchain/ y las dependencias compartidas en\n" +
+			"~/.rain/store/v1.\n\n" +
+			"Variables de entorno:\n" +
+			"  RAIN_ANDROID_JAR   ruta a android.jar (prioridad sobre la autodetección)\n" +
+			"  RAIN_JAVA_MAX_HEAP heap máximo para d8 y kotlinc (p. ej. 2g)\n" +
+			"  RAIN_GOMEMLIMIT    límite de memoria del runtime de Go\n" +
+			"  RAIN_GOGC          objetivo del recolector de basura de Go\n" +
+			"  NO_COLOR           desactiva los colores ANSI",
+		Example: "  rain doctor --fix --profile complex       # instalar el toolchain\n" +
+			"  rain init --template completo MiApp      # crear un proyecto\n" +
+			"  cd MiApp && rain build                   # compilar en debug\n" +
+			"  rain build --release --allow-debug-signing",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       info.Version,
@@ -103,7 +116,67 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 		newVersionCmd(info),
 	)
 
+	// Cobra crea estos comandos y textos en inglés durante Execute; se
+	// inicializan aquí para poder traducirlos antes de mostrar la ayuda.
+	root.InitDefaultCompletionCmd()
+	root.InitDefaultHelpCmd()
+	for _, cmd := range root.Commands() {
+		switch cmd.Name() {
+		case "completion":
+			cmd.Short = "Genera el script de autocompletado para un shell"
+		case "help":
+			cmd.Short = "Muestra ayuda sobre cualquier comando"
+			cmd.Long = "Muestra la ayuda de rain o de uno de sus subcomandos.\n\n" +
+				"Uso: rain help [comando]"
+		}
+	}
+	traducirFlagsDeAyuda(root)
+	traducirPlantillaDeUso(root)
+
 	return root
+}
+
+// traducirPlantillaDeUso traduce los encabezados que Cobra genera en inglés
+// en la plantilla de ayuda. Se aplica solo al comando raíz: el getter de
+// Cobra propaga la plantilla a todos los subcomandos.
+func traducirPlantillaDeUso(root *cobra.Command) {
+	devlog("traducirPlantillaDeUso", fmt.Sprintf("cmd=%s", root.Name()), "Traduce al español los encabezados de la ayuda generados por Cobra")
+	plantilla := root.UsageTemplate()
+	// El orden importa: "Global Flags:" se reemplaza antes que "Flags:".
+	reemplazos := [][2]string{
+		{`Global Flags:`, `Opciones globales:`},
+		{`Flags:`, `Opciones:`},
+		{`Available Commands:`, `Comandos disponibles:`},
+		{`Additional Commands:`, `Comandos adicionales:`},
+		{`Additional help topics:`, `Temas de ayuda adicionales:`},
+		{`Aliases:`, `Alias:`},
+		{`Examples:`, `Ejemplos:`},
+		{`Usage:`, `Uso:`},
+		{`Use "{{.CommandPath}} [command] --help" for more information about a command.`, `Usa "{{.CommandPath}} [command] --help" para más información sobre un comando.`},
+	}
+	for _, reemplazo := range reemplazos {
+		plantilla = strings.ReplaceAll(plantilla, reemplazo[0], reemplazo[1])
+	}
+	root.SetUsageTemplate(plantilla)
+}
+
+// traducirFlagsDeAyuda pone en español las descripciones que Cobra genera
+// automáticamente para --help y --version en el raíz y en los subcomandos.
+func traducirFlagsDeAyuda(cmd *cobra.Command) {
+	devlog("traducirFlagsDeAyuda", fmt.Sprintf("cmd=%s", cmd.Name()), "Traduce al español las descripciones automáticas de ayuda de Cobra")
+	cmd.InitDefaultHelpFlag()
+	if flag := cmd.Flags().Lookup("help"); flag != nil {
+		flag.Usage = "muestra esta ayuda"
+	}
+	if cmd == cmd.Root() {
+		cmd.InitDefaultVersionFlag()
+		if flag := cmd.Flags().Lookup("version"); flag != nil {
+			flag.Usage = "muestra la versión de Rain"
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		traducirFlagsDeAyuda(sub)
+	}
 }
 
 type globalOptions struct {
