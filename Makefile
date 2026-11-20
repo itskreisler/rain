@@ -35,7 +35,7 @@ tidy:
 
 # Equivalente a "ruff" para Go: se instala en $(go env GOPATH)/bin.
 tools:
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 clean:
 	rm -f $(BINARY)

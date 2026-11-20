@@ -42,7 +42,8 @@ Prioritize solutions that improve the overall product while preserving stability
 - `make build` genera `./rain` con versión, commit y fecha. `go build ./...` solo comprueba que compila.
 - `./rain` es un binario ignorado por git: si tocas Go, reconstruye con `make build` antes de probarlo.
 - `make test` equivale a `go test ./...`. Un test concreto: `go test ./internal/build -run TestIntegracionAPKConLibreriaAndroidX -v`.
-- Antes de subir: `go vet ./... && go test ./... && make lint`. El lint usa golangci-lint v2.5.0; `make tools` lo instala si falta.
+- Antes de subir: `go vet ./... && go test ./... && make lint`. El lint usa golangci-lint v2.15.0 (o la última compatible); `make tools` lo instala si falta.
+- Usa siempre la última versión estable de Go disponible, tanto en local como en CI: los jobs usan `go-version: 'stable'` en `actions/setup-go`, no `go-version-file: 'go.mod'`. La directiva `go` de `go.mod` es solo la versión mínima del lenguaje, no la del toolchain.
 - `make fmt` usa `gofmt`; el lint también exige `goimports`.
 - Usa `rg` en vez de `grep`: es más rápido y el `grep` de BusyBox no soporta opciones habituales como `--include`.
 - Siempre usa `./rain --devlog build` para builds de APK (también en ejemplos y pruebas manuales), no solo al depurar.
