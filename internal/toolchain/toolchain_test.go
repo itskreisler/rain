@@ -7,13 +7,24 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+func wrapperName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".cmd"
+	}
+	return name
+}
+
 func TestNewUsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
 
 	manager, err := New()
 	if err != nil {
@@ -33,6 +44,9 @@ func TestNewUsesHome(t *testing.T) {
 func TestEnsureIsIdempotentWithCachedFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
 
 	manager, err := New()
 	if err != nil {
@@ -66,7 +80,7 @@ func TestEnsureIsIdempotentWithCachedFiles(t *testing.T) {
 		t.Fatalf("Ensure con caché: %v", err)
 	}
 
-	for _, name := range []string{"d8", "apksigner"} {
+	for _, name := range []string{wrapperName("d8"), wrapperName("apksigner")} {
 		info, err := os.Stat(filepath.Join(manager.BinDir(), name))
 		if err != nil {
 			t.Fatalf("wrapper %s no creado: %v", name, err)
@@ -86,7 +100,7 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 	if err := os.MkdirAll(manager.ToolDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"aapt2", "zipalign"} {
+	for _, name := range []string{nativeNameFor("aapt2", runtime.GOOS), nativeNameFor("zipalign", runtime.GOOS)} {
 		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("binario"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -94,9 +108,12 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 	if err := manager.publishNativeBinaries(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := os.ReadFile(filepath.Join(manager.BinDir(), "zipalign"))
+	out, err := os.ReadFile(filepath.Join(manager.BinDir(), nativeNameFor("zipalign", runtime.GOOS)))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		return
 	}
 	if !strings.Contains(string(out), "LD_LIBRARY_PATH") || !strings.Contains(string(out), "lib64") {
 		t.Errorf("el wrapper de zipalign no fija LD_LIBRARY_PATH:\n%s", out)
@@ -243,12 +260,16 @@ func TestWrappersContent(t *testing.T) {
 	}
 
 	for _, name := range []string{"d8", "apksigner", "kotlinc"} {
-		path := filepath.Join(manager.BinDir(), name)
+		path := filepath.Join(manager.BinDir(), wrapperName(name))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("wrapper %s: %v", name, err)
 		}
-		if len(data) == 0 || data[0] != '#' {
+		if runtime.GOOS == "windows" {
+			if len(data) == 0 || !strings.HasPrefix(string(data), "@echo off") {
+				t.Errorf("wrapper %s no empieza con @echo off: %q", name, data)
+			}
+		} else if len(data) == 0 || data[0] != '#' {
 			t.Errorf("wrapper %s no empieza con shebang: %q", name, data)
 		}
 	}
@@ -263,7 +284,7 @@ func TestWrappersContent(t *testing.T) {
 	if err := manager.writeWrappers(false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(manager.BinDir(), "kotlinc")); err == nil {
+	if _, err := os.Stat(filepath.Join(manager.BinDir(), wrapperName("kotlinc"))); err == nil {
 		t.Error("writeWrappers(false) no debería crear kotlinc")
 	}
 }

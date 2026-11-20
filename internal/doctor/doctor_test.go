@@ -253,6 +253,10 @@ func TestJarCandidatesIncludesEnv(t *testing.T) {
 // fakeCommand crea un ejecutable en un directorio temporal.
 func fakeCommand(t *testing.T, dir, name, body string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		name += ".cmd"
+		body = "@echo off\r\n" + strings.ReplaceAll(body, "#!/bin/sh\n", "")
+	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatalf("escribiendo %s: %v", path, err)
@@ -262,14 +266,14 @@ func fakeCommand(t *testing.T, dir, name, body string) string {
 
 func TestRunVersionIgnoraLosComandosQueFallan(t *testing.T) {
 	dir := t.TempDir()
-	fakeCommand(t, dir, "falso", "#!/bin/sh\nexit 1\n")
+	commandPath := fakeCommand(t, dir, "falso", "#!/bin/sh\nexit 1\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	path, _, err := runVersion(context.Background(), "falso", "--version")
 	if err == nil {
 		t.Error("runVersion con un comando que falla debería devolver error")
 	}
-	if path != filepath.Join(dir, "falso") {
+	if path != commandPath {
 		t.Errorf("runVersion debería conservar la ruta del comando que falla, got %q", path)
 	}
 }

@@ -1524,6 +1524,10 @@ func appendDex(baseApk string, dexFiles []string, nativeLibs map[string]string, 
 		_ = os.Remove(tmp)
 		return fmt.Errorf("cerrando archivo APK: %w", err)
 	}
+	if err := src.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("cerrando APK base: %w", err)
+	}
 	return os.Rename(tmp, baseApk)
 }
 
