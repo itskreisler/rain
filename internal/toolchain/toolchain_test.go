@@ -85,7 +85,9 @@ func TestEnsureIsIdempotentWithCachedFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("wrapper %s no creado: %v", name, err)
 		}
-		if info.Mode().Perm() != 0o755 {
+		// Windows no expone el bit de ejecución: Go informa 0666 para
+		// cualquier fichero que no tenga el atributo de solo lectura.
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 			t.Errorf("wrapper %s permisos = %v, quiero 0755", name, info.Mode().Perm())
 		}
 	}
