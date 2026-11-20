@@ -339,7 +339,7 @@ func declareNamespaces(text string, ns map[string]string) (string, error) {
 
 	var decls strings.Builder
 	for _, prefix := range prefixes {
-		decls.WriteString(fmt.Sprintf("\n    xmlns:%s=%q", prefix, ns[prefix]))
+		fmt.Fprintf(&decls, "\n    xmlns:%s=%q", prefix, ns[prefix])
 	}
 
 	// Caso improbable de un raíz auto-cerrado: hay que abrirlo para poder

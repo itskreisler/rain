@@ -244,7 +244,7 @@ func writeResources(path string, res *resourcesElement) error {
 	buf.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	buf.WriteString("<resources")
 	for k, v := range res.attrs {
-		buf.WriteString(fmt.Sprintf(" %s=%q", k, v))
+		fmt.Fprintf(&buf, " %s=%q", k, v)
 	}
 	buf.WriteString(">\n")
 	for _, child := range res.children {
