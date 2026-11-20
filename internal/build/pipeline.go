@@ -1298,7 +1298,7 @@ func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
 
 	kotlincArgs := []string{"-J-Dlibrary.jansi.path=" + os.Getenv("PREFIX") + "/lib/jansi",
 		"-d", objDir,
-		"-classpath", strings.Join(kotlinClasspath, ":"),
+		"-classpath", joinClasspath(kotlinClasspath),
 		"-jvm-target", kotlinJVMTarget(jvmTarget),
 		// El codegen de kotlinc usa un solo hilo por defecto. En un proyecto
 		// Compose el frontend sigue siendo secuencial, pero repartir el
@@ -1349,7 +1349,7 @@ func compileJavaSources(cfg Config, objDir string, sources []string, label strin
 	classpath = append(classpath, objDir)
 	classpath = append(classpath, cfg.libraryJars()...)
 	args := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
-		"-classpath", strings.Join(classpath, ":")}
+		"-classpath", joinClasspath(classpath)}
 	args = append(args, sources...)
 
 	var stderrBuf bytes.Buffer
@@ -1362,6 +1362,10 @@ func compileJavaSources(cfg Config, objDir string, sources []string, label strin
 		return fmt.Errorf("javac falló")
 	}
 	return nil
+}
+
+func joinClasspath(paths []string) string {
+	return strings.Join(paths, string(os.PathListSeparator))
 }
 
 func humanSize(path string) string {
