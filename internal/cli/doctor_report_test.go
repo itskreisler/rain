@@ -90,7 +90,7 @@ func TestPrintDoctorReportAlignedAndPerToolInstall(t *testing.T) {
 	if strings.Index(header, "VERSIÓN") != strings.Index(javaRow, "21.0.12.1") {
 		t.Errorf("la columna VERSIÓN no está alineada:\n%s\n%s", header, javaRow)
 	}
-	if strings.Index(javacRow, "no instalado") < 0 {
+	if !strings.Contains(javacRow, "no instalado") {
 		t.Errorf("javac debería mostrar su estado:\n%s", javacRow)
 	}
 	if !strings.Contains(out, "→ sudo apt install -y openjdk-17-jdk-headless") {

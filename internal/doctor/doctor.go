@@ -721,17 +721,6 @@ func majorOf(version string) int {
 	return major
 }
 
-// Estas tres funciones se conservan porque las usan otros paquetes y tests.
-func javaDetail(path string, ok bool) string {
-	if path == "" {
-		return "no encontrado"
-	}
-	if !ok {
-		return "se requiere Java 17 o superior"
-	}
-	return ""
-}
-
 func missingDetail(path string) string {
 	if path == "" {
 		return "no encontrado"
