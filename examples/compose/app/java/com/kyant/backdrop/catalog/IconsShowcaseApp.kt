@@ -55,6 +55,7 @@ val iconList = listOf(
     IconItem(id = "flame", name = "FlameIcon"),
     IconItem(id = "cloudsync", name = "CloudSyncIcon"),
     IconItem(id = "bot", name = "BotIcon"),
+    IconItem(id = "playpause", name = "PlayPauseIcon", color = Color(0xFF2196F3)),
     IconItem(id = "mochi", name = "Mochi"),
 )
 
@@ -163,6 +164,7 @@ fun GalleryScreen(
                             "flame" -> FlameIcon(size = 40.dp, color = item.color)
                             "cloudsync" -> CloudSyncIcon(size = 40.dp, color = item.color)
                             "bot" -> BotIcon(size = 40.dp, color = item.color)
+                            "playpause" -> PlayPauseIcon(size = 40.dp, color = item.color)
                             "mochi" -> FireIconFlat(size = 40.dp)
                             else -> FireIcon(size = 40.dp, color = item.color)
                         }
@@ -189,6 +191,14 @@ fun IconDetailBottomSheet(
     val flameState = rememberFlameIconState()
     val cloudSyncState = rememberCloudSyncIconState()
     val botState = rememberBotIconState()
+    val playPauseState = rememberPlayPauseIconState()
+
+    // Demostración del hook: cuenta cuántas animaciones terminaron de verdad.
+    var animationEndCount by remember { mutableStateOf(0) }
+    androidx.compose.runtime.DisposableEffect(playPauseState) {
+        playPauseState.onAnimationEnd = { animationEndCount++ }
+        onDispose { playPauseState.onAnimationEnd = null }
+    }
 
     var iconSize by remember { mutableFloatStateOf(64f) }
     var animationDuration by remember { mutableFloatStateOf(1f) }
@@ -224,6 +234,7 @@ fun IconDetailBottomSheet(
                     "flame" -> "FlameIcon"
                     "cloudsync" -> "CloudSyncIcon"
                     "bot" -> "BotIcon"
+                    "playpause" -> "PlayPauseIcon"
                     "mochi" -> "Mochi"
                     else -> "FireIcon"
                 },
@@ -254,6 +265,8 @@ fun IconDetailBottomSheet(
                         "flame" -> flameState.startAnimation()
                         "cloudsync" -> cloudSyncState.startAnimation()
                         "bot" -> botState.startAnimation()
+                        // PlayPauseIcon gestiona su propio clic para no alternar dos veces.
+                        "playpause" -> Unit
                         else -> if (iconId != "mochi") fireState.startAnimation()
                     }
                 },
@@ -281,6 +294,13 @@ fun IconDetailBottomSheet(
                         duration = animationDuration,
                         state = botState,
                     )
+                "playpause" ->
+                    PlayPauseIcon(
+                        size = iconSize.dp,
+                        color = selectedColor,
+                        duration = animationDuration,
+                        state = playPauseState,
+                    )
                 "mochi" -> FireIconFlat(size = iconSize.dp)
                 else ->
                     FireIcon(
@@ -293,7 +313,12 @@ fun IconDetailBottomSheet(
         }
 
         Text(
-            text = "Toca el icono para animar",
+            text = if (iconId == "playpause") {
+                if (playPauseState.isPlaying) "Pause → play al terminar (fin: $animationEndCount)"
+                else "Play → pause al terminar (fin: $animationEndCount)"
+            } else {
+                "Toca el icono para animar"
+            },
             color = Color.White.copy(alpha = 0.6f),
             fontSize = 12.sp,
             modifier = Modifier
@@ -321,13 +346,14 @@ fun IconDetailBottomSheet(
                         "flame" -> flameState.startAnimation()
                         "cloudsync" -> cloudSyncState.startAnimation()
                         "bot" -> botState.startAnimation()
+                        "playpause" -> playPauseState.toggle()
                         else -> if (iconId != "mochi") fireState.startAnimation()
                     }
                 },
                 modifier = Modifier.weight(1f),
                 enabled = iconId != "mochi",
             ) {
-                Text("Iniciar")
+                Text(if (iconId == "playpause") "Alternar" else "Iniciar")
             }
             Button(
                 onClick = {
@@ -335,11 +361,12 @@ fun IconDetailBottomSheet(
                         "flame" -> flameState.stopAnimation()
                         "cloudsync" -> cloudSyncState.stopAnimation()
                         "bot" -> botState.stopAnimation()
+                        "playpause" -> Unit
                         else -> if (iconId != "mochi") fireState.stopAnimation()
                     }
                 },
                 modifier = Modifier.weight(1f),
-                enabled = iconId != "mochi",
+                enabled = iconId != "mochi" && iconId != "playpause",
             ) {
                 Text("Detener/Pausar")
             }

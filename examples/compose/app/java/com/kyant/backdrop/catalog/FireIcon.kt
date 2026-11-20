@@ -37,6 +37,9 @@ class FireIconState internal constructor() {
     internal var startAction: (() -> Unit)? = null
     internal var stopAction: (() -> Unit)? = null
 
+    /** Se ejecuta cuando la animación termina sin haberse cancelado. */
+    var onAnimationEnd: (() -> Unit)? = null
+
     fun startAnimation() {
         startAction?.invoke()
     }
@@ -82,7 +85,10 @@ fun FireIcon(
     val start: () -> Unit =
         remember(motionScale, duration) {
             {
-                if (motionScale <= 0f) return@remember
+                if (motionScale <= 0f) {
+                    state?.onAnimationEnd?.invoke()
+                    return@remember
+                }
                 animationJob?.cancel()
                 animationJob =
                     scope.launch {
@@ -95,6 +101,8 @@ fun FireIcon(
                                 ),
                         )
                         progress.snapTo(0f)
+                        // animateTo vuelve aquí solo si no se canceló: fin de la animación.
+                        state?.onAnimationEnd?.invoke()
                     }
             }
         }
@@ -110,7 +118,9 @@ fun FireIcon(
             }
         }
 
-    DisposableEffect(state) {
+    // start/stop como claves: al cambiar `duration` se recalculan y hay que
+    // re-registrarlos en el State, o el action seguiría usando la duración vieja.
+    DisposableEffect(state, start, stop) {
         if (state != null) {
             state.startAction = start
             state.stopAction = stop
@@ -119,6 +129,7 @@ fun FireIcon(
             if (state != null) {
                 state.startAction = null
                 state.stopAction = null
+                state.onAnimationEnd = null
             }
             animationJob?.cancel()
             animationJob = null
