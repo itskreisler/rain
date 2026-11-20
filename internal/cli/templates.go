@@ -118,6 +118,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -127,12 +128,17 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.vinceglb.confettikit.compose.ConfettiKit
+import io.github.vinceglb.confettikit.compose.rememberConfettiKitState
+import io.github.vinceglb.confettikit.core.Party
+import io.github.vinceglb.confettikit.core.emitter.Emitter
+import kotlin.time.Duration.Companion.milliseconds
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,7 +146,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Contador()
+                    Confeti()
                 }
             }
         }
@@ -148,18 +154,51 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Contador() {
-    var count by remember { mutableIntStateOf(0) }
+fun Confeti() {
+    var animando by remember { mutableStateOf(false) }
+    val confetiState = rememberConfettiKitState()
+    val parties = remember {
+        listOf(
+            Party(
+                speed = 0f,
+                maxSpeed = 25f,
+                damping = 0.9f,
+                spread = 360,
+                colors = listOf(0xfce18a, 0xff726d, 0xf4306d, 0xb48def),
+                emitter = Emitter(duration = 120.milliseconds).max(80),
+            ),
+        )
+    }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
     ) {
-        Text("Hola desde Rain + Compose 🌧️")
-        Text("Tocaste $count " + if (count == 1) "vez" else "veces")
-        Button(onClick = { count++ }) {
-            Text("Tocar")
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Hola desde Rain + Compose 🌧️")
+            Button(onClick = {
+                confetiState.reset()
+                animando = true
+            }) {
+                Text("Lanzar confeti")
+            }
+        }
+
+        if (animando) {
+            ConfettiKit(
+                modifier = Modifier.fillMaxSize(),
+                parties = parties,
+                state = confetiState,
+                onParticleSystemEnded = { _, activeSystems ->
+                    if (activeSystems == 0) {
+                        animando = false
+                    }
+                },
+            )
         }
     }
 }

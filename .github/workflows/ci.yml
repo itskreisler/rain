@@ -126,6 +126,19 @@ jobs:
           } finally {
             Pop-Location
           }
+          .\rain.exe doctor --fix --profile complex
+          .\rain.exe init --template completo --name SmokeConfetti --non-interactive --dir smoke-confetti
+          Push-Location smoke-confetti
+          try {
+            ..\rain.exe --devlog build
+            if (-not (Test-Path 'app/build/app-debug.apk')) {
+              throw 'No se generó app/build/app-debug.apk'
+            }
+            java -jar "$env:USERPROFILE\.rain\toolchain\apksigner.jar" verify --verbose 'app/build/app-debug.apk'
+            Get-Item 'app/build/app-debug.apk' | Select-Object FullName, Length
+          } finally {
+            Pop-Location
+          }
 
   build-and-test-examples:
     name: Build de Ejemplos con Rain
