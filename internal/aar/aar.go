@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itskreisler/rain/internal/depstore"
 	"github.com/itskreisler/rain/internal/httpx"
 	"github.com/itskreisler/rain/internal/mavenrepo"
 	"github.com/itskreisler/rain/internal/pom"
@@ -459,6 +460,21 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 		return "", err
 	}
 
+	// El store global evita descargar dos veces el mismo artefacto en
+	// proyectos distintos. Se consulta antes de recorrer los repositorios,
+	// pero hace falta saber cuál sirvió la coordenada: se prueba cada repo.
+	store := depstore.New()
+	if store != nil {
+		for _, repo := range mavenrepo.For(repositories, group) {
+			if !store.HasOriginal(coord, repo, ext) {
+				continue
+			}
+			if err := depstore.LinkOriginal(dest, store.OriginalPath(coord, repo, ext)); err == nil {
+				return dest, nil
+			}
+		}
+	}
+
 	var lastErr error
 	for _, repo := range mavenrepo.For(repositories, group) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.%s", repo, groupPath, artifact, version, artifact, version, ext)
@@ -488,6 +504,17 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 		}
 		if err := os.Rename(tmp, dest); err != nil {
 			return "", err
+		}
+		// Publicar en el store global para que otros proyectos reutilicen
+		// estos bytes. Si falla, el build sigue con la copia local.
+		if store != nil {
+			if err := store.PublishOriginal(coord, repo, ext, dest); err == nil {
+				if err := depstore.LinkOriginal(dest, store.OriginalPath(coord, repo, ext)); err != nil {
+					ui.VerboseLog("no se pudo enlazar %s al store: %v", coord, err)
+				}
+			} else {
+				ui.VerboseLog("no se pudo publicar %s en el store: %v", coord, err)
+			}
 		}
 		return dest, nil
 	}
