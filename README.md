@@ -4,13 +4,13 @@
   <p>Build Android APKs without Gradle, on phones and small Linux boxes.</p>
 </div>
 
-<div align="center">
-  [![CI](https://github.com/itskreisler/rain/actions/workflows/ci.yml/badge.svg)](https://github.com/itskreisler/rain/actions/workflows/ci.yml)
-  [![Release](https://img.shields.io/github/v/release/itskreisler/rain)](https://github.com/itskreisler/rain/releases)
-  [![License](https://img.shields.io/github/license/itskreisler/rain)](LICENSE)
-  [![Go](https://img.shields.io/badge/Go-stable-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-  [![Android](https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
-</div>
+<p align="center">
+  <a href="https://github.com/itskreisler/rain/actions/workflows/ci.yml"><img src="https://github.com/itskreisler/rain/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/itskreisler/rain/releases"><img src="https://img.shields.io/github/v/release/itskreisler/rain" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/itskreisler/rain" alt="License"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-stable-00ADD8?logo=go&amp;logoColor=white" alt="Go"></a>
+  <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Android-APK-3DDC84?logo=android&amp;logoColor=white" alt="Android"></a>
+</p>
 
 ## Overview
 
