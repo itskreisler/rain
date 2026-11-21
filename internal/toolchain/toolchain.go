@@ -356,9 +356,11 @@ func (m *Manager) removeNativeBinaries() error {
 	var errs []error
 	for _, dir := range []string{m.BinDir(), m.ToolDir()} {
 		for _, base := range []string{"aapt2", "zipalign"} {
-			path := filepath.Join(dir, nativeName(base))
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				errs = append(errs, err)
+			for _, name := range []string{base, nativeName(base)} {
+				path := filepath.Join(dir, name)
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, err)
+				}
 			}
 		}
 	}
