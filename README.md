@@ -349,8 +349,11 @@ the repository root: its `rain.toml` points to an absent `app/` directory.
 
 CI runs tests, CLI smoke checks, APK builds for the examples and a release job.
 The last commit message can include `[skip test]`, `[skip windows]`,
-`[skip examples]` or `[skip release]` to skip a job. Skipped jobs do not block
-the release; real failures do.
+`[skip examples]` or `[skip release]` to skip a whole job. For finer control,
+use `[skip windows-tests]`, `[skip windows-apk]`, `[skip examples-debug]` or
+`[skip examples-release]` to skip only those steps. Skipped jobs and steps do
+not block the release; real failures do. These tokens do not apply to pull
+requests, because the workflow reads the pushed commit message.
 
 ## Contributing
 

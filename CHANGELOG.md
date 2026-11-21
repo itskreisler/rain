@@ -47,8 +47,9 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   `semantics` y respeto al movimiento reducido.
 - **Tokens `[skip ...]` en la CI.** El mensaje del último commit puede incluir
   `[skip test]`, `[skip windows]`, `[skip examples]` y `[skip release]` para
-  omitir jobs completos. Los jobs saltados no bloquean la publicación, pero un
-  fallo real sí.
+  omitir jobs completos. Los nuevos `[skip windows-tests]`, `[skip windows-apk]`,
+  `[skip examples-debug]` y `[skip examples-release]` omiten solo esas partes.
+  Los jobs o pasos saltados no bloquean la publicación, pero un fallo real sí.
 - **Ayuda del CLI más completa y en español.** `rain --help` muestra ahora el
   flujo típico (doctor → init → build), dónde están el toolchain y el store
   compartido, y las variables de entorno (`RAIN_ANDROID_JAR`,

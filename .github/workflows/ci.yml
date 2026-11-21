@@ -16,7 +16,13 @@ permissions:
 #   [skip windows]   -> Smoke test y build de APK en Windows
 #   [skip examples]  -> Build de Ejemplos con Rain
 #   [skip release]   -> Publicación de Release
-# Un job saltado no bloquea el release; un job que falle de verdad sí lo bloquea.
+#
+# Tokens para saltar solo una parte de un job:
+#   [skip windows-tests]     -> go build/vet/test en Windows
+#   [skip windows-apk]       -> instalar Chocolatey y compilar los dos APK de Windows
+#   [skip examples-debug]    -> compilaciones y verificaciones [debug] de ejemplos
+#   [skip examples-release]  -> compilaciones y verificaciones [release] de ejemplos
+# Un job o paso saltado no bloquea el release; un fallo real sí lo bloquea.
 
 jobs:
   test:
@@ -70,6 +76,7 @@ jobs:
           cache: true
 
       - name: Compilar, vet y tests
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-tests]') }}
         run: |
           go build ./...
           go vet ./...
@@ -92,6 +99,7 @@ jobs:
       # windows-latest ya trae Chocolatey, pero ejecutamos el script oficial
       # para verificar que la instalación documentada sigue funcionando.
       - name: Verificar script de instalación de Chocolatey
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         shell: pwsh
         run: |
           Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -99,16 +107,19 @@ jobs:
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
       - name: Chocolatey disponible para --install
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         shell: pwsh
         run: choco --version
 
       # zip es herramienta del sistema: doctor --fix solo descarga las
       # gestionadas por Rain, así que hay que instalarlo antes del build.
       - name: Instalar zip
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         shell: pwsh
         run: choco install zip -y --no-progress
 
       - uses: actions/setup-java@v4
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         with:
           distribution: temurin
           java-version: '17'
@@ -117,6 +128,7 @@ jobs:
       # comprueba el pipeline completo (aapt2, d8, zipalign y apksigner) en
       # Windows sin descargar AndroidX/Compose.
       - name: Generar y compilar APK con la plantilla simple
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -141,6 +153,7 @@ jobs:
       # Plantilla completo: Compose + ConfettiKit. Comprueba que las rutas y
       # classpaths de Kotlin/Compose también funcionan en Windows.
       - name: Generar y compilar APK con la plantilla completo (ConfettiKit)
+        if: ${{ !contains(github.event.head_commit.message, '[skip windows-apk]') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -191,10 +204,12 @@ jobs:
       # Los ejemplos se comprueban en debug y release. En CI no hay keystore
       # propia: --allow-debug-signing permite validar el pipeline de release.
       - name: Compilar Ejemplo Compose (FireIcon) [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/compose
         run: ../../rain build
 
       - name: Verificar APK Compose [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/compose
         run: |
           set -eu
@@ -205,10 +220,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Compose (FireIcon) [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/compose
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Compose [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/compose
         run: |
           set -eu
@@ -219,10 +236,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Material 3 Expressive [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/expressive
         run: ../../rain build
 
       - name: Verificar APK Material 3 Expressive [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/expressive
         run: |
           set -eu
@@ -233,10 +252,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Material 3 Expressive [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/expressive
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Material 3 Expressive [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/expressive
         run: |
           set -eu
@@ -247,10 +268,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Liquid Glass Music Player [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/liquid-glass
         run: ../../rain build
 
       - name: Verificar APK Liquid Glass Music Player [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/liquid-glass
         run: |
           set -eu
@@ -261,10 +284,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Liquid Glass Music Player [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/liquid-glass
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Liquid Glass Music Player [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/liquid-glass
         run: |
           set -eu
@@ -275,18 +300,22 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/backdrop-music
         run: ../../rain check
 
       - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/backdrop-music
         run: ../../rain check --release
 
       - name: Compilar Ejemplo Layout Plano (Hello Buddy) [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/hello-buddy
         run: ../../rain build
 
       - name: Verificar APK Layout Plano [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/hello-buddy
         run: |
           set -eu
@@ -297,10 +326,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Layout Plano (Hello Buddy) [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/hello-buddy
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Layout Plano [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/hello-buddy
         run: |
           set -eu
@@ -311,10 +342,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Layout Simple [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/layoutsimple
         run: ../../rain build
 
       - name: Verificar APK Layout Simple [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/layoutsimple
         run: |
           set -eu
@@ -325,10 +358,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Layout Simple [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/layoutsimple
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Layout Simple [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/layoutsimple
         run: |
           set -eu
@@ -339,10 +374,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Contador de Cofres [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/contador-cofres
         run: ../../rain build
 
       - name: Verificar APK Contador de Cofres [debug]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/contador-cofres
         run: |
           set -eu
@@ -353,10 +390,12 @@ jobs:
           java -jar ~/.rain/toolchain/apksigner.jar verify --verbose "$APK" | head -3
 
       - name: Compilar Ejemplo Contador de Cofres [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/contador-cofres
         run: ../../rain build --release --allow-debug-signing
 
       - name: Verificar APK Contador de Cofres [release]
+        if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/contador-cofres
         run: |
           set -eu
@@ -369,6 +408,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: apks-ejemplos
+          if-no-files-found: ignore
           path: |
             examples/compose/app/build/app-debug.apk
             examples/compose/app/build/app-release.apk
