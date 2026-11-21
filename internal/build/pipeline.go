@@ -459,7 +459,7 @@ func runD8(args []string) error {
 		if err != nil {
 			return fmt.Errorf("creando archivo de argumentos de d8: %w", err)
 		}
-		defer os.Remove(argFile)
+		defer func() { _ = os.Remove(argFile) }()
 		heap := memenv.HeapLimit("2g")
 		javaArgs := d8JavaArgs(argFile, d8Jar, heap)
 		cmd = exec.Command("java", javaArgs...)
