@@ -15,7 +15,7 @@ rain doctor [opciones]
   - `complex`: Comprueba `kotlinc`, el plugin de Kotlin Compose, R8 y dependencias avanzadas.
 - `--json`: Devuelve el diagnóstico en formato JSON estructurado.
 - `--print-install`: Imprime las instrucciones de instalación del sistema.
-- `--fix`: Descarga y configura automáticamente las herramientas que faltan en `~/.rain/bin` (sin requerir acceso root).
+- `--fix`: Descarga y configura automáticamente las herramientas que faltan en `~/.rain/bin` (sin requerir acceso root). En Linux arm64 usa `aapt2` y `zipalign` del sistema, porque los binarios de Google son x86-64.
 - `--lint`: Con `--fix`, descarga además los analizadores estáticos opcionales
   (ktlint 1.8.0 y detekt 1.23.8) en `~/.rain/toolchain`. Es la misma operación
   que `rain lint --install`.

@@ -235,6 +235,9 @@ func normalizeLegacyArgs(args []string) []string {
 // wrappers y herramientas de compilación estén disponibles sin tocar el shell.
 func addManagedBinToPath() {
 	devlog("addManagedBinToPath", "", "Antepone ~/.rain/bin y directorios de SDK al PATH de ejecución")
+	// Versiones anteriores dejaron aapt2 x86-64 en ~/.rain/bin en arm64.
+	// Retirarlo aquí evita que tape el binario del sistema antes de doctor.
+	_ = toolchain.PruneUnsupportedNativeBinaries()
 	home, err := os.UserHomeDir()
 	if err == nil {
 		bin := filepath.Join(home, ".rain", "bin")

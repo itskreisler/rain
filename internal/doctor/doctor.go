@@ -3,6 +3,7 @@ package doctor
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,9 +139,14 @@ func DiagnoseContext(ctx context.Context, profile Profile) Report {
 		},
 		{name: "keytool", command: "keytool", args: []string{"-help"}, required: true},
 		{name: "aapt2", command: "aapt2", args: []string{"version"}, required: true, parse: firstVersion},
-		// zipalign no tiene --version: ejecutarlo sin argumentos devuelve
-		// error de uso, así que solo comprobamos que exista en PATH.
-		{name: "zipalign", command: "zipalign", required: true, presenceOnly: true},
+		// zipalign no tiene --version: sin argumentos devuelve error de uso.
+		// Se ejecuta de todos modos para detectar wrappers que no arrancan.
+		{
+			name: "zipalign", command: "zipalign", required: true, execOnly: true,
+			parse:         zipalignProbeOutput,
+			valid:         func(v string) bool { return v == "ok" },
+			invalidDetail: "no se puede ejecutar: zipalign no responde",
+		},
 		{name: "zip", command: "zip", args: []string{"-v"}, required: true, parse: firstVersion},
 	}
 	for _, p := range probes {
@@ -252,23 +258,13 @@ type toolProbe struct {
 	command       string
 	args          []string
 	required      bool
-	presenceOnly  bool
+	execOnly      bool
 	parse         func(string) string
 	valid         func(string) bool
 	invalidDetail string
 }
 
 func (p toolProbe) check(ctx context.Context, platform Platform, profile Profile) Check {
-	if p.presenceOnly {
-		path, _ := findCommand(p.command)
-		if path == "" {
-			return makeCheck(p.name, p.required, StatusMissing, ReasonNotInstalled, "", "", "",
-				InstallCommand(platform, p.name, profile))
-		}
-		return makeCheck(p.name, p.required, StatusOK, ReasonNone, "", path, "",
-			InstallCommand(platform, p.name, profile))
-	}
-
 	path, out, err := runVersion(ctx, p.command, p.args...)
 	version := ""
 	if p.parse != nil {
@@ -279,7 +275,7 @@ func (p toolProbe) check(ctx context.Context, platform Platform, profile Profile
 	switch {
 	case err != nil && path == "":
 		status, reason = StatusMissing, ReasonNotInstalled
-	case err != nil:
+	case err != nil && (!p.execOnly || !processStarted(err)):
 		status, reason = StatusBroken, ReasonUnavailable
 		detail = "no se puede ejecutar: " + err.Error()
 	case p.valid != nil && !p.valid(version):
@@ -287,6 +283,13 @@ func (p toolProbe) check(ctx context.Context, platform Platform, profile Profile
 	}
 	return makeCheck(p.name, p.required, status, reason, version, path, detail,
 		InstallCommand(platform, p.name, profile))
+}
+
+// processStarted distingue "comando encontrado pero con código de salida"
+// de "no se pudo arrancar". zipalign termina con código 2 al mostrar el uso.
+func processStarted(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
 }
 
 func makeCheck(name string, required bool, status Status, reason Reason, version, path, detail, install string) Check {
@@ -672,14 +675,6 @@ func runVersion(ctx context.Context, name string, args ...string) (string, strin
 	return path, strings.TrimSpace(string(out)), err
 }
 
-func findCommand(name string) (string, string) {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return "", ""
-	}
-	return path, ""
-}
-
 var (
 	javaVersionRe = regexp.MustCompile(`version "([^"]+)"`)
 	numberRe      = regexp.MustCompile(`\d+(?:\.\d+)+`)
@@ -691,6 +686,15 @@ func parseJavaVersion(output string) string {
 		return match[1]
 	}
 	return firstVersion(output)
+}
+
+// zipalignProbeOutput detecta el texto de uso que zipalign imprime aunque
+// termine con código 2. Un lanzador roto no llega a imprimirlo.
+func zipalignProbeOutput(output string) string {
+	if strings.Contains(output, "Zip alignment utility") && strings.Contains(output, "Usage: zipalign") {
+		return "ok"
+	}
+	return ""
 }
 
 // firstVersion ignora las líneas de avisos de la JVM (p. ej.

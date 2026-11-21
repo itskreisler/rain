@@ -107,7 +107,7 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := manager.publishNativeBinaries(); err != nil {
+	if err := manager.publishNativeBinariesFor(true); err != nil {
 		t.Fatal(err)
 	}
 	out, err := os.ReadFile(filepath.Join(manager.BinDir(), nativeNameFor("zipalign", runtime.GOOS)))
@@ -119,6 +119,58 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "LD_LIBRARY_PATH") || !strings.Contains(string(out), "lib64") {
 		t.Errorf("el wrapper de zipalign no fija LD_LIBRARY_PATH:\n%s", out)
+	}
+}
+
+func TestNativeBuildToolsSoloEnPlataformasConSoporte(t *testing.T) {
+	tests := []struct {
+		goos, goarch string
+		want         bool
+	}{
+		{"linux", "amd64", true},
+		{"linux", "arm64", false},
+		{"linux", "386", false},
+		{"windows", "amd64", true},
+		{"windows", "arm64", true},
+		{"darwin", "arm64", true},
+	}
+	for _, tc := range tests {
+		if got := nativeBuildToolsAvailableFor(tc.goos, tc.goarch); got != tc.want {
+			t.Errorf("nativeBuildToolsAvailableFor(%q,%q) = %t, quiero %t", tc.goos, tc.goarch, got, tc.want)
+		}
+	}
+}
+
+func TestPublishNativeBinariesLimpiaCopiasAjenas(t *testing.T) {
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Root = filepath.Join(t.TempDir(), ".rain")
+	if err := os.MkdirAll(manager.BinDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(manager.ToolDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{manager.BinDir(), manager.ToolDir()} {
+		for _, name := range []string{"aapt2", "zipalign"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("x86-64"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if err := manager.publishNativeBinariesFor(false); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{manager.BinDir(), manager.ToolDir()} {
+		for _, name := range []string{"aapt2", "zipalign"} {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Errorf("%s sigue presente: %v", path, err)
+			}
+		}
 	}
 }
 

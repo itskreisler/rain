@@ -64,8 +64,8 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 - **`rain doctor --install`:** descarga el toolchain gestionado y, con el
   gestor detectado (`apt`, `apk`, `pkg`, `winget` o `choco`), instala las
   dependencias del sistema que sigan faltando. Admite `--yes` y `--dry-run`.
-  `--fix` descarga también `aapt2` y `zipalign` desde build-tools de Google
-  para Linux, Windows y macOS, sin root.
+  `--fix` descarga también `aapt2` y `zipalign` desde build-tools de Google en
+  las plataformas con soporte oficial; en Linux arm64 usa los del sistema.
 - **CI: smoke test en Windows y cobertura release de los ejemplos.** El job
   `windows-smoke` compila, analiza y prueba el CLI en `windows-latest` y
   verifica el script de instalación de Chocolatey. Los ejemplos se compilan
@@ -154,6 +154,11 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **`rain doctor --fix` rompía aapt2 en Linux arm64.** Google solo publica
+  `build-tools` para Linux x86-64, y Rain copiaba ese binario a `~/.rain/bin`,
+  tapando el del sistema. Ahora solo descarga `apksigner.jar` y usa `aapt2` y
+  `zipalign` nativos. Las copias x86-64 de versiones anteriores se retiran al
+  iniciar el CLI, y `doctor` ejecuta `zipalign` para detectar lanzadores rotos.
 - **La plantilla `completo` no compilaba en Windows.** El wrapper `kotlinc.cmd`
   hacía que `cmd.exe` partiera el classpath (`;`) y las opciones `-X=...` (`=`),
   así que kotlinc interpretaba los jars como fuentes. En Windows Rain llama

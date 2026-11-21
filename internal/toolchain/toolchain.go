@@ -3,6 +3,7 @@ package toolchain
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,17 @@ func buildToolsURLFor(goos string) string {
 		return url
 	}
 	return BuildToolsURL
+}
+
+// nativeBuildToolsAvailable indica si los ZIP oficiales de build-tools traen
+// ejecutables para esta plataforma. Google solo publica Linux x86-64: en
+// linux/arm64 Rain debe usar aapt2 y zipalign del sistema.
+func nativeBuildToolsAvailable() bool {
+	return nativeBuildToolsAvailableFor(runtime.GOOS, runtime.GOARCH)
+}
+
+func nativeBuildToolsAvailableFor(goos, goarch string) bool {
+	return goos != "linux" || goarch == "amd64"
 }
 
 func nativeName(base string) string { return nativeNameFor(base, runtime.GOOS) }
@@ -230,12 +242,16 @@ func (m *Manager) ensureR8(ctx context.Context) error {
 }
 
 // ensureBuildTools extrae de un único ZIP las herramientas nativas/JAR que
-// Rain necesita. Se descarga solo si falta alguna de ellas. libc++.so solo
-// existe en el ZIP de Linux y solo lo usa su wrapper de zipalign.
+// Rain necesita. Se descarga solo si falta alguna de ellas. En plataformas sin
+// binarios oficiales (linux/arm64) solo saca apksigner.jar y usa los ejecutables
+// del sistema. libc++.so solo existe en el ZIP de Linux y solo lo usa su
+// wrapper de zipalign.
 func (m *Manager) ensureBuildTools(ctx context.Context) error {
-	libcxx := needsLibcxx(runtime.GOOS)
+	native := nativeBuildToolsAvailable()
+	libcxx := needsLibcxx(runtime.GOOS) && native
 	libcxxReady := !libcxx || (fileExists(m.libcxxPath()) && fileExists(m.libcxxPath()+".1"))
-	if fileExists(m.ApksignerJar()) && fileExists(m.Aapt2()) && fileExists(m.ZipAlign()) && libcxxReady {
+	nativesReady := !native || (fileExists(m.Aapt2()) && fileExists(m.ZipAlign()))
+	if fileExists(m.ApksignerJar()) && nativesReady && libcxxReady {
 		return m.publishNativeBinaries()
 	}
 
@@ -250,6 +266,7 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 		dest      string
 		mode      os.FileMode
 		match     func(string) bool
+		native    bool
 		linuxOnly bool
 	}{
 		{
@@ -257,24 +274,24 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") },
 		},
 		{
-			name: nativeName("aapt2"), dest: m.Aapt2(), mode: 0o755,
+			name: nativeName("aapt2"), dest: m.Aapt2(), mode: 0o755, native: true,
 			match: func(n string) bool { return filepath.Base(n) == nativeName("aapt2") },
 		},
 		{
-			name: nativeName("zipalign"), dest: m.ZipAlign(), mode: 0o755,
+			name: nativeName("zipalign"), dest: m.ZipAlign(), mode: 0o755, native: true,
 			match: func(n string) bool { return filepath.Base(n) == nativeName("zipalign") },
 		},
 		{
-			name: "libc++.so", dest: m.libcxxPath(), mode: 0o644, linuxOnly: true,
+			name: "libc++.so", dest: m.libcxxPath(), mode: 0o644, native: true, linuxOnly: true,
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so" },
 		},
 		{
-			name: "libc++.so.1", dest: m.libcxxPath() + ".1", mode: 0o644, linuxOnly: true,
+			name: "libc++.so.1", dest: m.libcxxPath() + ".1", mode: 0o644, native: true, linuxOnly: true,
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" },
 		},
 	}
 	for _, tool := range tools {
-		if tool.linuxOnly && !libcxx {
+		if (tool.native && !native) || (tool.linuxOnly && !libcxx) {
 			continue
 		}
 		if fileExists(tool.dest) {
@@ -294,9 +311,18 @@ func (m *Manager) libcxxPath() string {
 // publishNativeBinaries deja en ~/.rain/bin (que el CLI antepone al PATH)
 // los ejecutables que el pipeline invoca por su nombre. zipalign necesita un
 // wrapper: el binario de Google enlaza libc++.so, que no está en Ubuntu.
+// En plataformas sin binarios oficiales retira las copias gestionadas para
+// que no tapen las del sistema.
 func (m *Manager) publishNativeBinaries() error {
+	return m.publishNativeBinariesFor(nativeBuildToolsAvailable())
+}
+
+func (m *Manager) publishNativeBinariesFor(native bool) error {
 	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
 		return err
+	}
+	if !native {
+		return m.removeNativeBinaries()
 	}
 	for _, name := range []string{nativeName("aapt2"), nativeName("zipalign")} {
 		src := filepath.Join(m.ToolDir(), name)
@@ -322,6 +348,35 @@ func (m *Manager) publishNativeBinaries() error {
 		}
 	}
 	return nil
+}
+
+// removeNativeBinaries borra las copias gestionadas de aapt2 y zipalign.
+// Sin ellas, exec.LookPath encuentra los ejecutables nativos del sistema.
+func (m *Manager) removeNativeBinaries() error {
+	var errs []error
+	for _, dir := range []string{m.BinDir(), m.ToolDir()} {
+		for _, base := range []string{"aapt2", "zipalign"} {
+			path := filepath.Join(dir, nativeName(base))
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// PruneUnsupportedNativeBinaries limpia binarios de build-tools descargados
+// por versiones anteriores de Rain en arquitecturas sin soporte oficial.
+// Se llama al iniciar el CLI, antes de anteponer ~/.rain/bin al PATH.
+func PruneUnsupportedNativeBinaries() error {
+	if nativeBuildToolsAvailable() {
+		return nil
+	}
+	manager, err := New()
+	if err != nil {
+		return err
+	}
+	return manager.removeNativeBinaries()
 }
 
 func (m *Manager) ensureAndroidJar(ctx context.Context) error {

@@ -1,43 +1,94 @@
-# Rain
+<div align="center">
+  <img src="docs/assets/rain-logo.svg" alt="Rain" width="96">
+  <h1>Rain</h1>
+  <p>Build Android APKs without Gradle, on phones and small Linux boxes.</p>
+</div>
 
-A lightweight Android build system written in Go, designed to run on Termux without the overhead of Gradle.
+<div align="center">
+  [![CI](https://github.com/itskreisler/rain/actions/workflows/ci.yml/badge.svg)](https://github.com/itskreisler/rain/actions/workflows/ci.yml)
+  [![Release](https://img.shields.io/github/v/release/itskreisler/rain)](https://github.com/itskreisler/rain/releases)
+  [![License](https://img.shields.io/github/license/itskreisler/rain)](LICENSE)
+  [![Go](https://img.shields.io/badge/Go-stable-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+  [![Android](https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
+</div>
 
 ## Overview
 
-Rain is a minimalist alternative to Gradle for building Android APKs directly on mobile devices or Linux environments. It executes the essential Android build pipeline (`aapt2` → `javac`/`kotlinc` → `d8`/`R8` → `zipalign` → `apksigner`) with minimal dependencies, no persistent JVM daemon, and efficient dependency resolution.
+Gradle is heavy for Termux, small containers and older phones: it needs a JVM
+daemon, large caches and a Gradle wrapper. Rain is a single Go binary that runs
+the essential Android build pipeline directly, with no persistent daemon and no
+Gradle project required.
+
+Rain targets:
+
+- Android projects created with `rain init`.
+- Flat `android2apk` projects that already have `AndroidManifest.xml`.
+- Java, Kotlin and Jetpack Compose apps, including multi-module layouts.
+
+### Build pipeline
+
+Rain executes the standard Android build pipeline:
+
+1. **Dependency resolution** (full mode) - Parse Maven POMs, resolve transitive dependencies, download AAR/JAR to `libs/`.
+2. **Resource compilation** - `aapt2 compile` compiles `res/` to `.flat` files.
+3. **Resource linking** - `aapt2 link` generates `R.java` and the base APK from the manifest and resources.
+4. **BuildConfig generation** - Create `BuildConfig.java` with `DEBUG`, `APPLICATION_ID`, `VERSION_NAME`, etc.
+5. **Kotlin compilation** - `kotlinc` compiles `.kt` files to `.class` (if present).
+6. **Java compilation** - `javac` compiles `.java` files, including generated `R.java` and `BuildConfig.java`.
+7. **DEX conversion** - `d8` converts `.class` to `classes.dex`. In release mode, `R8` performs minification and obfuscation.
+8. **APK packaging** - Add `classes.dex` to the base APK.
+9. **Alignment** - `zipalign` optimizes the APK for memory.
+10. **Signing** - `apksigner` signs with a debug or release keystore.
+
+Incremental builds use SHA-256 hashes of sources and resources to reuse the
+previous `classes.dex` and base APK when nothing changed.
 
 ## Features
 
-- **Lightweight** - Single Go binary with instant startup and low memory footprint
-- **Dependency resolution** - Reads Maven POMs, handles parent inheritance and `dependencyManagement` (full mode)
-- **Mixed language support** - Compile Java and Kotlin in the same project
-- **Incremental builds** - SHA-256 hashing of sources and resources skips unnecessary recompilation
-- **Fast type checking** - `rain check` validates types without generating an APK
-- **Static analysis** - `rain lint` integrates ktlint and detekt
-- **Release builds** - Minify with R8 and sign with your keystore
-- **Multi-module support** - Define multiple modules in `rain.toml`
-- **Android2apk compatible** - Drop-in replacement for projects using the `android2apk` flat layout
-
-## Requirements
-
-- **OS**: Termux or Linux with glibc/musl (tested on Alpine in containers)
-- **JDK**: Java 17 or higher (JDK 21 works in most environments, but may be unstable under PRoot; JDK 17 is recommended)
-- **aapt2**: Available from system packages (`pkg install aapt2` on Termux)
-- **Toolchain**: Rain auto-provisions `d8`/R8, `apksigner`, `zipalign`, `android.jar`, Kotlinc, and Compose plugin to `~/.rain/`
+- **Lightweight** - Single Go binary with instant startup and low memory footprint.
+- **Dependency resolution** - Reads Maven POMs, handles parent inheritance and `dependencyManagement` (full mode).
+- **Mixed language support** - Compile Java and Kotlin in the same project.
+- **Incremental builds** - SHA-256 hashing of sources and resources skips unnecessary recompilation.
+- **Fast type checking** - `rain check` validates types without generating an APK.
+- **Static analysis** - `rain lint` integrates ktlint, detekt and PMD.
+- **Formatting** - `rain fmt` formats Kotlin and Java in place or checks it with `--check`.
+- **Release builds** - Minify with R8 and sign with your keystore.
+- **Multi-module support** - Define multiple modules in `rain.toml`.
+- **Managed toolchain** - Downloads R8, `apksigner`, `android.jar`, Kotlin and the Compose plugin to `~/.rain/`.
+- **android2apk compatible** - Drop-in replacement for projects using the flat `android2apk` layout.
 
 ## Installation
+
+### Requirements
+
+- **OS**: Termux or Linux with glibc/musl (tested on Alpine in containers).
+- **JDK**: Java 17 or higher. JDK 17 is recommended; JDK 21 may be unstable under PRoot.
+- **aapt2**: Install it from the system package manager: `pkg install aapt2` on Termux or `apk add android-build-tools` on Alpine.
+- **zipalign**: Needed by the packaging step; it comes from the same system packages.
+
+On Linux arm64, Rain uses the system `aapt2` and `zipalign`. Google only ships
+x86-64 Linux build-tools binaries, so Rain does not copy them into `~/.rain/`.
+
+### Prebuilt binaries
+
+Every [release](https://github.com/itskreisler/rain/releases) includes binaries
+for Linux amd64, Linux arm64, Windows amd64 and Windows arm64. `SHA256SUMS`
+contains the checksums for all four files.
+
+### From source
 
 ```bash
 git clone https://github.com/itskreisler/rain.git
 cd rain
-go build -o rain .
-# Optional: install globally
-cp rain $PREFIX/bin/
+make build
+# Optional: install globally in Termux
+cp rain "$PREFIX/bin/"
 ```
 
-Prebuilt binaries for Linux (amd64 and arm64) and Windows (amd64 and arm64) are attached to every [release](https://github.com/itskreisler/rain/releases). `SHA256SUMS` contains the checksums for all four files.
+`go build -o rain .` also works, but `make build` injects version, commit and
+build date.
 
-## Quick Start
+## Usage
 
 ### 1. Install the toolchain
 
@@ -45,7 +96,8 @@ Prebuilt binaries for Linux (amd64 and arm64) and Windows (amd64 and arm64) are 
 rain doctor --fix
 ```
 
-If you already have `android.jar`, you can specify it with `--android-jar <path>`.
+Add `--profile complex` for Kotlin, Compose and AndroidX. If you already have
+`android.jar`, pass it with `--android-jar <path>` to `build` or `check`.
 
 ### 2. Initialize a project
 
@@ -54,10 +106,106 @@ rain init
 ```
 
 Choose a resolution mode:
+
 - `simple` - Explicit dependencies only, no transitive resolution. Best for small projects.
 - `completo` (full) - Resolves transitive dependencies from Maven POMs. Required for AndroidX.
 
-### 3. Configure `rain.toml`
+### 3. Build an APK
+
+```bash
+# Debug build with --devlog enabled while diagnosing a build
+rain --devlog build
+
+# Release build with R8 minification
+rain build --release
+
+# Build from a specific directory
+rain build /path/to/project
+
+# Type-check without producing an APK
+rain check
+
+# Remove generated artifacts
+rain clean
+```
+
+APKs are generated in `app/build/` as `app-debug.apk`, `app-release.apk` and a
+descriptive copy such as `<name>-<version>-<abi>.apk`.
+
+### Commands
+
+| Command | Description | Flags |
+| --- | --- | --- |
+| `rain init` | Initialize a new project | `--template simple\|completo` |
+| `rain build [dir]` | Build and sign APK; auto-detects the flat android2apk layout | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
+| `rain check [dir]` | Type-check without generating an APK | `--fast`, `--android-jar <path>`, `--release` |
+| `rain lint [dir]` | Run static analysis (ktlint, detekt, PMD) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
+| `rain fmt [dir]` | Format Kotlin (ktlint) and Java (google-java-format) | `--check` |
+| `rain doctor` | Diagnose and install the toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--install`, `--yes`, `--dry-run`, `--json`, `--print-install` |
+| `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
+| `rain deps` | Dependency management commands | — |
+| `rain version` | Show the Rain version | — |
+| `rain clean` | Remove build artifacts, dependencies and caches | — |
+| `rain completion` | Generate shell autocompletion scripts | — |
+
+### Project layout
+
+```text
+my-app/
+├── rain.toml          # Build configuration
+├── app/
+│   ├── src/
+│   │   └── main/
+│   │       ├── AndroidManifest.xml
+│   │       ├── java/      # Java sources
+│   │       ├── kotlin/    # Kotlin sources (optional)
+│   │       └── res/       # Resources
+│   └── build/         # Generated APKs and build artifacts
+├── libs/              # Downloaded dependencies (generated)
+└── cache/             # POM cache (generated)
+```
+
+### Examples
+
+| Example | What it shows |
+| --- | --- |
+| `examples/compose` | Jetpack Compose with Material 3, icons and an adaptive launcher icon. |
+| `examples/liquid-glass` | A glass UI effect over the content behind it. |
+| `examples/backdrop-music` | A real audio player: `MediaStore`, `MediaPlayer` and a real equalizer. |
+| `examples/hello-buddy` | The flat android2apk layout, without `rain.toml`. |
+| `examples/contador-cofres` | A floating overlay with a foreground service, Compose UI and local JSON history. |
+
+### Migration from android2apk
+
+Projects using the flat `android2apk` layout (`app.properties`, setup scripts)
+work without modification:
+
+```bash
+rain build /path/to/android2apk-project
+```
+
+Rain detects the layout automatically: without `rain.toml`, if the current
+directory has `AndroidManifest.xml` at the root or in `src/main/`, `rain build`
+and `rain check` use the flat flow. See the [migration guide](docs/migracion-android2apk.md)
+for details on converting `app.properties`, Compose dependencies, toolchain
+setup and signing.
+
+### `check` vs `lint`
+
+| Feature | `rain check` | `rain lint` |
+| --- | --- | --- |
+| Purpose | Type checking via compiler | Style and code quality analysis |
+| Detects | Unresolved references, broken imports, type errors | Formatting issues, unused imports, complexity, code smells |
+| Tool | kotlinc/javac | ktlint, detekt, PMD |
+| Speed | Fast with incremental cache (~3s) | ~20s |
+| Output | Compilation errors | Warnings and style violations |
+
+A linter cannot replace type checking: `check` compiles the code, while `lint`
+analyzes source text.
+
+## Configuration
+
+### `rain.toml`
 
 ```toml
 mode = "completo"
@@ -90,200 +238,136 @@ path = "app"
 extra = ["https://my-nexus.local/repository/maven"]  # Optional custom repos
 ```
 
-### 4. Build your APK
+Unknown keys fail parsing. Root keys (`mode`, `dependencies`, `modules`) must
+appear before any table. Without `rain.toml`, `app.properties` is used as a
+fallback and the flat android2apk layout is auto-detected.
 
-```bash
-# Debug build
-rain build
+### Environment variables
 
-# Release build with R8 minification
-rain build --release
+| Variable | Purpose |
+| --- | --- |
+| `RAIN_ANDROID_JAR` | Override the detected `android.jar`. |
+| `RAIN_JAVA_MAX_HEAP` | Heap for d8, R8 and kotlinc (for example `2g`). |
+| `RAIN_GOMEMLIMIT` | Soft memory limit for the Go runtime. |
+| `RAIN_GOGC` | Go garbage collector target. |
+| `NO_COLOR` | Disable ANSI colors. |
 
-# Build from a specific directory
-rain build /path/to/project
-```
-
-APKs are generated in `app/build/` as `app-debug.apk`, `app-release.apk`, and a descriptive copy like `<name>-<version>-<abi>.apk`.
-
-### 5. Clean build artifacts
-
-```bash
-rain clean
-```
-
-## Project Structure
-
-```text
-my-app/
-├── rain.toml          # Build configuration
-├── app/
-│   ├── src/
-│   │   └── main/
-│   │       ├── AndroidManifest.xml
-│   │       ├── java/      # Java sources
-│   │       ├── kotlin/    # Kotlin sources (optional)
-│   │       └── res/       # Resources
-│   └── build/         # Generated APKs and build artifacts
-├── libs/              # Downloaded dependencies (generated)
-└── cache/             # POM cache (generated)
-```
-
-## Commands
-
-| Command | Description | Flags |
-| --- | --- | --- |
-| `rain init` | Initialize a new project | `--template simple\|completo` |
-| `rain build [dir]` | Build and sign APK (supports flat android2apk layout, auto-detected without `rain.toml`) | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
-| `rain check [dir]` | Type-check without generating APK | `--fast`, `--android-jar <path>`, `--release` |
-| `rain lint [dir]` | Run static analysis (ktlint, detekt, pmd) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
-| `rain fmt [dir]` | Format Kotlin (ktlint) and Java (google-java-format) sources | `--check` |
-| `rain doctor` | Diagnose and install toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--json`, `--print-install` |
-| `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
-| `rain deps` | Dependency management commands | — |
-| `rain version` | Show Rain version | — |
-| `rain clean` | Remove build artifacts, dependencies and caches | — |
-| `rain completion` | Generate shell autocompletion scripts | — |
-
-## Global Flags
+### Global flags
 
 | Flag | Description |
 | --- | --- |
-| `--devlog` | Show development logs for CLI functions |
-| `-v, --verbose` | Show detailed execution output |
-| `-q, --quiet` | Show only errors |
-| `--no-color` | Disable ANSI colors |
-| `-h, --help` | Show help for any command |
+| `--devlog` | Show development logs for CLI functions. |
+| `-v, --verbose` | Show detailed execution output. |
+| `-q, --quiet` | Show only errors. |
+| `--no-color` | Disable ANSI colors. |
+| `-h, --help` | Show help for any command. |
 
-## `check` vs `lint`
+### Lint and formatting
 
-| Feature | `rain check` | `rain lint` |
-| --- | --- | --- |
-| Purpose | Type checking via compiler | Style and code quality analysis |
-| Detects | Unresolved references, broken imports, type errors | Formatting issues, unused imports, complexity, code smells |
-| Tool | kotlinc/javac | ktlint, detekt, pmd |
-| Speed | Fast with incremental cache (~3s) | ~20s |
-| Output | Compilation errors | Warnings and style violations |
+Install the optional analyzers:
 
-A linter cannot replace type checking—`check` compiles the code, `lint` analyzes source text.
-
-## Lint Configuration
-
-Install lint and format tools:
 ```bash
 rain lint --install
 # or
 rain doctor --fix --lint
 ```
 
-Configure in `rain.toml`:
+Configure them in `rain.toml`:
+
 ```toml
 [lint]
-tools = ["ktlint", "detekt", "pmd"]  # or ["auto"]
-fail_on = "error"                    # never | warning | error
-type_resolution = false              # Enable type resolution for detekt (slower)
+tools = ["ktlint", "detekt", "pmd"]     # or ["auto"]
+fail_on = "error"                       # never | warning | error
+type_resolution = false                 # Enable detekt type resolution (slower)
 pmd_ruleset = "config/pmd-ruleset.xml"  # Optional custom PMD ruleset
 pmd_baseline = "config/pmd-baseline.txt" # Known PMD findings to ignore
 
 [format]
-java_style = "aosp"           # google | aosp
-java_line_length = 120        # Max columns
-java_skip_imports = true      # Keep existing import order
+java_style = "aosp"                    # google | aosp
+java_line_length = 120                 # Max columns
+java_skip_imports = true               # Keep existing import order
 java_files = ["app/java/**/New*.java"] # Optional include globs
 java_exclude = ["**/Generated.java"]   # Optional exclude globs
 ```
 
-The project can also tune the analyzers themselves. `rain lint` respects:
+`rain lint` respects `.editorconfig` for ktlint, `detekt.yml` for detekt, and
+`pmd-ruleset.xml` or `config/pmd-ruleset.xml` for PMD. The PMD baseline uses one
+`path|rule` per line and hides known findings.
 
-- `.editorconfig` — ktlint reads it, so the code style of the project (for
-  example `ktlint_code_style = android_studio` for Compose projects) applies.
-- `detekt.yml` — Rain passes it to detekt when the project has one. Detekt
-  does not look for it on its own, so without this it would always use its
-  default thresholds and rules.
-- `pmd-ruleset.xml` (or `config/pmd-ruleset.xml`) — Rain uses it for PMD
-  instead of the bundled quickstart rules. You can also point to any file with
-  `pmd_ruleset` in `rain.toml`.
-- `pmd-baseline.txt` (or `config/pmd-baseline.txt`) — one `path|rule` per line.
-  Known PMD findings are hidden, so `--fail-on warning` only fails on new ones.
-  Kotlin/Java formatters are never silenced by this file.
-
-## Formatting
-
-`rain fmt` reformats Kotlin with ktlint and Java with google-java-format, in
-place. Kotlin takes its style from `.editorconfig`; Java uses `[format]` in
-`rain.toml` (AOSP style, 120 columns and preserved imports by default). Use
-`java_files` and `java_exclude` in `[format]` to format only the files you want
-in a project that vendors code from elsewhere. Patterns accept `*`, `?` and
-`**`; `!` also works inside `java_files`:
+`rain fmt` reformats Kotlin and Java in place. Kotlin takes its style from
+`.editorconfig`; Java uses `[format]` in `rain.toml`. Use `java_files` and
+`java_exclude` to limit formatting to files you own. Patterns accept `*`, `?`
+and `**`; `!` also works inside `java_files`.
 
 ```bash
-rain fmt            # the current directory
+rain fmt            # Current directory
 rain fmt path/to/project
-rain fmt --check    # dry run: fail if any file needs formatting
+rain fmt --check    # Dry run: fail if any file needs formatting
 ```
-
-It prints the files it touched. `--check` leaves the sources untouched and
-exits with code 1 when formatting is needed, so it can replace a separate
-format-check script in CI. What the formatters cannot fix on their own
-(naming, complexity, code smells) keeps showing up in `rain lint`.
-
-## Examples
-
-| Example | What it shows |
-| --- | --- |
-| `examples/compose` | Jetpack Compose with Material 3, icons and an adaptive launcher icon |
-| `examples/liquid-glass` | A glass UI effect over the content behind it |
-| `examples/backdrop-music` | A real audio player: `MediaStore`, `MediaPlayer`, a real equalizer |
-| `examples/hello-buddy` | The flat android2apk layout, without `rain.toml` |
-| `examples/contador-cofres` | A floating overlay over the game with a foreground service, Compose UI and a local JSON history |
-
-## Migration from android2apk
-
-Projects using the flat `android2apk` layout (`app.properties`, setup scripts) work with Rain without modification:
-
-```bash
-rain build /path/to/android2apk-project
-```
-
-Rain detects the layout automatically: if there is no `rain.toml` but the current directory has `AndroidManifest.xml` (at the root or in `src/main/`), `rain build` and `rain check` use the flat flow without needing the path argument.
-
-See the [migration guide](docs/migracion-android2apk.md) for details on converting `app.properties` to `rain.toml`, Compose dependencies, toolchain setup, and signing.
-
-## How It Works
-
-Rain executes the standard Android build pipeline:
-
-1. **Dependency resolution** (full mode) - Parse Maven POMs, resolve transitive dependencies, download AAR/JAR to `libs/`
-2. **Resource compilation** - `aapt2 compile` compiles `res/` to `.flat` files
-3. **Resource linking** - `aapt2 link` generates `R.java` and the base APK from manifest and resources
-4. **BuildConfig generation** - Create `BuildConfig.java` with `DEBUG`, `APPLICATION_ID`, `VERSION_NAME`, etc.
-5. **Kotlin compilation** - `kotlinc` compiles `.kt` files to `.class` (if present)
-6. **Java compilation** - `javac` compiles `.java` files (including generated `R.java` and `BuildConfig.java`)
-7. **DEX conversion** - `d8` converts `.class` to `classes.dex`. In release mode, `R8` performs minification and obfuscation
-8. **APK packaging** - Add `classes.dex` to the base APK
-9. **Alignment** - `zipalign` optimizes the APK for memory
-10. **Signing** - `apksigner` signs with debug or release keystore
-
-Incremental builds use SHA-256 hashes of sources and resources to reuse previous `classes.dex` and base APK when unchanged.
 
 ## Documentation
 
 | Document | Description |
 | --- | --- |
-| [docs/doctor.md](docs/doctor.md) | `rain doctor` checks and installation flags |
-| [docs/toolchain.md](docs/toolchain.md) | Toolchain contents in `~/.rain/` and rationale |
-| [docs/compatibilidad.md](docs/compatibilidad.md) | JDK / Kotlin / R8 / compileSdk compatibility matrix |
-| [docs/memoria.md](docs/memoria.md) | Memory management for containers (GOMEMLIMIT, GOGC, JVM heap) |
-| [docs/migracion-android2apk.md](docs/migracion-android2apk.md) | Porting guide from android2apk |
+| [docs/doctor.md](docs/doctor.md) | `rain doctor` checks and installation flags. |
+| [docs/toolchain.md](docs/toolchain.md) | Toolchain contents in `~/.rain/` and rationale. |
+| [docs/compatibilidad.md](docs/compatibilidad.md) | JDK / Kotlin / R8 / compileSdk compatibility matrix. |
+| [docs/memoria.md](docs/memoria.md) | Memory management for containers (`GOMEMLIMIT`, `GOGC`, JVM heap). |
+| [docs/migracion-android2apk.md](docs/migracion-android2apk.md) | Porting guide from android2apk. |
+| [SECURITY.md](SECURITY.md) | Supported versions and vulnerability reporting. |
 
-## Troubleshooting
+### Troubleshooting
 
 | Issue | Solution |
 | --- | --- |
-| `aapt2: command not found` | Install aapt2: `pkg install aapt2` |
+| `aapt2: command not found` or a broken `aapt2` on Linux arm64 | Install system build tools: `pkg install aapt2` (Termux) or `apk add android-build-tools` (Alpine). Rain removes stale x86-64 copies from `~/.rain`. |
 | `package X does not exist` during compilation | Dependencies may be missing. Delete `libs/` and rebuild to re-download. |
 | Jansi error when compiling Kotlin | Install libjansi: `pkg install libjansi`. Rain passes `-J-Dlibrary.jansi.path=...` automatically. |
-| Progress bar not showing | Ensure `libs/` doesn't exist or is empty. Rain only shows download progress when downloading. |
-| Crashes with "fatal error: found pointer to free object" or OOM | Common in low-RAM containers or under PRoot. Rain auto-detects PRoot and applies conservative GC. For containers, try `export GOGC=15 GOMEMLIMIT=1200MiB`. See [docs/memoria.md](docs/memoria.md). |
+| Progress bar not showing | Ensure `libs/` does not exist or is empty. Rain only shows download progress while downloading. |
+| `fatal error: found pointer to free object` or OOM | Common in low-RAM containers or under PRoot. Rain detects PRoot and applies conservative GC. Try `export GOGC=15 GOMEMLIMIT=1200MiB`. See [docs/memoria.md](docs/memoria.md). |
+
+## Development
+
+Use the latest stable Go release, both locally and in CI. JDK 17 is recommended.
+
+```bash
+make build                 # Build ./rain with version, commit and date
+go build ./...             # Compile check only
+make test                  # go test ./...
+go vet ./...               # Static analysis
+make lint                  # golangci-lint (goimports included)
+make tools                 # Install lint tools if missing
+make fmt                   # gofmt
+```
+
+Run a single package test with `go test ./internal/build -run TestName -v`.
+A regular `go test ./...` may skip the full APK integration test when the local
+toolchain is incomplete. To exercise a real build, run
+`./rain --devlog build` inside `examples/compose`, `examples/liquid-glass`,
+`examples/backdrop-music` or `examples/hello-buddy`. Do not run `rain build` at
+the repository root: its `rain.toml` points to an absent `app/` directory.
+
+CI runs tests, CLI smoke checks, APK builds for the examples and a release job.
+The last commit message can include `[skip test]`, `[skip windows]`,
+`[skip examples]` or `[skip release]` to skip a job. Skipped jobs do not block
+the release; real failures do.
+
+## Contributing
+
+1. Open an issue before a large change so the approach can be discussed.
+2. Keep changes focused and add tests for behavior changes.
+3. Use Conventional Commits: `feat:`, `fix:`, `docs:`, etc. They drive releases.
+4. Run `go vet ./...`, `go test ./...` and `make lint` before opening a PR.
+5. Keep comments, CLI output, tests and docs in Spanish; keep this README in English.
+6. Update `CHANGELOG.md` under `[No publicado]` for user-visible changes.
+
+Do not commit the `rain` binary, APKs, keystores or generated cache directories.
+
+## Security
+
+Report vulnerabilities following [SECURITY.md](SECURITY.md). Prefer a private
+contact with the maintainers and do not include exploit details in a public
+issue. Only the latest release from `main` receives security patches.
 
 ## License
 

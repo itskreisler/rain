@@ -295,6 +295,46 @@ func TestRunVersionAceptaLosComandosQueFuncionan(t *testing.T) {
 	}
 }
 
+func TestZipalignProbeEjecutaElComando(t *testing.T) {
+	probe := toolProbe{
+		name: "zipalign", command: "zipalign", required: true, execOnly: true,
+		parse:         zipalignProbeOutput,
+		valid:         func(v string) bool { return v == "ok" },
+		invalidDetail: "no se puede ejecutar: zipalign no responde",
+	}
+	tests := []struct {
+		name   string
+		body   string
+		wantOK bool
+	}{
+		{
+			name:   "imprime el uso y sale con codigo 2",
+			body:   "#!/bin/sh\necho 'Zip alignment utility'\necho 'Usage: zipalign [-f] <align> in.zip out.zip'\nexit 2\n",
+			wantOK: true,
+		},
+		{
+			name:   "lanzador roto",
+			body:   "#!/bin/sh\necho 'cannot execute: required file not found'\nexit 127\n",
+			wantOK: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fakeCommand(t, dir, "zipalign", tc.body)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			check := probe.check(context.Background(), Ubuntu, Simple)
+			if check.OK != tc.wantOK {
+				t.Errorf("check.OK = %t, quiero %t (%+v)", check.OK, tc.wantOK, check)
+			}
+			if check.Path == "" {
+				t.Error("la comprobación perdió la ruta del comando")
+			}
+		})
+	}
+}
+
 func TestDiagnoseNoCuentaUnLanzadorRotoComoDisponible(t *testing.T) {
 	// Rain antepone ~/.rain/bin al PATH. Si el toolchain no está descargado,
 	// los lanzadores existen pero fallan al ejecutarse: d8 y apksigner no
