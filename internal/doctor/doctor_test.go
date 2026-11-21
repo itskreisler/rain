@@ -255,7 +255,11 @@ func fakeCommand(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		name += ".cmd"
-		body = "@echo off\r\n" + strings.ReplaceAll(body, "#!/bin/sh\n", "")
+		body = strings.ReplaceAll(body, "#!/bin/sh\n", "")
+		body = strings.ReplaceAll(body, "echo '", "echo ")
+		body = strings.ReplaceAll(body, "'\n", "\n")
+		body = strings.ReplaceAll(body, "exit ", "exit /b ")
+		body = "@echo off\r\n" + strings.ReplaceAll(body, "\n", "\r\n")
 	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
