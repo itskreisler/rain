@@ -154,6 +154,9 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **Smoke test de Windows.** Las pruebas del toolchain usan lanzadores `.cmd`
+  válidos y eliminan también las copias sin extensión de `aapt2` y `zipalign`
+  que puedan haber dejado versiones anteriores.
 - **`rain doctor --fix` rompía aapt2 en Linux arm64.** Google solo publica
   `build-tools` para Linux x86-64, y Rain copiaba ese binario a `~/.rain/bin`,
   tapando el del sistema. Ahora solo descarga `apksigner.jar` y usa `aapt2` y
