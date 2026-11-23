@@ -12,6 +12,12 @@ import (
 	"github.com/itskreisler/rain/internal/aar"
 )
 
+func TestKotlinBackendThreadsArg(t *testing.T) {
+	if got := kotlinBackendThreadsArg(1); got != "-Xbackend-threads=1" {
+		t.Errorf("kotlinBackendThreadsArg(1) = %q", got)
+	}
+}
+
 func TestKotlinJavaArgs(t *testing.T) {
 	got := kotlinJavaArgs([]string{
 		"-J-Xmx1g",

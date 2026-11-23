@@ -46,6 +46,9 @@ type Config struct {
 	ComposePlugin string
 	// JVMTarget es el target de bytecode (8 por defecto; 11 con Compose).
 	JVMTarget int
+	// KotlinBackendThreads controla -Xbackend-threads de kotlinc.
+	// El valor cero conserva el comportamiento por defecto de Rain.
+	KotlinBackendThreads int
 	// ProguardFiles son archivos de reglas ProGuard/R8 adicionales (los del
 	// usuario y los consumer-rules de los AAR). Se pasan a R8 en release.
 	ProguardFiles []string
@@ -1375,7 +1378,7 @@ func compileKotlin(cfg Config, objDir string, kotlinFiles []string) error {
 		// El codegen de kotlinc usa un solo hilo por defecto. En un proyecto
 		// Compose el frontend sigue siendo secuencial, pero repartir el
 		// backend entre los núcleos disponibles reduce la fase de generación.
-		"-Xbackend-threads=0")
+		kotlinBackendThreadsArg(cfg.KotlinBackendThreads))
 
 	// La JVM de kotlinc reserva por defecto 1/4 de la RAM física. En
 	// un contenedor con poca memoria libre eso es un OOM asegurado,
@@ -2028,6 +2031,10 @@ func (c Config) findKotlinSources() []string {
 		return nil
 	})
 	return sources
+}
+
+func kotlinBackendThreadsArg(threads int) string {
+	return fmt.Sprintf("-Xbackend-threads=%d", threads)
 }
 
 // kotlinJVMTarget traduce el target numérico al formato de kotlinc: Kotlin 2.x

@@ -20,9 +20,10 @@ import (
 func newCheckCmd() *cobra.Command {
 	devlog("newCheckCmd", "", "Crea el subcomando check para verificar tipos sin generar APK")
 	var (
-		androidJar string
-		release    bool
-		fast       bool
+		androidJar           string
+		release              bool
+		fast                 bool
+		kotlinBackendThreads int
 	)
 
 	cmd := &cobra.Command{
@@ -49,6 +50,9 @@ func newCheckCmd() *cobra.Command {
 			"RAIN_ANDROID_JAR permite forzar el android.jar sin pasar --android-jar.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if kotlinBackendThreads < 0 {
+				return usageErr("-Xbackend-threads debe ser 0 o un entero positivo")
+			}
 			jar := androidJar
 			if jar == "" {
 				if found, ok := doctor.FindAndroidJar(); ok {
@@ -69,15 +73,16 @@ func newCheckCmd() *cobra.Command {
 			}
 
 			if len(args) == 1 {
-				return runBuildOrCheckDir(args[0], absJar, release, false, true, fast)
+				return runBuildOrCheckDir(args[0], absJar, release, false, true, fast, kotlinBackendThreads)
 			}
-			return runBuildOrCheck(absJar, release, false, true, fast)
+			return runBuildOrCheck(absJar, release, false, true, fast, kotlinBackendThreads)
 		},
 	}
 
 	cmd.Flags().StringVar(&androidJar, "android-jar", "", "ruta a android.jar (por defecto se autodetecta)")
 	cmd.Flags().BoolVarP(&release, "release", "r", false, "comprobar con la configuración de release")
 	cmd.Flags().BoolVar(&fast, "fast", false, "chequeo incremental: solo recompila lo modificado (menos exhaustivo)")
+	cmd.Flags().IntVar(&kotlinBackendThreads, "Xbackend-threads", 0, "hilos del backend de Kotlin (0 usa todos los núcleos disponibles)")
 
 	return cmd
 }
