@@ -871,6 +871,25 @@ public final class BuildConfig {
 	if err != nil {
 		return fmt.Errorf("hash de java: %w", err)
 	}
+	// Las reglas de ProGuard/R8 cambian el classes.dex de release: si no se
+	// incluyen en el hash, quitar o agregar una regla (por ejemplo
+	// -dontobfuscate) reutilizaba el DEX anterior sin volver a pasar R8.
+	if cfg.Release {
+		rulesHash := sha256.New()
+		rulesHash.Write([]byte(currentJavaHash))
+		for _, ruleFile := range cfg.proguardFiles() {
+			if !fileExists(ruleFile) {
+				continue
+			}
+			ruleDigest, err := hashFile(ruleFile)
+			if err != nil {
+				return fmt.Errorf("hash de reglas proguard %s: %w", ruleFile, err)
+			}
+			rulesHash.Write(ruleDigest)
+			rulesHash.Write([]byte(filepath.Base(ruleFile)))
+		}
+		currentJavaHash = fmt.Sprintf("%x", rulesHash.Sum(nil))
+	}
 	prevJavaHash, _ := os.ReadFile(javaHashPath)
 	sourcesUpToDate := string(prevJavaHash) == currentJavaHash
 
