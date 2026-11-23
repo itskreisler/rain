@@ -969,7 +969,9 @@ public final class BuildConfig {
 			return fmt.Errorf("creando directorio dex: %w", err)
 		}
 
-		if cfg.Release {
+		// RAIN_RELEASE_D8=1: benchmark sin shrink ni ofuscación. Usa el mismo
+		// camino d8 que debug en lugar de R8 (no aplica reglas ProGuard).
+		if cfg.Release && os.Getenv("RAIN_RELEASE_D8") == "" {
 			// R8 trabaja sobre el programa completo y necesita ver todas las
 			// clases juntas para aplicar reglas de optimización y de keep.
 			classFiles := append([]string(nil), appClasses...)
@@ -1410,6 +1412,13 @@ func compileJavaSources(cfg Config, objDir string, sources []string, label strin
 	classpath = append(classpath, cfg.AndroidJar)
 	classpath = append(classpath, objDir)
 	classpath = append(classpath, cfg.libraryJars()...)
+	// El código Java generado por kapt (Room, por ejemplo) referencia kotlin.Unit,
+	// kotlin.coroutines.Continuation y kotlin.jvm.functions.Function1. Rain inyecta
+	// el stdlib al compilar Kotlin y al dexar, pero no al javac de los sources
+	// generados; sin esto Room no compila en proyectos Kotlin.
+	if stdlib := findKotlinStdlib(); stdlib != "" {
+		classpath = append(classpath, stdlib)
+	}
 	args := []string{"-d", objDir, "--release", strconv.Itoa(cfg.jvmTarget()), "-encoding", "UTF-8", "-Xlint:-options",
 		"-classpath", joinClasspath(classpath)}
 	args = append(args, sources...)
