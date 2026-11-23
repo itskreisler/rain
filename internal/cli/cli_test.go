@@ -407,6 +407,7 @@ func TestNormalizeLegacyArgs(t *testing.T) {
 		{[]string{"-mode=completo"}, []string{"--mode=completo"}},
 		{[]string{"-x"}, []string{"-x"}},
 		{[]string{"build", "-release"}, []string{"build", "--release"}},
+		{[]string{"build", "-Xbackend-threads=1"}, []string{"build", "--Xbackend-threads=1"}},
 	}
 	for _, tc := range tests {
 		got := normalizeLegacyArgs(tc.in)

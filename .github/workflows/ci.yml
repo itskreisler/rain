@@ -138,7 +138,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rain init falló con código $LASTEXITCODE" }
           Push-Location smoke-windows
           try {
-            ..\rain.exe --devlog build
+            ..\rain.exe --devlog build -Xbackend-threads=1
             if ($LASTEXITCODE -ne 0) { throw "rain build falló con código $LASTEXITCODE" }
             if (-not (Test-Path 'app/build/app-debug.apk')) {
               throw 'No se generó app/build/app-debug.apk'
@@ -163,7 +163,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rain init falló con código $LASTEXITCODE" }
           Push-Location smoke-confetti
           try {
-            ..\rain.exe --devlog build
+            ..\rain.exe --devlog build -Xbackend-threads=1
             if ($LASTEXITCODE -ne 0) { throw "rain build falló con código $LASTEXITCODE" }
             if (-not (Test-Path 'app/build/app-debug.apk')) {
               throw 'No se generó app/build/app-debug.apk'
@@ -190,10 +190,15 @@ jobs:
           go-version: 'stable'
           cache: true
 
-      - name: Instalar JDK 17
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar herramientas de sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jdk unzip
+          sudo apt-get install -y unzip
 
       - name: Compilar binario rain
         run: go build -trimpath -o rain .
@@ -206,7 +211,7 @@ jobs:
       - name: Compilar Ejemplo Compose (FireIcon) [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/compose
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Compose [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -222,7 +227,7 @@ jobs:
       - name: Compilar Ejemplo Compose (FireIcon) [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/compose
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Compose [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
@@ -238,7 +243,7 @@ jobs:
       - name: Compilar Ejemplo Material 3 Expressive [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/expressive
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Material 3 Expressive [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -254,7 +259,7 @@ jobs:
       - name: Compilar Ejemplo Material 3 Expressive [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/expressive
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Material 3 Expressive [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
@@ -270,7 +275,7 @@ jobs:
       - name: Compilar Ejemplo Liquid Glass Music Player [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/liquid-glass
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Liquid Glass Music Player [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -286,7 +291,7 @@ jobs:
       - name: Compilar Ejemplo Liquid Glass Music Player [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/liquid-glass
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Liquid Glass Music Player [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
@@ -302,17 +307,17 @@ jobs:
       - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/backdrop-music
-        run: ../../rain check
+        run: ../../rain check -Xbackend-threads=1
 
       - name: Comprobar Ejemplo Backdrop Music (MediaStore + backdrop) [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/backdrop-music
-        run: ../../rain check --release
+        run: ../../rain check --release -Xbackend-threads=1
 
       - name: Compilar Ejemplo Layout Plano (Hello Buddy) [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/hello-buddy
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Layout Plano [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -328,7 +333,7 @@ jobs:
       - name: Compilar Ejemplo Layout Plano (Hello Buddy) [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/hello-buddy
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Layout Plano [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
@@ -344,7 +349,7 @@ jobs:
       - name: Compilar Ejemplo Layout Simple [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/layoutsimple
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Layout Simple [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -360,7 +365,7 @@ jobs:
       - name: Compilar Ejemplo Layout Simple [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/layoutsimple
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Layout Simple [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
@@ -376,7 +381,7 @@ jobs:
       - name: Compilar Ejemplo Contador de Cofres [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
         working-directory: examples/contador-cofres
-        run: ../../rain build
+        run: ../../rain build -Xbackend-threads=1
 
       - name: Verificar APK Contador de Cofres [debug]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-debug]') }}
@@ -392,7 +397,7 @@ jobs:
       - name: Compilar Ejemplo Contador de Cofres [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
         working-directory: examples/contador-cofres
-        run: ../../rain build --release --allow-debug-signing
+        run: ../../rain build --release --allow-debug-signing -Xbackend-threads=1
 
       - name: Verificar APK Contador de Cofres [release]
         if: ${{ !contains(github.event.head_commit.message, '[skip examples-release]') }}
