@@ -677,7 +677,7 @@ func Run(cfg Config) error {
 			return fmt.Errorf("no se encontró AndroidManifest.xml en %s", sourceRoot(cfg.AppDir))
 		}
 
-		var flatFiles []string
+		var appFlatFiles []string
 		if dirExists(resDir) {
 			if err := os.RemoveAll(flatDir); err != nil {
 				return fmt.Errorf("limpiando recursos planos: %w", err)
@@ -699,7 +699,7 @@ func Run(cfg Config) error {
 			}
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".flat") {
-					flatFiles = append(flatFiles, filepath.Join(flatDir, e.Name()))
+					appFlatFiles = append(appFlatFiles, filepath.Join(flatDir, e.Name()))
 				}
 			}
 		} else {
@@ -775,11 +775,13 @@ func Run(cfg Config) error {
 			"--target-sdk-version", strconv.Itoa(cfg.TargetSdk),
 			"--version-code", strconv.Itoa(cfg.VersionCode),
 			"--version-name", cfg.VersionName,
+			"--auto-add-overlay",
 		}
 		if assets := filepath.Join(sourceRoot(cfg.AppDir), "assets"); dirExists(assets) {
 			args = append(args, "-A", assets)
 		}
 
+		var libFlatFiles []string
 		libRes, extraPackages, err := cfg.prepareLibraryResources(cfg.Libs)
 		if err != nil {
 			return fmt.Errorf("fusionando recursos de librerías: %w", err)
@@ -805,7 +807,7 @@ func Run(cfg Config) error {
 			}
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".flat") {
-					flatFiles = append(flatFiles, filepath.Join(libFlat, e.Name()))
+					libFlatFiles = append(libFlatFiles, filepath.Join(libFlat, e.Name()))
 				}
 			}
 		}
@@ -813,7 +815,14 @@ func Run(cfg Config) error {
 			args = append(args, "--extra-packages", pkg)
 		}
 
-		args = append(args, flatFiles...)
+		// Los recursos de librerías forman la tabla base y los de la app se
+		// enlazan como overlays (-R, "el último conflicto gana") para que un
+		// nombre genérico de una librería, como string/app_name, no choque con
+		// la definición de la app ni la sobrescriba.
+		args = append(args, libFlatFiles...)
+		for _, flat := range appFlatFiles {
+			args = append(args, "-R", flat)
+		}
 
 		cmd := exec.Command("aapt2", args...)
 		cmd.Stdout = os.Stdout
