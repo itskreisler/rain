@@ -189,6 +189,16 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
 - [x] Añadir una línea a `bridge/run.ts` y reconstruir sin borrar
   `.rain-res-hash`: Rain imprime `compilando recursos...` y el APK contiene la
   línea nueva. Antes hacía falta borrar esa marca a mano en los scripts.
+- [x] `buddy-android` con `native_libs_dir = 'build/jni'` y cinco `.so` de
+  prueba en `build/jni/arm64-v8a/`: `./rain --devlog build` empaqueta
+  `empaquetando 5 bibliotecas nativas` en 57 s y `unzip -l` confirma las cinco
+  entradas en `lib/arm64-v8a/`. `apksigner verify --verbose`: `Verifies` con
+  v3 y 1 firmante. Rain no compila el código nativo: solo empaqueta las `.so`
+  producidas por `native/build.sh`.
+- [x] Regresión detectada en ese build: Buddy tiene un symlink en `assets/`.
+  `hashFile` ahora hashea el destino de los symlinks con `os.Readlink` en vez
+  de abrirlos, y el build vuelve a pasar. Hay un test que cambia el destino
+  de un symlink y comprueba que el hash de recursos cambia.
 
 ## 5. Complejidades que NO requirieron cambio
 

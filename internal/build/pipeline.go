@@ -413,6 +413,19 @@ func substituteManifestPlaceholders(src, dst string, cfg Config) (string, error)
 }
 
 func hashFile(path string) ([]byte, error) {
+	// filepath.Walk no sigue symlinks: un enlace a un directorio llega aquí
+	// como "fichero" y os.Open+io.Copy fallaría con "is a directory". El
+	// contenido relevante de un symlink es su destino, así que se hashea eso.
+	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return nil, err
+		}
+		h := sha256.New()
+		_, _ = h.Write([]byte("symlink\x00"))
+		_, _ = h.Write([]byte(target))
+		return h.Sum(nil), nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

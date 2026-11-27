@@ -167,7 +167,8 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   (`**` incluido) a `assets/` antes de compilar recursos; `replace = true`
   descarta los ficheros anteriores del destino. Los assets empaquetados
   entran en el hash de recursos: ya no hay que borrar `.rain-res-hash` a mano
-  tras regenerarlos.
+  tras regenerarlos. Los symlinks dentro de `assets/` se hashean por su
+  destino en lugar de abrirse como ficheros.
 - **Variante sin nativos.** `[build] exclude_assets` y `[build] no_native_libs`
   (o `--exclude-assets` y `--no-native-libs`) permiten generar un APK sin el
   runtime Node ni las `.so`, sin scripts que escondan carpetas ni reemplacen el

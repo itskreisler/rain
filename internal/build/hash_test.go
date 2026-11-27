@@ -188,6 +188,36 @@ func TestComputeResourceHashIncluyeAssets(t *testing.T) {
 	}
 }
 
+func TestComputeResourceHashConSymlink(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), `<manifest package="com.x"/>`)
+	assets := filepath.Join(app, "src", "main", "assets")
+	writeHashFile(t, filepath.Join(assets, "linux", "real.txt"), "x")
+	link := filepath.Join(assets, "plataforma")
+	if err := os.Symlink(filepath.Join(assets, "linux"), link); err != nil {
+		t.Skipf("el sistema no permite symlinks: %v", err)
+	}
+
+	primero, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash con symlink: %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(assets, "otra"), link); err != nil {
+		t.Fatal(err)
+	}
+	segundo, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash tras cambiar el symlink: %v", err)
+	}
+	if primero == segundo {
+		t.Error("cambiar el destino de un symlink no invalidó el hash")
+	}
+}
+
 func TestComputeConfigJavaHashIncluyeNativeLibsDir(t *testing.T) {
 	dir := t.TempDir()
 	app := filepath.Join(dir, "app")
