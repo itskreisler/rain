@@ -219,6 +219,16 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
   entorno; no se parcheó el proyecto, se instaló la dependencia del sistema.
   Una segunda pasada imprimió `código nativo sin cambios, reutilizando
   bibliotecas`, terminó en 9 s y volvió a producir un APK con firma v3 válida.
+- [x] `SmartIsland` (https://github.com/agupta07505/SmartIsland): `rain gradle .`
+  importa 17 dependencias, KAPT de Hilt y `java_target = 17` avisando de que el
+  módulo `:baselineprofile` se omite. `./rain --devlog build` compila 326
+  archivos Kotlin, 34 ficheros generados por KAPT y 6 clases reescritas por
+  Hilt; genera 6 DEX y empaqueta 8 `.so` de AAR y 2 ficheros de servicio en un
+  APK de 21,8 MiB en 1067 s. `apksigner verify --verbose`: `Verifies` con v2,
+  v3 y 1 firmante. Una segunda pasada reutiliza recursos y DEX en 4 s y vuelve
+  a firmar correctamente. d8 solo avisa de locals inválidos en dependencias
+  antiguas (`material 1.0.0`, `print 1.0.0`, `viewpager 1.0.0`, coroutines),
+  sin afectar a la firma.
 
 ## 5. Complejidades que NO requirieron cambio
 
