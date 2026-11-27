@@ -229,6 +229,11 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
   a firmar correctamente. d8 solo avisa de locals inválidos en dependencias
   antiguas (`material 1.0.0`, `print 1.0.0`, `viewpager 1.0.0`, coroutines),
   sin afectar a la firma.
+- [x] CI Linux/Windows: `TestEnsureNDKNoDescargaSiYaEsta` fallaba porque los
+  runners exponen `ANDROID_NDK_HOME`/`ANDROID_HOME` con el NDK del SDK y
+  `FindNDK` lo prefiere por diseño. El test ya aísla esas cuatro variables, y
+  un test nuevo comprueba que `EnsureNDK` respeta un NDK externo sin descargar.
+  Verificado con las variables apuntando a un NDK falso.
 
 ## 5. Complejidades que NO requirieron cambio
 

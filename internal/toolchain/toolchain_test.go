@@ -473,6 +473,12 @@ func TestEnsureNDKNoDescargaSiYaEsta(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
 	}
+	// Los runners de GitHub traen un NDK del SDK y las variables que lo apuntan.
+	// Aislarlas evita que FindNDK lo prefiera al gestionado que crea este test.
+	t.Setenv("ANDROID_NDK_HOME", "")
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
 	makeFakeNDK(t, filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion))
 
 	manager, err := New()
@@ -490,6 +496,37 @@ func TestEnsureNDKNoDescargaSiYaEsta(t *testing.T) {
 	}
 	if want := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion); got != want {
 		t.Errorf("EnsureNDK = %q, quiero %q", got, want)
+	}
+}
+
+func TestEnsureNDKRespetaNDKDelEntorno(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	external := filepath.Join(t.TempDir(), "ndk-del-sistema")
+	makeFakeNDK(t, external)
+	t.Setenv("ANDROID_NDK_HOME", external)
+
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("EnsureNDK intentó descargar con un NDK del entorno presente")
+		return nil, os.ErrClosed
+	})}
+	got, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureNDK: %v", err)
+	}
+	if got != external {
+		t.Errorf("EnsureNDK = %q, quiero %q", got, external)
 	}
 }
 
