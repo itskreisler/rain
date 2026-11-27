@@ -29,6 +29,9 @@ func newBuildCmd() *cobra.Command {
 		release              bool
 		allowDebugSigning    bool
 		kotlinBackendThreads int
+		nativeLibsDir        string
+		excludeAssets        []string
+		noNativeLibs         bool
 	)
 
 	cmd := &cobra.Command{
@@ -41,7 +44,10 @@ func newBuildCmd() *cobra.Command {
 			"(AndroidManifest.xml, java/ y res/ en la raíz).\n\n" +
 			"Si se omite --android-jar, rain busca el android.jar instalado por\n" +
 			"\"rain doctor --fix\" o en el SDK del sistema. La variable\n" +
-			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.",
+			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.\n\n" +
+			"--native-libs-dir añade .so de <abi>/*.so (build/jni se detecta solo),\n" +
+			"--exclude-assets node quita assets/node del APK y --no-native-libs\n" +
+			"genera la variante sin bibliotecas nativas.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if kotlinBackendThreads < 0 {
@@ -66,10 +72,15 @@ func newBuildCmd() *cobra.Command {
 				return fmt.Errorf("resolviendo android.jar: %w", err)
 			}
 
-			if len(args) == 1 {
-				return runBuildDir(args[0], absJar, release, allowDebugSigning, kotlinBackendThreads)
+			opts := buildOverrides{
+				NativeLibsDir: nativeLibsDir,
+				ExcludeAssets: excludeAssets,
+				NoNativeLibs:  noNativeLibs,
 			}
-			return runBuild(absJar, release, allowDebugSigning, kotlinBackendThreads)
+			if len(args) == 1 {
+				return runBuildDir(args[0], absJar, release, allowDebugSigning, kotlinBackendThreads, opts)
+			}
+			return runBuild(absJar, release, allowDebugSigning, kotlinBackendThreads, opts)
 		},
 	}
 
@@ -77,19 +88,45 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&release, "release", "r", false, "compilar en modo release (R8)")
 	cmd.Flags().BoolVar(&allowDebugSigning, "allow-debug-signing", false, "permitir firmar un release con la keystore de debug (con aviso)")
 	cmd.Flags().IntVar(&kotlinBackendThreads, "Xbackend-threads", 0, "hilos del backend de Kotlin (0 usa todos los núcleos disponibles)")
+	cmd.Flags().StringVar(&nativeLibsDir, "native-libs-dir", "", "directorio adicional con <abi>/*.so (por defecto build/jni si existe)")
+	cmd.Flags().StringSliceVar(&excludeAssets, "exclude-assets", nil, "rutas de assets/ que no se empaquetan (p. ej. node)")
+	cmd.Flags().BoolVar(&noNativeLibs, "no-native-libs", false, "no empaquetar ninguna biblioteca nativa")
 
 	return cmd
 }
 
-func runBuild(androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int) error {
+// buildOverrides son las opciones de empaquetado que se pueden forzar desde
+// la línea de comandos. Si el flag no se da, manda el rain.toml.
+type buildOverrides struct {
+	NativeLibsDir string
+	ExcludeAssets []string
+	NoNativeLibs  bool
+}
+
+// apply devuelve el valor efectivo de cada opción: un flag explícito gana al
+// rain.toml; --no-native-libs solo puede añadirse, nunca desactivar la config.
+func (o buildOverrides) apply(cfg config.Config) config.Config {
+	if o.NativeLibsDir != "" {
+		cfg.Build.NativeLibsDir = o.NativeLibsDir
+	}
+	if len(o.ExcludeAssets) > 0 {
+		cfg.Build.ExcludeAssets = append([]string{}, o.ExcludeAssets...)
+	}
+	if o.NoNativeLibs {
+		cfg.Build.NoNativeLibs = true
+	}
+	return cfg
+}
+
+func runBuild(androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuild", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t", androidJar, release, allowDebugSigning), "Ejecuta la compilación de un proyecto configurado con rain.toml")
-	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads)
+	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads, opts)
 }
 
 // runBuildOrCheck compila el proyecto. Con checkOnly solo valida los tipos
 // (compile Kotlin y Java) y no genera DEX, APK ni firma. Con fast el chequeo
 // es incremental: solo recompila lo que ha cambiado.
-func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildOrCheck", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta el flujo de compilación o verificación de tipos para un proyecto rain")
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
@@ -102,9 +139,15 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 				return fmt.Errorf("resolviendo el directorio actual: %w", absErr)
 			}
 			ui.VerboseLog("sin rain.toml; compilando con layout plano")
-			return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+			return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 		}
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
+	}
+
+	cfg = opts.apply(cfg)
+	projectDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolviendo la raíz del proyecto: %w", err)
 	}
 
 	mavenrepo.ExtraRepositories = cfg.Repositories.Extra
@@ -164,6 +207,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 		ui.Info("=== Compilando módulo: %s ===", mod.Name)
 		bc := resolveModuleBuildConfig(cfg, mod.Path)
 		bcfg := build.Config{
+			ProjectDir:           projectDir,
 			AppDir:               mod.Path,
 			BuildDir:             filepath.Join(mod.Path, "build"),
 			LibsDir:              "libs",
@@ -178,6 +222,10 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			AppName:              cfg.Project.Name,
 			JVMTarget:            bc.JavaTarget,
 			Flavor:               cfg.Build.Flavor,
+			NativeLibsDir:        cfg.Build.NativeLibsDir,
+			ExcludeAssets:        cfg.Build.ExcludeAssets,
+			Assets:               cfg.Assets,
+			NoNativeLibs:         cfg.Build.NoNativeLibs,
 			Libs:                 libs,
 			AllowDebugSigning:    allowDebugSigning,
 			CheckOnly:            checkOnly,
@@ -432,9 +480,9 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
-func runBuildDir(dir, androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int) error {
+func runBuildDir(dir, androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t", dir, androidJar, release, allowDebugSigning), "Compila un proyecto desde un directorio o layout plano")
-	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads)
+	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads, opts)
 }
 
 // layoutProyecto describe cómo compilar un directorio.
@@ -462,7 +510,7 @@ func detectarLayout(dir string) layoutProyecto {
 
 // runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
 // los tipos del código (y con fast, solo lo modificado).
-func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildOrCheckDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", dir, androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta la compilación o verificación para un directorio específico")
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -483,18 +531,18 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 			return fmt.Errorf("entrando en %s: %w", absDir, err)
 		}
 		defer func() { _ = os.Chdir(previous) }()
-		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 	case layoutDesconocido:
 		return usageErr("%s no contiene rain.toml ni AndroidManifest.xml", dir)
 	}
 
-	return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+	return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 }
 
 // runFlatBuild compila absDir con el layout plano de android2apk. No hay
 // rain.toml: el package y los datos del APK salen del manifest y de
 // app.properties, con los defaults de Rain como respaldo.
-func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runFlatBuild", fmt.Sprintf("absDir=%s, androidJar=%s", absDir, androidJar), "Compila un proyecto con layout plano")
 	props := readProperties(filepath.Join(absDir, "app.properties"))
 	name := props["name"]
@@ -512,6 +560,7 @@ func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOn
 
 	ui.Info("=== Compilando %s (layout plano) ===", name)
 	bcfg := build.Config{
+		ProjectDir:           absDir,
 		AppDir:               absDir,
 		BuildDir:             filepath.Join(absDir, "build"),
 		LibsDir:              filepath.Join(absDir, "libs"),
@@ -524,6 +573,9 @@ func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOn
 		VersionName:          s.VersionName,
 		JVMTarget:            s.JavaTarget,
 		AppName:              name,
+		NativeLibsDir:        opts.NativeLibsDir,
+		ExcludeAssets:        opts.ExcludeAssets,
+		NoNativeLibs:         opts.NoNativeLibs,
 		AllowDebugSigning:    allowDebugSigning,
 		CheckOnly:            checkOnly,
 		FastCheck:            fast,

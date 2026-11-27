@@ -19,6 +19,28 @@ type Config struct {
 	Repositories Repositories `toml:"repositories"`
 	Lint         Lint         `toml:"lint"`
 	Format       Format       `toml:"format"`
+	Assets       Assets       `toml:"assets"`
+}
+
+// Assets prepara los recursos del APK antes de compilar. Cada regla copia
+// ficheros de From a To con filtros opcionales; las rutas son relativas a la
+// raíz del proyecto. Se usa, por ejemplo, para llevar el runtime de un bridge
+// JavaScript a app/assets/node sin scripts externos.
+type Assets struct {
+	Copy []AssetCopy `toml:"copy"`
+}
+
+// AssetCopy es una regla de copia de assets. Include y Exclude admiten los
+// globs de [format] (** cruza directorios). Sin Include se copia todo.
+type AssetCopy struct {
+	From    string   `toml:"from"`
+	To      string   `toml:"to"`
+	Include []string `toml:"include"`
+	Exclude []string `toml:"exclude"`
+	// Replace borra el contenido previo del directorio de destino antes de
+	// copiar. Útil cuando el destino trae ficheros generados en revisiones
+	// anteriores que ya no deben empaquetarse.
+	Replace bool `toml:"replace"`
 }
 
 // Kapt configura los annotation processors que se ejecutan antes de compilar
@@ -108,6 +130,14 @@ type Build struct {
 	// incluye app/src/<flavor>/java y app/src/<flavor>/res además de src/main.
 	// Vacío compila solo src/main.
 	Flavor string `toml:"flavor"`
+	// NativeLibsDir es un directorio adicional con librerías <abi>/*.so (por
+	// ejemplo build/jni). Se empaquetan junto a las de jniLibs y los AAR.
+	NativeLibsDir string `toml:"native_libs_dir"`
+	// ExcludeAssets son rutas relativas a assets/ que no se empaquetan en el
+	// APK. "node" excluye assets/node y todo su contenido.
+	ExcludeAssets []string `toml:"exclude_assets"`
+	// NoNativeLibs descarta todas las .so del APK (variante sin runtime nativo).
+	NoNativeLibs bool `toml:"no_native_libs"`
 	// ProguardFiles son archivos con reglas de R8/ProGuard adicionales a las
 	// que rain encuentra por su cuenta (proguard-rules.pro en el módulo).
 	// Las rutas son relativas a la raíz del proyecto.

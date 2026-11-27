@@ -129,6 +129,16 @@ ha ejecutado sin errores en esta rama.
   `src/<flavor>/{java,kotlin}` se recogen en una pasada `O(n)` adicional y se
   incluyen en el hash del DEX; los recursos de la variante se compilan aparte
   y sobrescriben los del main. `rain gradle` elige el primer flavor declarado.
+- [x] `.so` externas (`native_libs_dir`, `build/jni`): un segundo `Walk` de
+  `O(n)` indexa `<abi>/*.so` en el mismo mapa que `jniLibs`; el DEX se
+  invalida cuando cambian. `NoNativeLibs` corta el empaquetado en O(1).
+- [x] Assets (`computeResourceHash`, `prepareAssets`): antes los assets no
+  entraban en la clave de caché y había que borrar `.rain-res-hash`. Ahora un
+  `Walk` de `O(n)` sobre el directorio efectivo (ya filtrado y con las copias
+  aplicadas) los incluye. Las reglas `[[assets.copy]]` compilan sus globs una
+  sola vez y copian en otra pasada `O(n)`; las exclusiones son prefijos en un
+  slice pequeño, sin regex por fichero. `replace = true` hace un `RemoveAll`
+  del destino en O(1) antes de copiar.
 - [x] `CHANGELOG.md` documenta los cambios visibles.
 
 ## 4. Verificación (marcar solo tras ejecutar)
@@ -166,6 +176,19 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
   con v3 y 1 firmante.
 - [x] Cambiar `flavor` a `fdroid` en el `rain.toml` fuerza la recompilación
   Java (el hash incluye la variante) y genera un APK igualmente válido en 66 s.
+- [x] `openwactikers` (repo privado del usuario) con `native_libs_dir = 'build/jni'`
+  y una regla `[[assets.copy]] ... replace = true`: `./rain --devlog build` en
+  31 s genera un APK de 694,5 KiB con 9 ficheros en `assets/node/` y 3 `.so` en
+  `lib/arm64-v8a/`, sin ejecutar `refresh-assets.py`, `add_native_libs.py` ni
+  el `zipalign`/`apksigner` manuales. `apksigner verify --verbose`: `Verifies`
+  con v3 y 1 firmante. En el clon de prueba las `.so` son punteros LFS; Rain
+  empaqueta los ficheros reales del checkout del usuario igual.
+- [x] `./rain --devlog build --exclude-assets node --no-native-libs` sobre el
+  mismo repo: 26 s, APK de 461,7 KiB sin `assets/node/` ni `lib/`, firma v3
+  válida. Sustituye a `build-native-apk.py` sin esconder ni restaurar carpetas.
+- [x] Añadir una línea a `bridge/run.ts` y reconstruir sin borrar
+  `.rain-res-hash`: Rain imprime `compilando recursos...` y el APK contiene la
+  línea nueva. Antes hacía falta borrar esa marca a mano en los scripts.
 
 ## 5. Complejidades que NO requirieron cambio
 

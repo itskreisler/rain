@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -425,6 +426,31 @@ func TestBuildRequiresProject(t *testing.T) {
 	_, err := runCmd(t, "build", ".")
 	if err == nil {
 		t.Fatal("build sin proyecto debería fallar")
+	}
+}
+
+func TestBuildOverridesAplicaFlags(t *testing.T) {
+	cfg := config.Config{Build: config.Build{
+		NativeLibsDir: "otro/jni",
+		ExcludeAssets: []string{"fonts"},
+	}}
+	opts := buildOverrides{
+		NativeLibsDir: "build/jni",
+		ExcludeAssets: []string{"node"},
+		NoNativeLibs:  true,
+	}
+	got := opts.apply(cfg)
+	if got.Build.NativeLibsDir != "build/jni" {
+		t.Errorf("NativeLibsDir = %q", got.Build.NativeLibsDir)
+	}
+	if !reflect.DeepEqual(got.Build.ExcludeAssets, []string{"node"}) {
+		t.Errorf("ExcludeAssets = %v", got.Build.ExcludeAssets)
+	}
+	if !got.Build.NoNativeLibs {
+		t.Error("NoNativeLibs = false")
+	}
+	if cfg.Build.NativeLibsDir != "otro/jni" {
+		t.Error("apply modificó la configuración original")
 	}
 }
 

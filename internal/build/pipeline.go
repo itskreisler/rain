@@ -24,6 +24,9 @@ import (
 )
 
 type Config struct {
+	// ProjectDir es la raíz del rain.toml. Las reglas [[assets.copy]] usan
+	// rutas relativas a ella. Si está vacía se deduce de AppDir.
+	ProjectDir  string
 	AppDir      string
 	BuildDir    string
 	LibsDir     string
@@ -48,6 +51,14 @@ type Config struct {
 	JVMTarget int
 	// Flavor es la variante de producto que se compila además de src/main.
 	Flavor string
+	// NativeLibsDir aporta .so adicionales en formato <abi>/*.so.
+	NativeLibsDir string
+	// ExcludeAssets son rutas relativas a assets/ que no se empaquetan.
+	ExcludeAssets []string
+	// Assets son reglas de copia ejecutadas antes de compilar recursos.
+	Assets config.Assets
+	// NoNativeLibs descarta todas las .so del APK (variante sin runtime nativo).
+	NoNativeLibs bool
 	// KotlinBackendThreads controla -Xbackend-threads de kotlinc.
 	// El valor cero conserva el comportamiento por defecto de Rain.
 	KotlinBackendThreads int
@@ -102,6 +113,211 @@ func flavorSourceDir(appDir, flavor string) string {
 		return ""
 	}
 	return dir
+}
+
+// assetGlobExpr convierte un glob en regexp. ** cruza directorios (y **/ puede
+// casar con cero niveles), igual que en el resto de globs de Rain.
+func assetGlobExpr(pattern string) string {
+	var expr strings.Builder
+	expr.WriteString("^")
+	pattern = filepath.ToSlash(pattern)
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					expr.WriteString("(?:.*/)?")
+					i += 2
+				} else {
+					expr.WriteString(".*")
+					i++
+				}
+			} else {
+				expr.WriteString("[^/]*")
+			}
+		case '?':
+			expr.WriteString("[^/]")
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+			expr.WriteByte('\\')
+			expr.WriteByte(pattern[i])
+		default:
+			expr.WriteByte(pattern[i])
+		}
+	}
+	expr.WriteString("$")
+	return expr.String()
+}
+
+func compileAssetGlobs(patterns []string) []*regexp.Regexp {
+	out := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		if re, err := regexp.Compile(assetGlobExpr(pattern)); err == nil {
+			out = append(out, re)
+		} else {
+			ui.Warn("glob de assets ignorado (%q): %v", pattern, err)
+		}
+	}
+	return out
+}
+
+func matchesAssetGlob(rel string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(filepath.ToSlash(rel)) {
+			return true
+		}
+	}
+	return false
+}
+
+// projectRoot devuelve la raíz del rain.toml. En proyectos sin configuración
+// explícita se deduce del módulo app; en layout plano es el propio módulo.
+func (c Config) projectRoot() string {
+	if c.ProjectDir != "" {
+		return c.ProjectDir
+	}
+	if filepath.Base(c.AppDir) == "app" {
+		return filepath.Dir(c.AppDir)
+	}
+	return c.AppDir
+}
+
+// prepareAssets construye el directorio que se pasa a aapt2. Sin exclusiones
+// ni reglas de copia devuelve el original. Con ellas genera build/assets con
+// una copia filtrada de los assets del módulo y de las reglas [[assets.copy]].
+// Todo lo que se empaqueta pasa por aquí, así que hashear este directorio
+// basta para invalidar el APK base cuando cambia cualquier asset.
+func (c Config) prepareAssets() (string, error) {
+	src := filepath.Join(sourceRoot(c.AppDir), "assets")
+	// CLI pasa AppDir relativo ("app") mientras projectRoot es absoluto: sin
+	// normalizar, filepath.Rel(src, to) falla aunque ambas rutas sean la misma.
+	if abs, err := filepath.Abs(src); err == nil {
+		src = abs
+	}
+	if len(c.ExcludeAssets) == 0 && len(c.Assets.Copy) == 0 {
+		return src, nil
+	}
+
+	dst := filepath.Join(c.BuildDir, "assets")
+	if err := os.RemoveAll(dst); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return "", err
+	}
+
+	excluded := make([]string, 0, len(c.ExcludeAssets))
+	for _, item := range c.ExcludeAssets {
+		clean := filepath.ToSlash(filepath.Clean(item))
+		if clean != "." && clean != "/" {
+			excluded = append(excluded, strings.Trim(clean, "/"))
+		}
+	}
+	isExcluded := func(rel string) bool {
+		rel = filepath.ToSlash(rel)
+		for _, prefix := range excluded {
+			if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Ficheros ya presentes en assets/, salvo los excluidos.
+	if err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if isExcluded(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		dest := filepath.Join(dst, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		return copyFile(path, dest)
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+
+	root := c.projectRoot()
+	for _, rule := range c.Assets.Copy {
+		if rule.From == "" || rule.To == "" {
+			return "", fmt.Errorf("[[assets.copy]] necesita from y to")
+		}
+		from := rule.From
+		if !filepath.IsAbs(from) {
+			from = filepath.Join(root, from)
+		}
+		to := rule.To
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(root, to)
+		}
+		relTo, err := filepath.Rel(src, to)
+		if err != nil || relTo == ".." || strings.HasPrefix(relTo, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("[[assets.copy]] to=%q debe estar dentro de %s", rule.To, src)
+		}
+		// exclude_assets manda también sobre las copias: si la variante actual
+		// excluye "node", una regla que rellena assets/node no debe reintroducirlo.
+		if isExcluded(relTo) {
+			ui.VerboseLog("[[assets.copy]] omitida: %s está excluida de assets", rule.To)
+			continue
+		}
+		if rule.Replace && relTo != "." {
+			if err := os.RemoveAll(filepath.Join(dst, relTo)); err != nil {
+				return "", err
+			}
+		}
+		if !dirExists(from) {
+			ui.Warn("[[assets.copy]]: no existe %s, se omite", from)
+			continue
+		}
+		include := compileAssetGlobs(rule.Include)
+		exclude := compileAssetGlobs(rule.Exclude)
+		copied := 0
+		err = filepath.Walk(from, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(from, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if len(include) > 0 && !matchesAssetGlob(rel, include) {
+				return nil
+			}
+			if matchesAssetGlob(rel, exclude) {
+				return nil
+			}
+			dest := filepath.Join(dst, relTo, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return err
+			}
+			if err := copyFile(path, dest); err != nil {
+				return err
+			}
+			copied++
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("copiando assets de %s: %w", from, err)
+		}
+		ui.VerboseLog("%d assets copiados de %s a %s", copied, from, to)
+	}
+	return dst, nil
 }
 
 func manifestPath(appDir string) string {
@@ -214,10 +430,13 @@ func hashFile(path string) ([]byte, error) {
 // Se incluyen los recursos y los manifests de las librerías (extraPaths): si
 // una dependencia cambia de versión, sus recursos cambian, y el APK base debe
 // rehacerse aunque los recursos de la app no se hayan tocado.
-func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
+func computeResourceHash(appDir, assetsDir string, extraPaths ...string) (string, error) {
 	var files []string
 	resDir := resPath(appDir)
 	manifest := manifestPath(appDir)
+	if assetsDir == "" {
+		assetsDir = filepath.Join(sourceRoot(appDir), "assets")
+	}
 
 	if err := filepath.Walk(resDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -232,6 +451,20 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 	}
 	if _, err := os.Stat(manifest); err == nil {
 		files = append(files, manifest)
+	}
+	// Los assets se empaquetan en el APK base: sin hashearlos, cambiar un
+	// fichero de assets/node reutilizaba el APK anterior. Por eso los scripts
+	// de algunos proyectos tenían que borrar .rain-res-hash a mano.
+	if err := filepath.Walk(assetsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
 	}
 	for _, extra := range extraPaths {
 		if extra == "" {
@@ -384,7 +617,7 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	}
 	// Las .so de jniLibs van dentro del APK: cambiar una debe invalidar la
 	// compilación aunque las fuentes Java y Kotlin estén intactas.
-	for _, path := range localNativeLibs(appDir) {
+	for _, path := range localNativeLibs(appDir, "") {
 		files = append(files, path)
 	}
 	entries, _ := os.ReadDir(libsDir)
@@ -436,29 +669,32 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
 }
 
-// computeConfigJavaHash incluye en la clave del DEX las fuentes de la variante
-// elegida. Están fuera de src/main, así que computeJavaHash no las ve.
+// computeConfigJavaHash añade a la clave del DEX lo que computeJavaHash no ve:
+// las fuentes de la variante elegida y las .so de un directorio externo.
 func computeConfigJavaHash(cfg Config, genDir string) (string, error) {
 	base, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
 	if err != nil {
 		return "", err
 	}
-	flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor)
-	if flavor == "" {
-		return base, nil
-	}
 
 	var files []string
-	javaFiles, err := collectJavaSources(filepath.Join(flavor, "java"))
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		javaFiles, err := collectJavaSources(filepath.Join(flavor, "java"))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		kotlinFiles, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		files = append(files, javaFiles...)
+		files = append(files, kotlinFiles...)
 	}
-	kotlinFiles, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"))
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
+	if !cfg.NoNativeLibs {
+		for _, path := range localNativeLibs(cfg.AppDir, cfg.nativeLibsExtraDir()) {
+			files = append(files, path)
+		}
 	}
-	files = append(files, javaFiles...)
-	files = append(files, kotlinFiles...)
 	sort.Strings(files)
 
 	h := sha256.New()
@@ -722,13 +958,17 @@ func Run(cfg Config) error {
 	flatDir := filepath.Join(cfg.BuildDir, "res")
 	baseApk := filepath.Join(cfg.BuildDir, "base.apk")
 
+	assetsDir, err := cfg.prepareAssets()
+	if err != nil {
+		return fmt.Errorf("preparando assets: %w", err)
+	}
 	resInputs := cfg.libraryResourceInputs()
 	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
 		if flavorRes := filepath.Join(flavor, "res"); dirExists(flavorRes) {
 			resInputs = append(resInputs, flavorRes)
 		}
 	}
-	currentResHash, err := computeResourceHash(cfg.AppDir, resInputs...)
+	currentResHash, err := computeResourceHash(cfg.AppDir, assetsDir, resInputs...)
 	if err != nil {
 		return fmt.Errorf("hash de recursos: %w", err)
 	}
@@ -899,8 +1139,8 @@ func Run(cfg Config) error {
 			"--version-name", cfg.VersionName,
 			"--auto-add-overlay",
 		}
-		if assets := filepath.Join(sourceRoot(cfg.AppDir), "assets"); dirExists(assets) {
-			args = append(args, "-A", assets)
+		if dirExists(assetsDir) {
+			args = append(args, "-A", assetsDir)
 		}
 
 		var libFlatFiles []string

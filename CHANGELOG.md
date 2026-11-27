@@ -160,8 +160,18 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   recursos de la variante sobrescriben los del main. `rain gradle` elige la
   primera variante declarada y avisa de que solo se compila esa.
 - **Librerías nativas del proyecto.** `rain build` empaqueta las `.so` de
-  `src/main/jniLibs/<abi>/` (o `jniLibs/<abi>/` en layout plano), con prioridad
-  sobre las de los AAR. Cambiar una invalida la caché incremental.
+  `src/main/jniLibs/<abi>/` (o `jniLibs/<abi>/` en layout plano) y de
+  `<raíz>/build/jni/<abi>/` (configurable con `[build] native_libs_dir`), con
+  prioridad sobre las de los AAR. Cambiar una invalida la caché incremental.
+- **Assets sin scripts externos.** `[[assets.copy]]` copia ficheros con globs
+  (`**` incluido) a `assets/` antes de compilar recursos; `replace = true`
+  descarta los ficheros anteriores del destino. Los assets empaquetados
+  entran en el hash de recursos: ya no hay que borrar `.rain-res-hash` a mano
+  tras regenerarlos.
+- **Variante sin nativos.** `[build] exclude_assets` y `[build] no_native_libs`
+  (o `--exclude-assets` y `--no-native-libs`) permiten generar un APK sin el
+  runtime Node ni las `.so`, sin scripts que escondan carpetas ni reemplacen el
+  APK firmado.
 
 ### Rendimiento
 

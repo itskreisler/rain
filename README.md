@@ -224,6 +224,20 @@ version = "1.0"
 
 [build]
 debug = true
+# Optional: extra <abi>/*.so directory (auto-detected as build/jni if present).
+native_libs_dir = "build/jni"
+# Assets under app/assets/ that must not be packaged.
+exclude_assets = ["node"]
+# Set true to build the variant without native libraries.
+no_native_libs = false
+
+# Copy files into assets before compiling (paths relative to rain.toml).
+[[assets.copy]]
+from = "bridge"
+to = "app/assets/node"
+include = ["**/*.ts", "**/*.js", "package.json"]
+exclude = ["**/*.d.ts", "**/*.map"]
+replace = true  # discard old files in the destination directory
 
 [signing]
 store_file = "release.keystore"
@@ -255,9 +269,20 @@ selected variant is compiled.
 
 Native libraries under `app/src/main/jniLibs/<abi>/*.so` (or `jniLibs/<abi>/`
 in a flat project) are packaged into `lib/<abi>/` automatically and take
-precedence over libraries coming from AAR dependencies. `rain gradle` warns
-when a project declares `productFlavors`: Rain only compiles `src/main`, so
-the files of the chosen variant must be copied there first.
+precedence over libraries coming from AAR dependencies. Rain also packages
+`<abi>/*.so` from `build/jni` (or the directory set in `native_libs_dir`);
+the module's own `jniLibs` still wins on collisions. No re-zipping or
+re-signing script is needed: the libraries go through Rain's normal
+`zipalign`/`apksigner` steps.
+
+`[[assets.copy]]` prepares assets before `aapt2` runs, so a bridge runtime can
+be assembled without a Python copy script. `replace = true` clears the
+destination directory first, equivalent to the old script's regeneration.
+All packaged assets are included in
+the resource hash: changing one invalidates the base APK automatically, with
+no need to delete `.rain-res-hash` by hand. `exclude_assets` removes paths from
+`assets/`; `--exclude-assets node` and `--no-native-libs` on `rain build` do
+the same from the command line and produce the "no Node / no native" variant.
 
 ### Environment variables
 

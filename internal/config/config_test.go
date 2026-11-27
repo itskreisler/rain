@@ -60,6 +60,48 @@ func TestReadFlavor(t *testing.T) {
 	}
 }
 
+func TestReadNativeLibsYAssets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+	contenido := `[build]
+native_libs_dir = 'build/jni'
+exclude_assets = ['node']
+no_native_libs = true
+
+[[assets.copy]]
+from = 'bridge'
+to = 'app/assets/node'
+include = ['**/*.ts', 'package.json']
+exclude = ['**/*.d.ts']
+replace = true
+`
+	if err := os.WriteFile(path, []byte(contenido), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Build.NativeLibsDir != "build/jni" || !got.Build.NoNativeLibs {
+		t.Errorf("Build = %+v", got.Build)
+	}
+	if !reflect.DeepEqual(got.Build.ExcludeAssets, []string{"node"}) {
+		t.Errorf("ExcludeAssets = %v", got.Build.ExcludeAssets)
+	}
+	if len(got.Assets.Copy) != 1 {
+		t.Fatalf("Assets.Copy = %+v", got.Assets.Copy)
+	}
+	rule := got.Assets.Copy[0]
+	if rule.From != "bridge" || rule.To != "app/assets/node" {
+		t.Errorf("regla = %+v", rule)
+	}
+	if !reflect.DeepEqual(rule.Include, []string{"**/*.ts", "package.json"}) ||
+		!reflect.DeepEqual(rule.Exclude, []string{"**/*.d.ts"}) || !rule.Replace {
+		t.Errorf("filtros = %+v", rule)
+	}
+}
+
 func TestReadOpcionesDeLintYFormato(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rain.toml")
@@ -177,6 +219,7 @@ func TestConfigBuildFields(t *testing.T) {
 	// vacías vienen como [] y no como nil. Se comparan como iguales.
 	gotBuild, wantBuild := got.Build, original.Build
 	for _, p := range []*[]string{
+		&gotBuild.ExcludeAssets, &wantBuild.ExcludeAssets,
 		&gotBuild.ProguardFiles, &wantBuild.ProguardFiles,
 		&gotBuild.DebugDependencies, &wantBuild.DebugDependencies,
 		&gotBuild.ReleaseDependencies, &wantBuild.ReleaseDependencies,
