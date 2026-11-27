@@ -365,6 +365,11 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	}); err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
+	// Las .so de jniLibs van dentro del APK: cambiar una debe invalidar la
+	// compilación aunque las fuentes Java y Kotlin estén intactas.
+	for _, path := range localNativeLibs(appDir) {
+		files = append(files, path)
+	}
 	entries, _ := os.ReadDir(libsDir)
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".jar") {

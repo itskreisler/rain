@@ -17,6 +17,27 @@ func writeHashFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestComputeJavaHashIncluyeJniLibs(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	so := filepath.Join(app, "src", "main", "jniLibs", "arm64-v8a", "libfoo.so")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeHashFile(t, so, "primero")
+
+	primero, err := computeJavaHash(app, filepath.Join(dir, "libs"), filepath.Join(app, "build", "gen"), false)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	writeHashFile(t, so, "segundo")
+	segundo, err := computeJavaHash(app, filepath.Join(dir, "libs"), filepath.Join(app, "build", "gen"), false)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	if primero == segundo {
+		t.Errorf("cambiar una .so no invalidó el hash: %s", primero)
+	}
+}
+
 func TestComputeDexDepsHashInvalidaConMinSdkYJars(t *testing.T) {
 	dir := t.TempDir()
 	androidJar := filepath.Join(dir, "android.jar")

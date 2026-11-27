@@ -290,10 +290,18 @@ func resolveCoordinates(deps []string) ([]string, error) {
 	devlog("resolveCoordinates", fmt.Sprintf("deps=%v", deps), "Resuelve y desduplica coordenadas de dependencias")
 	var coords []string
 	seen := make(map[string]bool)
+	var remotas []string
+	for _, d := range deps {
+		if strings.HasPrefix(d, "local:") {
+			continue
+		}
+		remotas = append(remotas, d)
+	}
 
 	// Un único recorrido compartido: antes cada raíz repetía el subgrafo
 	// común, multiplicando descargas y parseos por el número de raíces.
-	resolved, err := pom.ResolveTransitiveMany(deps, "cache")
+	// Las coordenadas local: no tienen POM: se resuelven desde native/.
+	resolved, err := pom.ResolveTransitiveMany(remotas, "cache")
 	if err != nil {
 		return nil, fmt.Errorf("resolviendo dependencias: %w", err)
 	}
@@ -320,10 +328,21 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	devlog("prepareAARSet", fmt.Sprintf("coords=%v, dir=%s", coords, dir), "Descarga y prepara el conjunto de AARs y JARs de dependencias")
 	// Si las dependencias ya estaban preparadas y no han cambiado, se
 	// reutilizan: extraer decenas de AAR de Compose cuesta varios segundos
-	// en cada build y no aporta nada si el resultado es el mismo.
-	if set, ok := aar.LoadCache(dir, coords); ok {
-		ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
-		return set, nil
+	// en cada build y no aporta nada si el resultado es el mismo. Los AAR
+	// locales se vuelven a copiar siempre: el fichero del proyecto puede
+	// cambiar sin que cambie su coordenada.
+	usesLocal := false
+	for _, coord := range coords {
+		if strings.HasPrefix(coord, "local:") {
+			usesLocal = true
+			break
+		}
+	}
+	if !usesLocal {
+		if set, ok := aar.LoadCache(dir, coords); ok {
+			ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
+			return set, nil
+		}
 	}
 
 	// La descarga es el cuello de botella de un build frío: cada AAR se pide
@@ -348,6 +367,7 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	}
 	results := make([]prepared, len(coords))
 	client := aar.NewClient()
+	client.LocalDir = "native"
 	pb := ui.NewProgressBar(len(coords), "Preparando ")
 	var wg sync.WaitGroup
 	var progressMu sync.Mutex

@@ -392,11 +392,13 @@ func atoiSafe(s string) int {
 	return n
 }
 
-// reJavaVersion busca "JavaVersion.VERSION_17" o "JvmTarget.JVM_17".
-var reJavaVersion = regexp.MustCompile(`(?:JavaVersion|JvmTarget)\.(?:VERSION_|JVM_)(\d+)`)
+// reJavaVersion busca "JavaVersion.VERSION_17", "JavaVersion.VERSION_1_8" o
+// "JvmTarget.JVM_17". El prefijo "1_" de las versiones históricas no es el
+// nivel de bytecode: VERSION_1_8 equivale a 8.
+var reJavaVersion = regexp.MustCompile(`(?:JavaVersion|JvmTarget)\.(?:VERSION_|JVM_)(?:1_)?(\d+)`)
 
-// javaVersionExtrae el nivel de Java de una expresión como
-// "JavaVersion.VERSION_17" o "org.jetbrains...JvmTarget.JVM_17".
+// javaVersion extrae el nivel de Java de una expresión como
+// "JavaVersion.VERSION_17" o "org.jetbrains...JvmTarget.JVM_1_8".
 func javaVersion(src string) int {
 	if m := reJavaVersion.FindStringSubmatch(src); m != nil {
 		return atoiSafe(m[1])

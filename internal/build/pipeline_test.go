@@ -226,6 +226,31 @@ func TestDetectABI(t *testing.T) {
 	})
 }
 
+func TestLocalNativeLibs(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	jni := filepath.Join(app, "src", "main", "jniLibs")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(jni, "arm64-v8a", "libfoo.so"), "x")
+	writeFile(t, filepath.Join(jni, "x86_64", "libbar.so"), "y")
+	// Un fichero que no sea .so no debe empaquetarse.
+	writeFile(t, filepath.Join(jni, "x86_64", "notas.txt"), "z")
+
+	libs := localNativeLibs(app)
+	if len(libs) != 2 {
+		t.Fatalf("libs = %v, quiero 2 .so", libs)
+	}
+	quiere := map[string]string{
+		"lib/arm64-v8a/libfoo.so": filepath.Join(jni, "arm64-v8a", "libfoo.so"),
+		"lib/x86_64/libbar.so":    filepath.Join(jni, "x86_64", "libbar.so"),
+	}
+	for name, path := range quiere {
+		if libs[name] != path {
+			t.Errorf("libs[%q] = %q, quiero %q", name, libs[name], path)
+		}
+	}
+}
+
 func TestApkNameFor(t *testing.T) {
 	tests := []struct {
 		name string

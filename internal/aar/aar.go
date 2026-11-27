@@ -319,6 +319,9 @@ func parseServiceFile(content string) []string {
 type Client struct {
 	HTTP   *http.Client
 	client *httpx.Client
+	// LocalDir es el directorio del proyecto donde se buscan los artefactos
+	// de coordenadas local: (native/<artifacto>-<versión>.aar|.jar).
+	LocalDir string
 }
 
 func NewClient() *Client {
@@ -328,7 +331,7 @@ func NewClient() *Client {
 	httpClient := &http.Client{Timeout: 10 * time.Minute}
 	retryClient := httpx.NewClient()
 	retryClient.HTTP = httpClient
-	return &Client{HTTP: httpClient, client: retryClient}
+	return &Client{HTTP: httpClient, client: retryClient, LocalDir: "native"}
 }
 
 // Prepare descarga y prepara cada coordenada en dir, devolviendo el Set.
@@ -373,7 +376,7 @@ func (c *Client) prepareOne(coord, dir string) (*Library, error) {
 		// indica con "available-at". El POM no lo dice, por eso sin esto el
 		// classpath quedaba sin clases de Compose (errores "unresolved
 		// reference 'compose'" en tiempo de compilación Kotlin).
-		if lib.ClassJar == "" && lib.ResDir == "" {
+		if lib.ClassJar == "" && lib.ResDir == "" && !strings.HasPrefix(coord, "local:") {
 			if redirected, rerr := c.prepareAndroidVariant(coord, dir); rerr == nil {
 				return redirected, nil
 			} else {
@@ -482,6 +485,21 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 	group, artifact, version := parts[0], parts[1], parts[2]
 	groupPath := strings.ReplaceAll(group, ".", "/")
 	dest := filepath.Join(dir, "aars", fmt.Sprintf("%s-%s.%s", artifact, version, ext))
+
+	// Las coordenadas local: no se buscan en Maven: el artefacto vive en el
+	// proyecto (native/<artifacto>-<versión>.aar|.jar) y se copia a la caché
+	// para que el resto del pipeline lo trate como una dependencia normal.
+	if group == "local" {
+		src := filepath.Join(c.LocalDir, fmt.Sprintf("%s-%s.%s", artifact, version, ext))
+		if !fileExists(src) {
+			return "", fmt.Errorf("no se encontró el artefacto local %s", src)
+		}
+		if err := copyFileInto(src, dest); err != nil {
+			return "", fmt.Errorf("copiando el artefacto local %s: %w", src, err)
+		}
+		ui.VerboseLog("artefacto local: %s", src)
+		return dest, nil
+	}
 
 	if fileExists(dest) {
 		return dest, nil

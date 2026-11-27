@@ -3,6 +3,7 @@ package gradle
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -244,5 +245,53 @@ func TestMatchBraceAuxiliar(t *testing.T) {
 	}
 	if got := matchBrace("{", 0); got != -1 {
 		t.Errorf("matchBrace({) = %d, se esperaba -1", got)
+	}
+}
+
+func TestJavaVersionHistorica(t *testing.T) {
+	casos := []struct {
+		expr   string
+		quiere int
+	}{
+		{"JavaVersion.VERSION_1_8", 8},
+		{"JvmTarget.JVM_1_8", 8},
+		{"JavaVersion.VERSION_17", 17},
+		{"JvmTarget.JVM_21", 21},
+	}
+	for _, caso := range casos {
+		if got := javaVersion(caso.expr); got != caso.quiere {
+			t.Errorf("javaVersion(%q) = %d, se esperaba %d", caso.expr, got, caso.quiere)
+		}
+	}
+}
+
+func TestDetectAvisaProductFlavors(t *testing.T) {
+	dir := writeProject(t,
+		`rootProject.name = "Sabores"
+include(":app")`,
+		`plugins {
+    id("com.android.application")
+}
+android {
+    namespace = "com.example.sabores"
+    productFlavors {
+        create("free") { dimension = "tienda" }
+    }
+}`)
+	proj, err := Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect() error: %v", err)
+	}
+	if proj.App == nil || !proj.App.HasFlavors {
+		t.Fatalf("HasFlavors = false, se esperaba true")
+	}
+	var avisado bool
+	for _, w := range proj.Warnings {
+		if strings.Contains(w, "productFlavors") {
+			avisado = true
+		}
+	}
+	if !avisado {
+		t.Errorf("Warnings = %v, falta el aviso de productFlavors", proj.Warnings)
 	}
 }

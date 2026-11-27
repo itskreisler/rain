@@ -427,6 +427,16 @@ func TestBuildRequiresProject(t *testing.T) {
 	}
 }
 
+func TestResolveCoordinatesConservaLocales(t *testing.T) {
+	coords, err := resolveCoordinates([]string{"local:prootnative:1.0"})
+	if err != nil {
+		t.Fatalf("resolveCoordinates: %v", err)
+	}
+	if len(coords) != 1 || coords[0] != "local:prootnative:1.0" {
+		t.Errorf("coords = %v, quiero solo la coordenada local", coords)
+	}
+}
+
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	old, err := os.Getwd()

@@ -152,6 +152,14 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   cambiar de canción. El README incluye una checklist con lo implementado y lo
   pendiente (servicio en segundo plano, preajustes de ecualizador, letras,
   temporizador, radio por Internet, widgets y Android Auto).
+- **Dependencias `local:`.** `dependencies = ['local:foo:1.0']` lee
+  `native/foo-1.0.aar` (o `.jar`) sin consultar Maven ni resolver POMs. Así un
+  proyecto con un AAR propio no necesita copiarlo a mano en `.rain-deps/aars`.
+- **Librerías nativas del proyecto.** `rain build` empaqueta las `.so` de
+  `src/main/jniLibs/<abi>/` (o `jniLibs/<abi>/` en layout plano), con prioridad
+  sobre las de los AAR. Cambiar una invalida la caché incremental. `rain gradle`
+  avisa cuando el proyecto usa `productFlavors`, porque Rain solo compila
+  `src/main`.
 
 ### Rendimiento
 
@@ -175,6 +183,10 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Corregido
 
+- **`rain gradle` traducía `JavaVersion.VERSION_1_8` como `java_target = 1`.**
+  El prefijo `1_` no es el nivel de bytecode, así que el `rain.toml` generado
+  fallaba al compilar; ahora se importa como `8`. Lo mismo aplica a
+  `JvmTarget.JVM_1_8`.
 - **Smoke test de Windows.** Las pruebas del toolchain usan lanzadores `.cmd`
   válidos y eliminan también las copias sin extensión de `aapt2` y `zipalign`
   que puedan haber dejado versiones anteriores.

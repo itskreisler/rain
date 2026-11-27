@@ -128,15 +128,54 @@ func (c Config) libraryResourceInputs() []string {
 	return out
 }
 
-// nativeLibs devuelve las .so que deben empaquetarse. Con un set de
-// dependencias se usan solo las del set; recorrer jni/ entero empaquetaría las
-// de dependencias que ya no están en rain.toml pero siguen en disco.
+// nativeLibs devuelve las .so que deben empaquetarse. Además de las de los
+// AAR se empaquetan las del propio módulo en jniLibs/<abi>/; en caso de
+// colisión gana la local, como hace Gradle cuando la app sobrescribe una .so
+// de una dependencia.
 func (c Config) nativeLibs() (map[string]string, error) {
-	if c.Libs == nil {
-		// Modo simple: sin AARs no hay jni/ que empaquetar.
-		return nil, nil
+	out := localNativeLibs(c.AppDir)
+	if out == nil {
+		out = make(map[string]string)
 	}
-	return c.Libs.NativeLibs(), nil
+	if c.Libs == nil {
+		return out, nil
+	}
+	for name, path := range c.Libs.NativeLibs() {
+		if _, ok := out[name]; !ok {
+			out[name] = path
+		}
+	}
+	return out, nil
+}
+
+// localNativeLibs indexa las .so de jniLibs/<abi>/ del módulo, tanto en el
+// layout Gradle (src/main) como en el plano. Solo acepta un nivel de ABI:
+// jniLibs/<abi>/libfoo.so se empaqueta como lib/<abi>/libfoo.so.
+func localNativeLibs(appDir string) map[string]string {
+	root := filepath.Join(sourceRoot(appDir), "jniLibs")
+	if !dirExists(root) {
+		return nil
+	}
+	out := make(map[string]string)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) != 2 || !strings.HasSuffix(parts[1], ".so") {
+			return nil
+		}
+		out["lib/"+parts[0]+"/"+parts[1]] = path
+		return nil
+	})
+	return out
 }
 
 // dedupeJarsByClass resuelve definiciones duplicadas de clases entre jars. Los

@@ -58,3 +58,28 @@ func TestLibraryJarsSinSetUsaElDirectorioDeDependencias(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeLibsMezclaAARSinJniLibsLocales(t *testing.T) {
+	deps := t.TempDir()
+	so := filepath.Join(deps, "jni", "prootnative-1.0", "arm64-v8a", "libproot.so")
+	writeFile(t, so, "elf")
+
+	// Sin jniLibs en el proyecto, localNativeLibs devuelve nil: fusionar las
+	// .so del AAR no debe escribir en un mapa nil.
+	cfg := Config{
+		AppDir: t.TempDir(),
+		Libs: &aar.Set{
+			Dir: deps,
+			Libraries: []aar.Library{
+				{Coordinate: "local:prootnative:1.0", NativeFiles: []string{so}},
+			},
+		},
+	}
+	libs, err := cfg.nativeLibs()
+	if err != nil {
+		t.Fatalf("nativeLibs: %v", err)
+	}
+	if libs["lib/arm64-v8a/libproot.so"] != so {
+		t.Errorf("libs = %v, falta la .so del AAR", libs)
+	}
+}

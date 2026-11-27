@@ -214,6 +214,7 @@ dependencies = [
     "androidx.core:core:1.12.0",
     "androidx.appcompat:appcompat:1.6.1",
     "androidx.compose.material3:material3-android:1.5.0-beta01",
+    # "local:milibreria:1.0" reads native/milibreria-1.0.aar (or .jar).
 ]
 
 [project]
@@ -241,6 +242,16 @@ extra = ["https://my-nexus.local/repository/maven"]  # Optional custom repos
 Unknown keys fail parsing. Root keys (`mode`, `dependencies`, `modules`) must
 appear before any table. Without `rain.toml`, `app.properties` is used as a
 fallback and the flat android2apk layout is auto-detected.
+
+A `local:<artifact>:<version>` dependency is read from
+`native/<artifact>-<version>.aar` (or `.jar`) and copied into Rain's dependency
+cache; it skips Maven and POM resolution entirely.
+
+Native libraries under `app/src/main/jniLibs/<abi>/*.so` (or `jniLibs/<abi>/`
+in a flat project) are packaged into `lib/<abi>/` automatically and take
+precedence over libraries coming from AAR dependencies. `rain gradle` warns
+when a project declares `productFlavors`: Rain only compiles `src/main`, so
+the files of the chosen variant must be copied there first.
 
 ### Environment variables
 

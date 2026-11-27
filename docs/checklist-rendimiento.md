@@ -117,6 +117,14 @@ ha ejecutado sin errores en esta rama.
   y `Select` con mapa (`internal/lint/lint.go`).
 - [x] `fastCheck` comprueba todas las fuentes si falta la marca; guardia para
   nombre vacío en `mentionsIdentifier`; `atoi` satura en vez de desbordar.
+- [x] Resolución `local:` (`internal/cli/build.go`, `internal/aar/aar.go`): las
+  coordenadas locales se copian desde `native/` sin resolver POMs ni consultar
+  repositorios. Antes el proyecto tenía que copiar el AAR a `.rain-deps/aars`
+  desde un `build.sh`; ahora el coste es `O(1)` por artefacto y la caché de
+  dependencias se desactiva para no reutilizar un AAR local cambiado.
+- [x] `.so` del módulo (`internal/build/deps.go`, `pipeline.go`): un `Walk` de
+  `jniLibs/<abi>/` indexa las librerías en un mapa `O(n)` y las añade al hash
+  incremental. Las locales ganan a las del AAR en caso de colisión.
 - [x] `CHANGELOG.md` documenta los cambios visibles.
 
 ## 4. Verificación (marcar solo tras ejecutar)
@@ -139,6 +147,14 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
 - [x] Segundo build sin cambios: 7 s, imprime `java sin cambios, reutilizando
   classes.dex` y no invoca a `kotlinc`. Confirma que el coste repetido es
   `O(fuentes)` de hash, no `O(fuentes)` de compilación.
+- [x] Build limpio de `TelegramBotX` (propiedad del usuario) con
+  `/content/rain/rain --devlog build .` tras borrar `.rain-deps`, `.rain-deps.json`
+  y `app/build`: sin ejecutar su `build.sh`, 25 s, ``empaquetando 5 bibliotecas
+  nativas`` y `TelegramBotX-1.0-universal.apk` (581,6 KiB).
+- [x] `apksigner verify --verbose` sobre ese APK: v1, v2 y v3 correctos, 1
+  firmante; `unzip -l` confirma `lib/arm64-v8a/` con `libproot.so`,
+  `libproot-loader.so`, `libtalloc.so`, `libandroid-shmem.so` y
+  `libbuddypty.so`.
 
 ## 5. Complejidades que NO requirieron cambio
 
