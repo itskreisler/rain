@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -332,6 +333,7 @@ func TestVersionLess(t *testing.T) {
 		{"1.0.0", "1.0", false},
 		{"1.0", "1.0.1", true},
 		{"1.0.0-alpha", "1.0.0-beta", true},
+		{"1." + strings.Repeat("9", 30), "1.100", false}, // sin desbordamiento
 	}
 	for _, tc := range tests {
 		if got := versionLess(tc.a, tc.b); got != tc.want {

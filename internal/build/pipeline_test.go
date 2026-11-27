@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/itskreisler/rain/internal/aar"
+	"github.com/itskreisler/rain/internal/config"
 )
 
 func TestKotlinBackendThreadsArg(t *testing.T) {
@@ -224,6 +225,208 @@ func TestDetectABI(t *testing.T) {
 			t.Errorf("detectABI = %q, quiero universal", got)
 		}
 	})
+}
+
+func TestLocalNativeLibs(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	jni := filepath.Join(app, "src", "main", "jniLibs")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(jni, "arm64-v8a", "libfoo.so"), "x")
+	writeFile(t, filepath.Join(jni, "x86_64", "libbar.so"), "y")
+	// Un fichero que no sea .so no debe empaquetarse.
+	writeFile(t, filepath.Join(jni, "x86_64", "notas.txt"), "z")
+
+	libs := localNativeLibs(app, "")
+	if len(libs) != 2 {
+		t.Fatalf("libs = %v, quiero 2 .so", libs)
+	}
+	quiere := map[string]string{
+		"lib/arm64-v8a/libfoo.so": filepath.Join(jni, "arm64-v8a", "libfoo.so"),
+		"lib/x86_64/libbar.so":    filepath.Join(jni, "x86_64", "libbar.so"),
+	}
+	for name, path := range quiere {
+		if libs[name] != path {
+			t.Errorf("libs[%q] = %q, quiero %q", name, libs[name], path)
+		}
+	}
+}
+
+func TestLocalNativeLibsExtraDir(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	jni := filepath.Join(app, "src", "main", "jniLibs")
+	extra := filepath.Join(dir, "build", "jni")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(jni, "arm64-v8a", "libfoo.so"), "local")
+	writeFile(t, filepath.Join(extra, "arm64-v8a", "libfoo.so"), "extra")
+	writeFile(t, filepath.Join(extra, "x86_64", "libbar.so"), "extra")
+
+	libs := localNativeLibs(app, extra)
+	if len(libs) != 2 {
+		t.Fatalf("libs = %v, quiero 2 .so", libs)
+	}
+	data, err := os.ReadFile(libs["lib/arm64-v8a/libfoo.so"])
+	if err != nil {
+		t.Fatalf("leyendo la .so local: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "local" {
+		t.Errorf("en colisión ganó %q, quiero la .so de jniLibs", got)
+	}
+	if libs["lib/x86_64/libbar.so"] == "" {
+		t.Errorf("falta la .so del directorio adicional: %v", libs)
+	}
+}
+
+func TestPrepareAssetsFiltraYCopia(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	srcAssets := filepath.Join(app, "src", "main", "assets")
+	writeFile(t, filepath.Join(srcAssets, "fonts", "Geist.ttf"), "font")
+	writeFile(t, filepath.Join(srcAssets, "fuentes", "privado.js"), "privado")
+	bridge := filepath.Join(root, "bridge")
+	writeFile(t, filepath.Join(bridge, "run.ts"), "run")
+	writeFile(t, filepath.Join(bridge, "tipos.d.ts"), "tipos")
+	writeFile(t, filepath.Join(bridge, "opus", "encoder.js"), "encoder")
+	writeFile(t, filepath.Join(bridge, "notas.md"), "notas")
+
+	cfg := Config{
+		ProjectDir:    root,
+		AppDir:        app,
+		BuildDir:      filepath.Join(app, "build"),
+		ExcludeAssets: []string{"fuentes"},
+		Assets: config.Assets{Copy: []config.AssetCopy{{
+			From:    "bridge",
+			To:      "app/src/main/assets/node",
+			Include: []string{"**/*.ts", "**/*.js"},
+			Exclude: []string{"**/*.d.ts"},
+		}}},
+	}
+	got, err := cfg.prepareAssets()
+	if err != nil {
+		t.Fatalf("prepareAssets: %v", err)
+	}
+	quiero := map[string]string{
+		"fonts/Geist.ttf":      "font",
+		"node/run.ts":          "run",
+		"node/opus/encoder.js": "encoder",
+	}
+	for rel, want := range quiero {
+		data, err := os.ReadFile(filepath.Join(got, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Errorf("falta %s: %v", rel, err)
+			continue
+		}
+		if string(data) != want {
+			t.Errorf("%s = %q, quiero %q", rel, data, want)
+		}
+	}
+	for _, rel := range []string{"fuentes/privado.js", "node/tipos.d.ts", "notas.md"} {
+		if fileExists(filepath.Join(got, filepath.FromSlash(rel))) {
+			t.Errorf("%s no debía empaquetarse", rel)
+		}
+	}
+}
+
+func TestPrepareAssetsReemplazaDestino(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(app, "src", "main", "assets", "node", "viejo.ts"), "viejo")
+	writeFile(t, filepath.Join(root, "bridge", "nuevo.ts"), "nuevo")
+
+	cfg := Config{
+		ProjectDir: root,
+		AppDir:     app,
+		BuildDir:   filepath.Join(app, "build"),
+		Assets: config.Assets{Copy: []config.AssetCopy{{
+			From:    "bridge",
+			To:      "app/src/main/assets/node",
+			Include: []string{"*.ts"},
+			Replace: true,
+		}}},
+	}
+	got, err := cfg.prepareAssets()
+	if err != nil {
+		t.Fatalf("prepareAssets: %v", err)
+	}
+	if fileExists(filepath.Join(got, "node", "viejo.ts")) {
+		t.Error("replace=true conservó un fichero antiguo")
+	}
+	if !fileExists(filepath.Join(got, "node", "nuevo.ts")) {
+		t.Error("replace=true no copió el fichero nuevo")
+	}
+}
+
+func TestPrepareAssetsConAppDirRelativo(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(root, "bridge", "run.ts"), "run")
+
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(previous) }()
+
+	cfg := Config{
+		ProjectDir: root,
+		AppDir:     "app",
+		BuildDir:   filepath.Join("app", "build"),
+		Assets: config.Assets{Copy: []config.AssetCopy{{
+			From: "bridge",
+			To:   "app/src/main/assets/node",
+		}}},
+	}
+	got, err := cfg.prepareAssets()
+	if err != nil {
+		t.Fatalf("prepareAssets: %v", err)
+	}
+	if !fileExists(filepath.Join(got, "node", "run.ts")) {
+		t.Error("no se copió el asset con AppDir relativo")
+	}
+}
+
+func TestPrepareAssetsExclusionGanaACopia(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	writeFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeFile(t, filepath.Join(root, "bridge", "run.ts"), "run")
+	cfg := Config{
+		ProjectDir:    root,
+		AppDir:        app,
+		BuildDir:      filepath.Join(app, "build"),
+		ExcludeAssets: []string{"node"},
+		Assets: config.Assets{Copy: []config.AssetCopy{{
+			From: "bridge",
+			To:   "app/src/main/assets/node",
+		}}},
+	}
+	got, err := cfg.prepareAssets()
+	if err != nil {
+		t.Fatalf("prepareAssets: %v", err)
+	}
+	if fileExists(filepath.Join(got, "node", "run.ts")) {
+		t.Error("exclude_assets no ganó a la regla de copia")
+	}
+}
+
+func TestNativeLibsRespetaNoNativeLibs(t *testing.T) {
+	app := t.TempDir()
+	writeFile(t, filepath.Join(app, "jniLibs", "arm64-v8a", "libfoo.so"), "x")
+	cfg := Config{AppDir: app, BuildDir: filepath.Join(app, "build"), NoNativeLibs: true}
+	libs, err := cfg.nativeLibs()
+	if err != nil {
+		t.Fatalf("nativeLibs: %v", err)
+	}
+	if len(libs) != 0 {
+		t.Errorf("NoNativeLibs = true pero se empaquetaron %v", libs)
+	}
 }
 
 func TestApkNameFor(t *testing.T) {
@@ -566,6 +769,10 @@ func TestValidateJVMTarget(t *testing.T) {
 		if err := ValidateJVMTarget(invalid); err == nil {
 			t.Errorf("ValidateJVMTarget(%d) = nil, quiero error", invalid)
 		}
+	}
+	// El error debe mostrar los valores permitidos, no marcadores "%d".
+	if err := ValidateJVMTarget(9); err == nil || !strings.Contains(err.Error(), "8 11 17 21") {
+		t.Errorf("ValidateJVMTarget(9) = %v, quiero el listado 8 11 17 21", err)
 	}
 }
 

@@ -439,3 +439,29 @@ func TestPrepareJARKeepsPlainJar(t *testing.T) {
 		t.Errorf("Coordinate = %q, quiero el JAR original", lib.Coordinate)
 	}
 }
+
+func TestPrepareOneLocalAAR(t *testing.T) {
+	dir := t.TempDir()
+	native := t.TempDir()
+	writeZip(t, filepath.Join(native, "prootnative-1.0.aar"), map[string]string{
+		"AndroidManifest.xml":          `<manifest package="app.tl.bot"></manifest>`,
+		"jni/arm64-v8a/libproot.so":    "elf",
+		"jni/arm64-v8a/libbuddypty.so": "elf",
+	})
+
+	c := NewClient()
+	c.LocalDir = native
+	lib, err := c.prepareOne("local:prootnative:1.0", dir)
+	if err != nil {
+		t.Fatalf("prepareOne: %v", err)
+	}
+	if lib.Coordinate != "local:prootnative:1.0" {
+		t.Errorf("Coordinate = %q", lib.Coordinate)
+	}
+	if len(lib.NativeFiles) != 2 {
+		t.Errorf("NativeFiles = %v, quiero 2 .so", lib.NativeFiles)
+	}
+	if !fileExists(filepath.Join(dir, "aars", "prootnative-1.0.aar")) {
+		t.Error("el AAR local no se copió a la caché")
+	}
+}

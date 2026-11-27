@@ -153,6 +153,46 @@ func TestDescribeIncluyeElEstadoDeLaMemoria(t *testing.T) {
 	}
 }
 
+func TestDetectMemoizaYSePuedeReiniciar(t *testing.T) {
+	original := detectFn
+	t.Cleanup(func() {
+		detectFn = original
+		resetDetect()
+	})
+
+	llamadas := 0
+	detectFn = func() Info {
+		llamadas++
+		return Info{TotalBytes: int64(llamadas)}
+	}
+	resetDetect()
+
+	if got := Detect().TotalBytes; got != 1 {
+		t.Errorf("primera Detect = %d, quiero 1", got)
+	}
+	if got := Detect().TotalBytes; got != 1 {
+		t.Errorf("segunda Detect = %d, quiero la misma medición cacheada", got)
+	}
+	if llamadas != 1 {
+		t.Errorf("detect se llamó %d veces, quiero 1", llamadas)
+	}
+
+	// El valor devuelto es una copia: modificarlo no altera la caché.
+	info := Detect()
+	info.TotalBytes = 99
+	if got := Detect().TotalBytes; got != 1 {
+		t.Errorf("Detect tras modificar la copia = %d, quiero 1", got)
+	}
+
+	resetDetect()
+	if got := Detect().TotalBytes; got != 2 {
+		t.Errorf("Detect tras resetDetect = %d, quiero una medición nueva", got)
+	}
+	if llamadas != 2 {
+		t.Errorf("detect se llamó %d veces tras el reinicio, quiero 2", llamadas)
+	}
+}
+
 func TestDetectLeeMemInfo(t *testing.T) {
 	info := Detect()
 	// En Linux siempre hay /proc/meminfo; si no, el test no aplica.

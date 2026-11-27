@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -150,24 +151,44 @@ func runLint(cmd *cobra.Command, dir, toolsFlag, failOn string, typeRes bool) er
 		return nil
 	}
 
+	ctx := cmd.Context()
 	var findings []lint.Finding
 	for _, target := range targets {
-		for _, t := range tools {
+		// Cada analizador escribe solo en su slot; se reúnen en orden al
+		// terminar para no cambiar la agrupación ni la prioridad del error.
+		type resultado struct {
+			tool     string
+			findings []lint.Finding
+			err      error
+		}
+		slots := make([]resultado, len(tools))
+		var wg sync.WaitGroup
+		for i, t := range tools {
 			devlog("runLint:analizando", fmt.Sprintf("tool=%s, sourceRoot=%s, java=%d, kotlin=%d, ruleset=%s, baseline=%s", t.Name, target.sourceRoot, len(target.java), len(target.kotlin), target.pmdRuleset, target.pmdBaseline), "Registra las fuentes y opciones reales pasadas a cada analizador")
 			ui.Info("%s: %s", t.Name, target.projectDir)
-			found, err := t.Run(cmd.Context(), t.Path, lint.Options{
-				ProjectDir:     target.projectDir,
-				SourceRoot:     target.sourceRoot,
-				KotlinFiles:    target.kotlin,
-				JavaFiles:      target.java,
-				Classpath:      target.classpath,
-				TypeResolution: lintCfg.TypeResolution,
-				PmdRuleset:     target.pmdRuleset,
-			})
-			if err != nil {
-				return fmt.Errorf("%s: %w", t.Name, err)
+			slots[i].tool = t.Name
+			wg.Add(1)
+			go func(i int, t lint.Tool, target lintTarget) {
+				defer wg.Done()
+				found, err := t.Run(ctx, t.Path, lint.Options{
+					ProjectDir:     target.projectDir,
+					SourceRoot:     target.sourceRoot,
+					KotlinFiles:    target.kotlin,
+					JavaFiles:      target.java,
+					Classpath:      target.classpath,
+					TypeResolution: lintCfg.TypeResolution,
+					PmdRuleset:     target.pmdRuleset,
+				})
+				slots[i].findings = found
+				slots[i].err = err
+			}(i, t, target)
+		}
+		wg.Wait()
+		for _, slot := range slots {
+			if slot.err != nil {
+				return fmt.Errorf("%s: %w", slot.tool, slot.err)
 			}
-			findings = append(findings, found...)
+			findings = append(findings, slot.findings...)
 		}
 	}
 

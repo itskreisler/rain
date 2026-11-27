@@ -103,7 +103,7 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{nativeNameFor("aapt2", runtime.GOOS), nativeNameFor("zipalign", runtime.GOOS)} {
-		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("binario"), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("BINARIO-DESCARTADO"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,8 +117,13 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	if !strings.Contains(string(out), "LD_LIBRARY_PATH") || !strings.Contains(string(out), "lib64") {
-		t.Errorf("el wrapper de zipalign no fija LD_LIBRARY_PATH:\n%s", out)
+	// El contenido del binario se descarta por completo: solo se publica el
+	// wrapper, sin leer el ZIP ni copiar el ejecutable original.
+	if string(out) != zipalignWrapper {
+		t.Errorf("wrapper de zipalign inesperado:\n%s", out)
+	}
+	if strings.Contains(string(out), "BINARIO-DESCARTADO") {
+		t.Error("el wrapper de zipalign conservó contenido del binario original")
 	}
 }
 
@@ -216,6 +221,72 @@ func TestLibcxxSoloEnLinux(t *testing.T) {
 		if got := needsLibcxx(goos); got != want {
 			t.Errorf("needsLibcxx(%q) = %t, quiero %t", goos, got, want)
 		}
+	}
+}
+
+func TestExtractBuildToolsUnSoloRecorrido(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "build-tools.zip")
+	writeZipFile(t, zipPath, map[string]string{
+		// Un apksigner fuera de lib/ no debe tapar al que sí sirve.
+		"otro/apksigner.jar":                   "no sirve",
+		"android-16/lib/apksigner.jar":         "apksigner",
+		"android-16/" + nativeName("aapt2"):    "aapt2",
+		"android-16/" + nativeName("zipalign"): "zipalign",
+		"android-16/lib64/libc++.so":           "libcxx",
+		"android-16/lib64/libc++.so.1":         "libcxx1",
+		"android-16/lib/otro.jar":              "ruido",
+	})
+
+	dest := func(name string) string { return filepath.Join(dir, "toolchain", name) }
+	tools := []buildTool{
+		{name: "apksigner.jar", dest: dest("apksigner.jar"), mode: 0o644,
+			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") }},
+		{name: nativeName("aapt2"), dest: dest(nativeName("aapt2")), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("aapt2") }},
+		{name: nativeName("zipalign"), dest: dest(nativeName("zipalign")), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("zipalign") }},
+		{name: "libc++.so", dest: dest("lib64/libc++.so"), mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so" }},
+		{name: "libc++.so.1", dest: dest("lib64/libc++.so.1"), mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" }},
+	}
+	if err := extractBuildTools(zipPath, tools); err != nil {
+		t.Fatalf("extractBuildTools: %v", err)
+	}
+
+	for _, tc := range []struct{ path, contenido string }{
+		{dest("apksigner.jar"), "apksigner"},
+		{dest(nativeName("aapt2")), "aapt2"},
+		{dest(nativeName("zipalign")), "zipalign"},
+		{dest("lib64/libc++.so"), "libcxx"},
+		{dest("lib64/libc++.so.1"), "libcxx1"},
+	} {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("lectura de %s: %v", tc.path, err)
+		}
+		if string(data) != tc.contenido {
+			t.Errorf("%s = %q, quiero %q", tc.path, data, tc.contenido)
+		}
+	}
+	info, err := os.Stat(dest(nativeName("aapt2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Errorf("permisos de aapt2 = %v, quiero 0755", info.Mode().Perm())
+	}
+
+	// El mensaje de error de una herramienta ausente se conserva.
+	missing := buildTool{
+		name: "missing.bin", dest: dest("missing.bin"), mode: 0o644,
+		match: func(n string) bool { return filepath.Base(n) == "missing.bin" },
+	}
+	err = extractBuildTools(zipPath, []buildTool{missing})
+	want := "missing.bin: no se encontró " + dest("missing.bin") + " dentro del ZIP"
+	if err == nil || err.Error() != want {
+		t.Errorf("error con herramienta ausente = %v, quiero %q", err, want)
 	}
 }
 
@@ -352,6 +423,126 @@ func TestWrappersContent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(manager.BinDir(), wrapperName("kotlinc"))); err == nil {
 		t.Error("writeWrappers(false) no debería crear kotlinc")
+	}
+}
+
+func makeFakeNDK(t *testing.T, dir string) {
+	t.Helper()
+	clang := filepath.Join(dir, "toolchains", "llvm", "prebuilt", "linux-x86_64", "bin", nativeName("clang"))
+	if err := os.MkdirAll(filepath.Dir(clang), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(clang, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindNDKRespetaEntornoYGestionado(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	t.Setenv("ANDROID_NDK_HOME", "")
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	managed := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion)
+	makeFakeNDK(t, managed)
+	if got := FindNDK(); got != managed {
+		t.Errorf("FindNDK = %q, quiero %q", got, managed)
+	}
+
+	external := filepath.Join(t.TempDir(), "ndk-externo")
+	makeFakeNDK(t, external)
+	t.Setenv("ANDROID_NDK_HOME", external)
+	if got := FindNDK(); got != external {
+		t.Errorf("FindNDK con variable = %q, quiero %q", got, external)
+	}
+
+	t.Setenv("ANDROID_NDK_HOME", filepath.Join(t.TempDir(), "vacío"))
+	if got := FindNDK(); got != managed {
+		t.Errorf("FindNDK con variable inválida = %q, quiero %q", got, managed)
+	}
+}
+
+func TestEnsureNDKNoDescargaSiYaEsta(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	// Los runners de GitHub traen un NDK del SDK y las variables que lo apuntan.
+	// Aislarlas evita que FindNDK lo prefiera al gestionado que crea este test.
+	t.Setenv("ANDROID_NDK_HOME", "")
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+	makeFakeNDK(t, filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion))
+
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Un servidor que falla demuestra que no se intenta descargar nada.
+	manager.Client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("EnsureNDK intentó descargar con un NDK gestionado presente")
+		return nil, os.ErrClosed
+	})}
+	got, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureNDK: %v", err)
+	}
+	if want := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion); got != want {
+		t.Errorf("EnsureNDK = %q, quiero %q", got, want)
+	}
+}
+
+func TestEnsureNDKRespetaNDKDelEntorno(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	external := filepath.Join(t.TempDir(), "ndk-del-sistema")
+	makeFakeNDK(t, external)
+	t.Setenv("ANDROID_NDK_HOME", external)
+
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("EnsureNDK intentó descargar con un NDK del entorno presente")
+		return nil, os.ErrClosed
+	})}
+	got, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureNDK: %v", err)
+	}
+	if got != external {
+		t.Errorf("EnsureNDK = %q, quiero %q", got, external)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNDKURLsDisponibles(t *testing.T) {
+	for _, goos := range []string{"linux", "windows", "darwin"} {
+		url, err := ndkURLFor(goos, "amd64")
+		if err != nil || !strings.Contains(url, "android-ndk-"+NDKVersion) {
+			t.Errorf("ndkURLFor(%s) = %q, %v", goos, url, err)
+		}
+	}
+	if _, err := ndkURLFor("linux", "arm64"); err == nil {
+		t.Error("ndkURLFor(linux, arm64) debería avisar de que no hay ZIP oficial")
 	}
 }
 

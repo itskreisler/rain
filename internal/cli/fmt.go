@@ -88,13 +88,20 @@ func runFmt(cmd *cobra.Command, dir string, check bool) error {
 		SkipImports: skipImports,
 	}
 
+	// Los globs se evalúan desde la raíz del proyecto: recorrer las fuentes
+	// es igual para todos los targets, así que se hace una sola vez.
+	var allJava []string
+	if javaFilesConGlobs(cfg.Format.JavaFiles, cfg.Format.JavaExclude) {
+		allJava = collectJavaFiles(absDir)
+	}
+
 	var changed []string
 	for _, target := range targets {
 		files, err := lint.Format(cmd.Context(), lint.Options{
 			ProjectDir:  target.projectDir,
 			SourceRoot:  target.sourceRoot,
 			KotlinFiles: target.kotlin,
-			JavaFiles:   formatJavaFiles(absDir, cfg.Format.JavaFiles, cfg.Format.JavaExclude, target.java),
+			JavaFiles:   formatJavaFilesConCandidatos(absDir, cfg.Format.JavaFiles, cfg.Format.JavaExclude, target.java, allJava),
 			JavaFormat:  javaFormat,
 			Check:       check,
 		})
@@ -125,16 +132,45 @@ func runFmt(cmd *cobra.Command, dir string, check bool) error {
 // y ** (cruza directorios). Los patrones que empiezan por ! excluyen.
 func formatJavaFiles(absDir string, configured, excluded, found []string) []string {
 	devlog("formatJavaFiles", fmt.Sprintf("absDir=%s, configured=%v, excluded=%v", absDir, configured, excluded), "Selecciona los ficheros Java que debe tocar rain fmt")
+	return formatJavaFilesConCandidatos(absDir, configured, excluded, found)
+}
+
+// javaFilesConGlobs indica si la selección necesita recorrer el proyecto. Las
+// exclusiones escritas dentro de configured no activan el paseo: solo lo hacen
+// los patrones de inclusión y los de JavaExclude.
+func javaFilesConGlobs(configured, excluded []string) bool {
+	devlog("javaFilesConGlobs", fmt.Sprintf("configured=%v, excluded=%v", configured, excluded), "Indica si hace falta recorrer el proyecto para seleccionar Java")
+	if len(configured) == 0 {
+		return len(excluded) > 0 // se usa el patrón implícito **/*.java
+	}
+	for _, pattern := range configured {
+		if strings.HasPrefix(pattern, "!") {
+			continue
+		}
+		if strings.ContainsAny(pattern, "*?") {
+			return true
+		}
+	}
+	for _, pattern := range excluded {
+		if strings.ContainsAny(pattern, "*?") {
+			return true
+		}
+	}
+	return false
+}
+
+// formatJavaFilesConCandidatos aplica la misma selección que formatJavaFiles,
+// reutilizando los candidatos ya recogidos cuando se le pasan.
+func formatJavaFilesConCandidatos(absDir string, configured, excluded, found []string, candidatos ...[]string) []string {
+	devlog("formatJavaFilesConCandidatos", fmt.Sprintf("absDir=%s, configured=%v, excluded=%v", absDir, configured, excluded), "Selecciona los ficheros Java reutilizando el paseo del proyecto")
 	if len(configured) == 0 && len(excluded) == 0 {
 		return found
 	}
 
 	var include []string
 	exclude := append([]string{}, excluded...)
-	hasGlob := false
 	if len(configured) == 0 {
 		include = []string{"**/*.java"}
-		hasGlob = true
 	}
 	for _, pattern := range configured {
 		if strings.HasPrefix(pattern, "!") {
@@ -142,19 +178,15 @@ func formatJavaFiles(absDir string, configured, excluded, found []string) []stri
 			continue
 		}
 		include = append(include, pattern)
-		if strings.ContainsAny(pattern, "*?") {
-			hasGlob = true
-		}
-	}
-	for _, pattern := range excluded {
-		if strings.ContainsAny(pattern, "*?") {
-			hasGlob = true
-		}
 	}
 
 	candidates := found
-	if hasGlob {
-		candidates = collectJavaFiles(absDir)
+	if javaFilesConGlobs(configured, excluded) {
+		if len(candidatos) > 0 {
+			candidates = candidatos[0]
+		} else {
+			candidates = collectJavaFiles(absDir)
+		}
 	}
 	// Las rutas exactas pueden estar fuera del source root (por ejemplo, un
 	// test en test/java), así que se añaden aunque no estuvieran en found.
@@ -171,6 +203,10 @@ func formatJavaFiles(absDir string, configured, excluded, found []string) []stri
 		}
 	}
 
+	// Las expresiones se compilan una sola vez por selección, no por fichero.
+	includeGlobs := compileGlobs(include)
+	excludeGlobs := compileGlobs(exclude)
+
 	out := make([]string, 0, len(candidates))
 	seen := map[string]bool{}
 	for _, file := range candidates {
@@ -184,7 +220,7 @@ func formatJavaFiles(absDir string, configured, excluded, found []string) []stri
 			continue
 		}
 		rel = filepath.ToSlash(rel)
-		if !matchesAny(rel, include) || matchesAny(rel, exclude) {
+		if !matchesAnyCompiled(rel, includeGlobs) || matchesAnyCompiled(rel, excludeGlobs) {
 			continue
 		}
 		out = append(out, file)
@@ -221,20 +257,36 @@ func collectJavaFiles(absDir string) []string {
 	return out
 }
 
-func matchesAny(rel string, patterns []string) bool {
-	devlog("matchesAny", fmt.Sprintf("rel=%s, patterns=%v", rel, patterns), "Comprueba si una ruta casa con alguno de los patrones")
+// compileGlobs compila los patrones una sola vez para reutilizarlos en todos
+// los ficheros. Un patrón inválido se descarta, como hacía globMatch.
+func compileGlobs(patterns []string) []*regexp.Regexp {
+	devlog("compileGlobs", fmt.Sprintf("patterns=%v", patterns), "Compila los patrones glob una sola vez por selección")
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
 	for _, pattern := range patterns {
-		if globMatch(filepath.ToSlash(pattern), rel) {
+		re, err := regexp.Compile(globExpr(filepath.ToSlash(pattern)))
+		if err != nil {
+			continue
+		}
+		compiled = append(compiled, re)
+	}
+	return compiled
+}
+
+// matchesAnyCompiled comprueba la ruta contra patrones ya compilados.
+func matchesAnyCompiled(rel string, patterns []*regexp.Regexp) bool {
+	devlog("matchesAnyCompiled", fmt.Sprintf("rel=%s, patrones=%d", rel, len(patterns)), "Comprueba si una ruta casa con algún patrón compilado")
+	for _, re := range patterns {
+		if re.MatchString(rel) {
 			return true
 		}
 	}
 	return false
 }
 
-// globMatch convierte un patrón sencillo en expresión regular. A diferencia de
+// globExpr convierte un patrón sencillo en expresión regular. A diferencia de
 // filepath.Glob, ** sí cruza barras, así que funciona con app/java/**/*.java.
-func globMatch(pattern, name string) bool {
-	devlog("globMatch", fmt.Sprintf("pattern=%s, name=%s", pattern, name), "Convierte un glob sencillo en expresión regular")
+func globExpr(pattern string) string {
+	devlog("globExpr", fmt.Sprintf("pattern=%s", pattern), "Convierte un patrón glob en su expresión regular")
 	var expr strings.Builder
 	expr.WriteString("^")
 	for i := 0; i < len(pattern); i++ {
@@ -263,8 +315,14 @@ func globMatch(pattern, name string) bool {
 		}
 	}
 	expr.WriteString("$")
-	ok, err := regexp.MatchString(expr.String(), name)
-	return err == nil && ok
+	return expr.String()
+}
+
+// globMatch es el envoltorio delgado que usan los tests de patrones.
+func globMatch(pattern, name string) bool {
+	devlog("globMatch", fmt.Sprintf("pattern=%s, name=%s", pattern, name), "Convierte un glob sencillo en expresión regular")
+	re, err := regexp.Compile(globExpr(pattern))
+	return err == nil && re.MatchString(name)
 }
 
 // relativeToProject muestra la ruta de un fichero relativa a la raíz del

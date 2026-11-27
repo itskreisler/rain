@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,7 +18,31 @@ import (
 const (
 	BuildToolsURL = "https://dl.google.com/android/repository/build-tools_r36_linux.zip"
 	PlatformURL   = "https://dl.google.com/android/repository/platform-36_r02.zip"
+
+	// NDKVersion es el NDK que Rain descarga para los proyectos con [native].
+	// r27c es la última versión estable con soporte para API 21+ y toolchain
+	// LLVM única, que es la que esperan los scripts clang/make de los proyectos.
+	NDKVersion = "r27c"
 )
+
+var ndkURLs = map[string]string{
+	"linux":   "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-linux.zip",
+	"windows": "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-windows.zip",
+	"darwin":  "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-darwin.zip",
+}
+
+func ndkURLFor(goos, goarch string) (string, error) {
+	url, ok := ndkURLs[goos]
+	if !ok {
+		return "", fmt.Errorf("no hay NDK oficial de Rain para %s", goos)
+	}
+	// Google publica el ZIP de Linux solo para x86-64. En otras arquitecturas
+	// se respeta un NDK del sistema, pero no se intenta ejecutar el de x86-64.
+	if goos == "linux" && goarch != "amd64" {
+		return "", fmt.Errorf("no hay ZIP de NDK para linux/%s; usa un NDK del sistema o ANDROID_NDK_HOME", goarch)
+	}
+	return url, nil
+}
 
 // buildToolsURLs son los artefactos oficiales de build-tools 36. Se usan para
 // extraer apksigner.jar, aapt2 y zipalign sin depender del gestor de paquetes.
@@ -143,6 +168,91 @@ func (m *Manager) GoogleJavaFormatJar() string {
 func (m *Manager) ComposePlugin() string {
 	return filepath.Join(m.ToolDir(), "kotlinc", "lib", "compose-compiler-plugin.jar")
 }
+func (m *Manager) NDKDir() string {
+	return filepath.Join(m.ToolDir(), "android-ndk-"+NDKVersion)
+}
+
+// FindNDK devuelve el NDK a usar, sin descargar nada. Respeta las variables
+// tradicionales, luego el gestionado por Rain y por último los NDK instalados
+// por Android Studio en el SDK.
+func FindNDK() string {
+	for _, key := range []string{"ANDROID_NDK_HOME", "ANDROID_NDK_ROOT"} {
+		if dir := strings.TrimSpace(os.Getenv(key)); dir != "" && ndkUsable(dir) {
+			return dir
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		managed := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion)
+		if ndkUsable(managed) {
+			return managed
+		}
+		for _, sdk := range []string{
+			os.Getenv("ANDROID_HOME"),
+			os.Getenv("ANDROID_SDK_ROOT"),
+			filepath.Join(home, "Android", "Sdk"),
+		} {
+			if sdk == "" {
+				continue
+			}
+			matches, _ := filepath.Glob(filepath.Join(sdk, "ndk", "*"))
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, dir := range matches {
+				if ndkUsable(dir) {
+					return dir
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ndkUsable comprueba el binario que realmente necesita el script de build de los
+// proyectos: el clang del toolchain LLVM. Un directorio vacío no cuenta.
+func ndkUsable(dir string) bool {
+	if dir == "" || !dirExists(dir) {
+		return false
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "toolchains", "llvm", "prebuilt", "*", "bin", nativeName("clang")))
+	return len(matches) > 0
+}
+
+// EnsureNDK devuelve un NDK usable, descargando el gestionado solo si no hay
+// ninguno en el equipo. Es deliberadamente independiente de Ensure: el NDK
+// pesa cientos de MB y solo hace falta en proyectos con código nativo.
+func (m *Manager) EnsureNDK(ctx context.Context) (string, error) {
+	if ndk := FindNDK(); ndk != "" {
+		return ndk, nil
+	}
+	url, err := ndkURLFor(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := m.downloadTemp(ctx, url, "Android NDK "+NDKVersion)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+
+	staging := filepath.Join(m.ToolDir(), ".android-ndk-"+NDKVersion+".part")
+	if err := os.RemoveAll(staging); err != nil {
+		return "", err
+	}
+	if err := extractPrefix(tmp, "android-ndk-"+NDKVersion+"/", staging); err != nil {
+		return "", err
+	}
+	if !ndkUsable(staging) {
+		return "", fmt.Errorf("el ZIP del NDK no contiene toolchains/llvm/prebuilt/*/bin/clang")
+	}
+	if err := os.RemoveAll(m.NDKDir()); err != nil {
+		return "", err
+	}
+	if err := os.Rename(staging, m.NDKDir()); err != nil {
+		return "", err
+	}
+	return m.NDKDir(), nil
+}
 
 // Ensure descarga e instala en ~/.rain solo lo que falte.
 func (m *Manager) Ensure(ctx context.Context, complex bool) error {
@@ -261,14 +371,7 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 	}
 	defer func() { _ = os.Remove(tmp) }()
 
-	tools := []struct {
-		name      string
-		dest      string
-		mode      os.FileMode
-		match     func(string) bool
-		native    bool
-		linuxOnly bool
-	}{
+	tools := []buildTool{
 		{
 			name: "apksigner.jar", dest: m.ApksignerJar(), mode: 0o644,
 			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") },
@@ -290,18 +393,72 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" },
 		},
 	}
+
+	pending := make([]buildTool, 0, len(tools))
 	for _, tool := range tools {
-		if (tool.native && !native) || (tool.linuxOnly && !libcxx) {
+		if (tool.native && !native) || (tool.linuxOnly && !libcxx) || fileExists(tool.dest) {
 			continue
 		}
-		if fileExists(tool.dest) {
+		pending = append(pending, tool)
+	}
+	if len(pending) == 0 {
+		return m.publishNativeBinaries()
+	}
+	if err := extractBuildTools(tmp, pending); err != nil {
+		return err
+	}
+	return m.publishNativeBinaries()
+}
+
+// buildTool describe una herramienta a extraer del ZIP de build-tools.
+type buildTool struct {
+	name      string
+	dest      string
+	mode      os.FileMode
+	match     func(string) bool
+	native    bool
+	linuxOnly bool
+}
+
+// extractBuildTools abre el ZIP una sola vez y localiza todas las herramientas
+// en un único recorrido. Antes se abría y se recorría una vez por herramienta
+// (cinco veces), aunque siempre fuera el mismo archivo.
+func extractBuildTools(zipPath string, tools []buildTool) error {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = zr.Close() }()
+
+	// Índice por nombre de fichero. Si hay varias entradas con el mismo nombre
+	// se conserva la primera que encaja, igual que hacía extractOneMode.
+	porNombre := make(map[string]*zip.File, len(tools))
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
 			continue
 		}
-		if err := extractOneMode(tmp, tool.match, tool.dest, tool.mode); err != nil {
+		nombre := filepath.Base(f.Name)
+		if _, yaVisto := porNombre[nombre]; yaVisto {
+			continue
+		}
+		for _, tool := range tools {
+			if filepath.Base(tool.name) == nombre && tool.match(f.Name) {
+				porNombre[nombre] = f
+				break
+			}
+		}
+	}
+
+	for _, tool := range tools {
+		f := porNombre[filepath.Base(tool.name)]
+		if f == nil {
+			return fmt.Errorf("%s: no se encontró %s dentro del ZIP", tool.name, tool.dest)
+		}
+		if err := extractZipFile(f, tool.dest, tool.mode); err != nil {
 			return fmt.Errorf("%s: %w", tool.name, err)
 		}
 	}
-	return m.publishNativeBinaries()
+	return nil
 }
 
 func (m *Manager) libcxxPath() string {
@@ -317,6 +474,13 @@ func (m *Manager) publishNativeBinaries() error {
 	return m.publishNativeBinariesFor(nativeBuildToolsAvailable())
 }
 
+// zipalignWrapper sustituye al binario de Google, que enlaza libc++ de
+// build-tools y no arranca en las distribuciones que no lo traen.
+const zipalignWrapper = "#!/bin/sh\n" +
+	"# Lanzador de Rain para zipalign (necesita libc++ de build-tools).\n" +
+	"LD_LIBRARY_PATH=\"$HOME/.rain/toolchain/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" " +
+	"exec \"$HOME/.rain/toolchain/zipalign\" \"$@\"\n"
+
 func (m *Manager) publishNativeBinariesFor(native bool) error {
 	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
 		return err
@@ -330,15 +494,19 @@ func (m *Manager) publishNativeBinariesFor(native bool) error {
 			continue
 		}
 		dst := filepath.Join(m.BinDir(), name)
-		content, err := os.ReadFile(src)
-		if err != nil {
-			return err
-		}
+
+		// El contenido de zipalign se descarta: no tiene sentido leer un
+		// binario que va a sustituirse por el wrapper. En Windows se mantiene
+		// el comportamiento histórico: el nombre termina en .exe y no se sustituye.
+		var content []byte
 		if name == "zipalign" {
-			content = []byte("#!/bin/sh\n" +
-				"# Lanzador de Rain para zipalign (necesita libc++ de build-tools).\n" +
-				"LD_LIBRARY_PATH=\"$HOME/.rain/toolchain/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" " +
-				"exec \"$HOME/.rain/toolchain/zipalign\" \"$@\"\n")
+			content = []byte(zipalignWrapper)
+		} else {
+			var err error
+			content, err = os.ReadFile(src)
+			if err != nil {
+				return err
+			}
 		}
 		if existing, err := os.ReadFile(dst); err == nil && string(content) == string(existing) {
 			continue
@@ -578,17 +746,23 @@ func extractOneMode(zipPath string, match func(string) bool, dest string, mode o
 		if f.FileInfo().IsDir() || !match(f.Name) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return err
-		}
-		tmp := dest + ".part"
-		if err := copyZipFile(f, tmp, mode); err != nil {
-			_ = os.Remove(tmp)
-			return err
-		}
-		return os.Rename(tmp, dest)
+		return extractZipFile(f, dest, mode)
 	}
 	return fmt.Errorf("no se encontró %s dentro del ZIP", dest)
+}
+
+// extractZipFile copia una entrada ya localizada a dest con el permiso pedido,
+// usando un temporal para no dejar un fichero a medias si falla la copia.
+func extractZipFile(f *zip.File, dest string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	tmp := dest + ".part"
+	if err := copyZipFile(f, tmp, mode); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dest)
 }
 
 func extractPrefix(zipPath, prefix, destDir string) error {
@@ -619,6 +793,12 @@ func extractPrefix(zipPath, prefix, destDir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
+		if f.Mode()&os.ModeSymlink != 0 {
+			if err := extractZipSymlink(f, target); err != nil {
+				return err
+			}
+			continue
+		}
 		mode := f.Mode()
 		if mode == 0 {
 			mode = 0o644
@@ -626,6 +806,28 @@ func extractPrefix(zipPath, prefix, destDir string) error {
 		if err := copyZipFile(f, target, mode.Perm()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// extractZipSymlink conserva los enlaces del NDK. Copiar su contenido como un
+// fichero normal rompe las librerías con versiones aliasadas (libc++.so.1...).
+func extractZipSymlink(f *zip.File, dest string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	target, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Symlink(string(target), dest); err != nil {
+		// Windows sin permisos para symlinks: el contenido sigue siendo útil.
+		return os.WriteFile(dest, target, 0o644)
 	}
 	return nil
 }
@@ -661,4 +863,9 @@ func safeJoin(base, rel string) (string, error) {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }

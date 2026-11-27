@@ -17,6 +17,55 @@ func writeHashFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestComputeConfigJavaHashIncluyeFlavor(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	flavorJava := filepath.Join(app, "src", "github", "java", "app", "buddy", "Flavor.java")
+	writeHashFile(t, flavorJava, "class Flavor { static final boolean FDROID = false; }")
+
+	cfg := Config{AppDir: app, LibsDir: filepath.Join(dir, "libs"), Flavor: "github"}
+	gen := filepath.Join(app, "build", "gen")
+	primero, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	writeHashFile(t, flavorJava, "class Flavor { static final boolean FDROID = true; }")
+	segundo, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	if primero == segundo {
+		t.Errorf("cambiar una fuente de la variante no invalidó el hash: %s", primero)
+	}
+
+	// Un nombre de variante con traversal no debe salir del módulo.
+	if got := flavorSourceDir(app, "../fdroid"); got != "" {
+		t.Errorf("flavorSourceDir con traversal = %q, quiero vacío", got)
+	}
+}
+
+func TestComputeJavaHashIncluyeJniLibs(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	so := filepath.Join(app, "src", "main", "jniLibs", "arm64-v8a", "libfoo.so")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	writeHashFile(t, so, "primero")
+
+	primero, err := computeJavaHash(app, filepath.Join(dir, "libs"), filepath.Join(app, "build", "gen"), false)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	writeHashFile(t, so, "segundo")
+	segundo, err := computeJavaHash(app, filepath.Join(dir, "libs"), filepath.Join(app, "build", "gen"), false)
+	if err != nil {
+		t.Fatalf("computeJavaHash: %v", err)
+	}
+	if primero == segundo {
+		t.Errorf("cambiar una .so no invalidó el hash: %s", primero)
+	}
+}
+
 func TestComputeDexDepsHashInvalidaConMinSdkYJars(t *testing.T) {
 	dir := t.TempDir()
 	androidJar := filepath.Join(dir, "android.jar")
@@ -77,7 +126,7 @@ func TestComputeResourceHashCambiaConElContenido(t *testing.T) {
 	writeHashFile(t, filepath.Join(app, "src", "main", "res", "values", "strings.xml"),
 		`<resources><string name="a">1</string></resources>`)
 
-	first, err := computeResourceHash(app)
+	first, err := computeResourceHash(app, "")
 	if err != nil {
 		t.Fatalf("computeResourceHash: %v", err)
 	}
@@ -86,7 +135,7 @@ func TestComputeResourceHashCambiaConElContenido(t *testing.T) {
 	}
 
 	// Sin cambios: el hash debe ser estable.
-	second, err := computeResourceHash(app)
+	second, err := computeResourceHash(app, "")
 	if err != nil {
 		t.Fatalf("computeResourceHash: %v", err)
 	}
@@ -97,7 +146,7 @@ func TestComputeResourceHashCambiaConElContenido(t *testing.T) {
 	// Cambia un recurso.
 	writeHashFile(t, filepath.Join(app, "src", "main", "res", "values", "strings.xml"),
 		`<resources><string name="a">2</string></resources>`)
-	changed, err := computeResourceHash(app)
+	changed, err := computeResourceHash(app, "")
 	if err != nil {
 		t.Fatalf("computeResourceHash: %v", err)
 	}
@@ -108,12 +157,88 @@ func TestComputeResourceHashCambiaConElContenido(t *testing.T) {
 	// Cambia el manifest.
 	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"),
 		`<manifest package="com.y"/>`)
-	changedManifest, err := computeResourceHash(app)
+	changedManifest, err := computeResourceHash(app, "")
 	if err != nil {
 		t.Fatalf("computeResourceHash: %v", err)
 	}
 	if changedManifest == changed {
 		t.Error("el hash no cambió al modificar el manifest")
+	}
+}
+
+func TestComputeResourceHashIncluyeAssets(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), `<manifest package="com.x"/>`)
+	assets := filepath.Join(app, "src", "main", "assets")
+	runTS := filepath.Join(assets, "node", "run.ts")
+	writeHashFile(t, runTS, "console.log(1)")
+
+	primero, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash: %v", err)
+	}
+	writeHashFile(t, runTS, "console.log(2)")
+	segundo, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash: %v", err)
+	}
+	if primero == segundo {
+		t.Error("cambiar un asset no invalidó el hash de recursos")
+	}
+}
+
+func TestComputeResourceHashConSymlink(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), `<manifest package="com.x"/>`)
+	assets := filepath.Join(app, "src", "main", "assets")
+	writeHashFile(t, filepath.Join(assets, "linux", "real.txt"), "x")
+	link := filepath.Join(assets, "plataforma")
+	if err := os.Symlink(filepath.Join(assets, "linux"), link); err != nil {
+		t.Skipf("el sistema no permite symlinks: %v", err)
+	}
+
+	primero, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash con symlink: %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(assets, "otra"), link); err != nil {
+		t.Fatal(err)
+	}
+	segundo, err := computeResourceHash(app, "")
+	if err != nil {
+		t.Fatalf("computeResourceHash tras cambiar el symlink: %v", err)
+	}
+	if primero == segundo {
+		t.Error("cambiar el destino de un symlink no invalidó el hash")
+	}
+}
+
+func TestComputeConfigJavaHashIncluyeNativeLibsDir(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	extra := filepath.Join(dir, "build", "jni", "arm64-v8a")
+	so := filepath.Join(extra, "libnode.so")
+	writeHashFile(t, so, "vieja")
+
+	cfg := Config{AppDir: app, ProjectDir: dir, LibsDir: filepath.Join(dir, "libs"), NativeLibsDir: "build/jni"}
+	gen := filepath.Join(app, "build", "gen")
+	primero, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	writeHashFile(t, so, "nueva")
+	segundo, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	if primero == segundo {
+		t.Error("cambiar una .so externa no invalidó el hash")
 	}
 }
 
@@ -124,7 +249,7 @@ func TestComputeResourceHashSinRecursos(t *testing.T) {
 		`<manifest package="com.x"/>`)
 
 	// Un proyecto sin res/ es válido: no debe fallar.
-	hash, err := computeResourceHash(app)
+	hash, err := computeResourceHash(app, "")
 	if err != nil {
 		t.Fatalf("computeResourceHash sin res/: %v", err)
 	}

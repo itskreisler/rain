@@ -90,3 +90,24 @@ func TestFormatJavaFilesSinConfiguracionUsaLoEncontrado(t *testing.T) {
 		t.Errorf("formatJavaFiles = %v, quiero %v", got, found)
 	}
 }
+
+// TestFormatJavaFilesReutilizaCandidatos comprueba que no se vuelve a recorrer
+// el proyecto cuando los candidatos ya se han recogido para todos los targets.
+func TestFormatJavaFilesReutilizaCandidatos(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range []string{"app/java/DelPaseo.java", "app/java/Elegido.java"} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("class Demo {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	precalculados := []string{filepath.Join(dir, "app", "java", "Elegido.java")}
+	got := formatJavaFilesConCandidatos(dir, []string{"app/java/**/*.java"}, nil, nil, precalculados)
+	if !reflect.DeepEqual(got, precalculados) {
+		t.Errorf("formatJavaFilesConCandidatos = %v, quiero %v", got, precalculados)
+	}
+}

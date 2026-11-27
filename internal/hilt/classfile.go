@@ -74,6 +74,13 @@ type classFile struct {
 	// final de los atributos de clase: access_flags, this_class, super_class,
 	// interfaces, fields y methods. El super_class está en middle[4:6].
 	middle []byte
+	// utf8ByName y classByName indexan el constant pool por el texto que
+	// devolvían las búsquedas lineales originales. Se construyen en una sola
+	// pasada al final de parseClassFile y se actualizan al añadir entradas.
+	// Conservan el PRIMER índice de cada nombre, que es el que devolvía el
+	// bucle original al encontrar duplicados.
+	utf8ByName  map[string]uint16
+	classByName map[string]uint16
 }
 
 // attribute es un attribute_info del class file.
@@ -218,7 +225,58 @@ func parseClassFile(data []byte) (*classFile, error) {
 	}
 
 	cf.middle = data[midStart:pos]
+	// Una sola pasada sobre el pool: a partir de aquí las inserciones no
+	// necesitan volver a recorrerlo para averiguar si el nombre ya existe.
+	cf.indexPool()
 	return cf, nil
+}
+
+// indexPool construye en una pasada los mapas nombre -> índice del pool.
+// Se indexan exactamente las entradas que aceptaban las búsquedas originales:
+// Utf8 con longitud válida y Class (cuyo nombre se lee con utf8, que devuelve
+// "" si la referencia no apunta a un Utf8 usable).
+func (cf *classFile) indexPool() {
+	cf.utf8ByName = make(map[string]uint16, len(cf.pool))
+	cf.classByName = make(map[string]uint16, len(cf.pool))
+	for i := 1; i < len(cf.pool); i++ {
+		entry := cf.pool[i]
+		if entry.tag == tagUtf8 {
+			if text, ok := utf8Text(entry); ok {
+				if _, exists := cf.utf8ByName[text]; !exists {
+					cf.utf8ByName[text] = uint16(i)
+				}
+			}
+			continue
+		}
+		if entry.tag == tagClass {
+			name := cf.utf8(entry.refIndex)
+			if _, exists := cf.classByName[name]; !exists {
+				cf.classByName[name] = uint16(i)
+			}
+		}
+	}
+}
+
+// ensurePoolIndex permite usar los métodos de inserción también con un
+// classFile construido a mano (por ejemplo desde un test), sin parsearlo.
+func (cf *classFile) ensurePoolIndex() {
+	if cf.utf8ByName == nil || cf.classByName == nil {
+		cf.indexPool()
+	}
+}
+
+// utf8Text devuelve el texto de una entrada CONSTANT_Utf8 y si su cabecera de
+// longitud es válida. Es la misma comprobación que hacía la búsqueda lineal
+// original, para no reutilizar entradas truncadas.
+func utf8Text(entry poolEntry) (string, bool) {
+	if entry.tag != tagUtf8 || len(entry.data) < 3 {
+		return "", false
+	}
+	length := int(binary.BigEndian.Uint16(entry.data[1:3]))
+	if 3+length > len(entry.data) {
+		return "", false
+	}
+	return string(entry.data[3 : 3+length]), true
 }
 
 // skipAttributes salta los atributos de un field_info o method_info y
@@ -251,18 +309,11 @@ func (cf *classFile) utf8(index uint16) string {
 	if index == 0 || int(index) >= len(cf.pool) {
 		return ""
 	}
-	entry := cf.pool[index]
-	if entry.tag != tagUtf8 {
+	text, ok := utf8Text(cf.pool[index])
+	if !ok {
 		return ""
 	}
-	if len(entry.data) < 3 {
-		return ""
-	}
-	length := int(binary.BigEndian.Uint16(entry.data[1:3]))
-	if 3+length > len(entry.data) {
-		return ""
-	}
-	return string(entry.data[3 : 3+length])
+	return text
 }
 
 // className devuelve el nombre interno de una entrada CONSTANT_Class
@@ -416,14 +467,9 @@ func (cf *classFile) serialize() []byte {
 // addClassEntry busca un CONSTANT_Class con ese nombre y, si no existe, lo
 // añade al final del pool. Devuelve su índice.
 func (cf *classFile) addClassEntry(name string) uint16 {
-	for i := 1; i < len(cf.pool); i++ {
-		entry := cf.pool[i]
-		if entry.tag != tagClass {
-			continue
-		}
-		if cf.utf8(entry.refIndex) == name {
-			return uint16(i)
-		}
+	cf.ensurePoolIndex()
+	if index, exists := cf.classByName[name]; exists {
+		return index
 	}
 	// Nuevo CONSTANT_Class: hace falta un CONSTANT_Utf8 con el nombre.
 	utfIndex := cf.addUtf8(name)
@@ -434,26 +480,35 @@ func (cf *classFile) addClassEntry(name string) uint16 {
 	}
 	cf.pool = append(cf.pool, entry)
 	cf.poolCount++
-	return uint16(len(cf.pool) - 1)
+	index := uint16(len(cf.pool) - 1)
+	// Indexamos el texto realmente guardado: si el nombre no cabe en la
+	// longitud de 16 bits del Utf8, el bucle original tampoco lo habría
+	// encontrado buscando el nombre completo.
+	stored := cf.utf8(utfIndex)
+	if _, exists := cf.classByName[stored]; !exists {
+		cf.classByName[stored] = index
+	}
+	return index
 }
 
 // addUtf8 añade un CONSTANT_Utf8 (reutilizando el existente si ya está).
 func (cf *classFile) addUtf8(value string) uint16 {
-	for i := 1; i < len(cf.pool); i++ {
-		entry := cf.pool[i]
-		if entry.tag != tagUtf8 {
-			continue
-		}
-		if len(entry.data) >= 3 {
-			length := int(binary.BigEndian.Uint16(entry.data[1:3]))
-			if 3+length <= len(entry.data) && string(entry.data[3:3+length]) == value {
-				return uint16(i)
-			}
-		}
+	cf.ensurePoolIndex()
+	if index, exists := cf.utf8ByName[value]; exists {
+		return index
 	}
 	data := append([]byte{tagUtf8}, binary.BigEndian.AppendUint16(nil, uint16(len(value)))...)
 	data = append(data, value...)
-	cf.pool = append(cf.pool, poolEntry{tag: tagUtf8, data: data})
+	entry := poolEntry{tag: tagUtf8, data: data}
+	cf.pool = append(cf.pool, entry)
 	cf.poolCount++
-	return uint16(len(cf.pool) - 1)
+	index := uint16(len(cf.pool) - 1)
+	// Como arriba: con valores largos se indexa el texto truncado que cabe
+	// en la entrada, no el valor completo que no se ha podido escribir.
+	if stored, ok := utf8Text(entry); ok {
+		if _, exists := cf.utf8ByName[stored]; !exists {
+			cf.utf8ByName[stored] = index
+		}
+	}
+	return index
 }

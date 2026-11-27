@@ -19,6 +19,46 @@ type Config struct {
 	Repositories Repositories `toml:"repositories"`
 	Lint         Lint         `toml:"lint"`
 	Format       Format       `toml:"format"`
+	Assets       Assets       `toml:"assets"`
+	Native       Native       `toml:"native"`
+}
+
+// Native describe un paso de compilación nativa previo al empaquetado. Rain
+// ejecuta Script desde la raíz del proyecto con ANDROID_NDK_HOME apuntando al
+// NDK gestionado (o al que ya tenga el usuario) y empaqueta las .so resultantes
+// como cualquier otra librería. No sustituye al sistema de build del proyecto:
+// lo invoca, para no reimplementar Makefiles propios de cada app.
+type Native struct {
+	// Script es la ruta al script de build nativo, relativa a rain.toml.
+	Script string `toml:"script"`
+	// Inputs son ficheros o directorios que afectan al resultado. Por defecto
+	// se usan el propio script, native/ y third_party/ cuando existen.
+	Inputs []string `toml:"inputs"`
+	// Outputs son directorios donde el script debe dejar .so. Por defecto se
+	// comprueban jniLibs/<abi>/ y native_libs_dir. Si el script termina bien
+	// pero no hay .so en ellos, Rain falla en lugar de cachear un build vacío.
+	Outputs []string `toml:"outputs"`
+}
+
+// Assets prepara los recursos del APK antes de compilar. Cada regla copia
+// ficheros de From a To con filtros opcionales; las rutas son relativas a la
+// raíz del proyecto. Se usa, por ejemplo, para llevar el runtime de un bridge
+// JavaScript a app/assets/node sin scripts externos.
+type Assets struct {
+	Copy []AssetCopy `toml:"copy"`
+}
+
+// AssetCopy es una regla de copia de assets. Include y Exclude admiten los
+// globs de [format] (** cruza directorios). Sin Include se copia todo.
+type AssetCopy struct {
+	From    string   `toml:"from"`
+	To      string   `toml:"to"`
+	Include []string `toml:"include"`
+	Exclude []string `toml:"exclude"`
+	// Replace borra el contenido previo del directorio de destino antes de
+	// copiar. Útil cuando el destino trae ficheros generados en revisiones
+	// anteriores que ya no deben empaquetarse.
+	Replace bool `toml:"replace"`
 }
 
 // Kapt configura los annotation processors que se ejecutan antes de compilar
@@ -102,9 +142,20 @@ type Build struct {
 	VersionName string `toml:"version_name"`
 	// ApplicationID permite separar el id de la app del namespace del código.
 	ApplicationID string `toml:"application_id"`
-	// JavaTarget es el nivel de bytecode (8, 11, 17, 21). 0 = automático.
 	// JavaTarget es el nivel de bytecode del código Java/Kotlin. 0 = automático.
 	JavaTarget int `toml:"java_target"`
+	// Flavor elige la variante de producto de Gradle que se compila: Rain
+	// incluye app/src/<flavor>/java y app/src/<flavor>/res además de src/main.
+	// Vacío compila solo src/main.
+	Flavor string `toml:"flavor"`
+	// NativeLibsDir es un directorio adicional con librerías <abi>/*.so (por
+	// ejemplo build/jni). Se empaquetan junto a las de jniLibs y los AAR.
+	NativeLibsDir string `toml:"native_libs_dir"`
+	// ExcludeAssets son rutas relativas a assets/ que no se empaquetan en el
+	// APK. "node" excluye assets/node y todo su contenido.
+	ExcludeAssets []string `toml:"exclude_assets"`
+	// NoNativeLibs descarta todas las .so del APK (variante sin runtime nativo).
+	NoNativeLibs bool `toml:"no_native_libs"`
 	// ProguardFiles son archivos con reglas de R8/ProGuard adicionales a las
 	// que rain encuentra por su cuenta (proguard-rules.pro en el módulo).
 	// Las rutas son relativas a la raíz del proyecto.

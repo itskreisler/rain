@@ -6,11 +6,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/doctor"
+	"github.com/itskreisler/rain/internal/gradle"
 )
 
 // runCmd ejecuta el árbol de comandos con args, capturando stdout, y devuelve
@@ -424,6 +426,74 @@ func TestBuildRequiresProject(t *testing.T) {
 	_, err := runCmd(t, "build", ".")
 	if err == nil {
 		t.Fatal("build sin proyecto debería fallar")
+	}
+}
+
+func TestBuildOverridesAplicaFlags(t *testing.T) {
+	cfg := config.Config{
+		Build: config.Build{
+			NativeLibsDir: "otro/jni",
+			ExcludeAssets: []string{"fonts"},
+		},
+		Native: config.Native{Script: "native/build.sh"},
+	}
+	opts := buildOverrides{
+		NativeLibsDir: "build/jni",
+		ExcludeAssets: []string{"node"},
+		NoNativeLibs:  true,
+	}
+	got := opts.apply(cfg)
+	if got.Build.NativeLibsDir != "build/jni" {
+		t.Errorf("NativeLibsDir = %q", got.Build.NativeLibsDir)
+	}
+	if !reflect.DeepEqual(got.Build.ExcludeAssets, []string{"node"}) {
+		t.Errorf("ExcludeAssets = %v", got.Build.ExcludeAssets)
+	}
+	if !got.Build.NoNativeLibs {
+		t.Error("NoNativeLibs = false")
+	}
+	if got.Native.Script != "" {
+		t.Errorf("--no-native-libs no desactivó el script nativo: %q", got.Native.Script)
+	}
+	if cfg.Build.NativeLibsDir != "otro/jni" {
+		t.Error("apply modificó la configuración original")
+	}
+}
+
+func TestBuildOverridesSkipNativeBuild(t *testing.T) {
+	cfg := config.Config{Native: config.Native{Script: "native/build.sh"}}
+	got := (buildOverrides{SkipNativeBuild: true}).apply(cfg)
+	if got.Native.Script != "" {
+		t.Errorf("Script = %q, quiero vacío", got.Native.Script)
+	}
+	if cfg.Native.Script != "native/build.sh" {
+		t.Error("apply modificó la configuración original")
+	}
+}
+
+func TestGradleConfigEligePrimerFlavor(t *testing.T) {
+	app := &gradle.Module{
+		Plugins: []string{"com.android.application"},
+		Flavors: []string{"github", "fdroid"},
+	}
+	proj := &gradle.Project{App: app, Modules: []gradle.Module{*app}}
+
+	cfg, err := gradleConfig(proj)
+	if err != nil {
+		t.Fatalf("gradleConfig: %v", err)
+	}
+	if cfg.Build.Flavor != "github" {
+		t.Errorf("Flavor = %q, quiero github", cfg.Build.Flavor)
+	}
+}
+
+func TestResolveCoordinatesConservaLocales(t *testing.T) {
+	coords, err := resolveCoordinates([]string{"local:prootnative:1.0"})
+	if err != nil {
+		t.Fatalf("resolveCoordinates: %v", err)
+	}
+	if len(coords) != 1 || coords[0] != "local:prootnative:1.0" {
+		t.Errorf("coords = %v, quiero solo la coordenada local", coords)
 	}
 }
 

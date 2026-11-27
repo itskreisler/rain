@@ -22,6 +22,7 @@ func newDoctorCmd() *cobra.Command {
 		printInstall bool
 		fix          bool
 		lintTools    bool
+		ndkTools     bool
 		install      bool
 		assumeYes    bool
 		dryRun       bool
@@ -41,6 +42,8 @@ func newDoctorCmd() *cobra.Command {
 			"apk, pkg, winget o choco). Pide confirmación salvo con --yes.\n\n" +
 			"--print-install muestra solo los comandos que faltan, sin el resto\n" +
 			"del informe; útil para copiarlos y ejecutarlos a mano.\n\n" +
+			"--ndk descarga el NDK gestionado para los proyectos con [native].\n" +
+			"El NDK no se instala en el doctor normal porque pesa cientos de MB.\n\n" +
 			"ktlint, detekt, pmd y google-java-format son opcionales: no\n" +
 			"hacen falta para compilar, pero " + "\"rain lint\"" + " y " +
 			"\"rain fmt\"" + " los usan si están instalados.",
@@ -50,12 +53,17 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return usageErr("%v", err)
 			}
-			devlog("doctor.RunE", fmt.Sprintf("profile=%s, fix=%t, lint=%t, install=%t, yes=%t, dryRun=%t, json=%t",
-				p, fix, lintTools, install, assumeYes, dryRun, jsonOut), "Ejecuta el diagnóstico del entorno")
+			devlog("doctor.RunE", fmt.Sprintf("profile=%s, fix=%t, lint=%t, ndk=%t, install=%t, yes=%t, dryRun=%t, json=%t",
+				p, fix, lintTools, ndkTools, install, assumeYes, dryRun, jsonOut), "Ejecuta el diagnóstico del entorno")
 
 			if install {
 				if err := runDoctorInstall(cmd.Context(), p, cmd, dryRun, assumeYes); err != nil {
 					return err
+				}
+				if ndkTools && !dryRun {
+					if err := runDoctorFixNDK(cmd); err != nil {
+						return err
+					}
 				}
 			} else {
 				if fix {
@@ -65,6 +73,11 @@ func newDoctorCmd() *cobra.Command {
 				}
 				if lintTools {
 					if err := runDoctorFixLint(cmd); err != nil {
+						return err
+					}
+				}
+				if ndkTools {
+					if err := runDoctorFixNDK(cmd); err != nil {
 						return err
 					}
 				}
@@ -97,6 +110,7 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&printInstall, "print-install", false, "mostrar solo los comandos de instalación")
 	cmd.Flags().BoolVar(&fix, "fix", false, "descargar el toolchain propio en ~/.rain (sin root)")
 	cmd.Flags().BoolVar(&lintTools, "lint", false, "con --fix, descargar también ktlint, detekt, pmd y google-java-format")
+	cmd.Flags().BoolVar(&ndkTools, "ndk", false, "con --fix, descargar el Android NDK para proyectos con [native]")
 	cmd.Flags().BoolVar(&install, "install", false, "instalar automáticamente lo que falte (toolchain + paquetes del sistema)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "con --install, no pedir confirmación")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "con --install, mostrar qué haría sin ejecutarlo")
@@ -154,6 +168,23 @@ func runDoctorFixLint(cmd *cobra.Command) error {
 		return fmt.Errorf("descargando analizadores estáticos: %w", err)
 	}
 	ui.Success("Analizadores estáticos listos")
+	return nil
+}
+
+func runDoctorFixNDK(cmd *cobra.Command) error {
+	devlog("runDoctorFixNDK", fmt.Sprintf("cmd=%s", cmd.Name()), "Descarga el Android NDK usado por los proyectos con código nativo")
+	manager, err := toolchain.New()
+	if err != nil {
+		return err
+	}
+	manager.Out = cmd.OutOrStdout()
+
+	ui.Info("Preparando Android NDK %s en %s...", toolchain.NDKVersion, manager.ToolDir())
+	ndk, err := manager.EnsureNDK(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("descargando NDK: %w", err)
+	}
+	ui.Success("NDK listo en %s", ndk)
 	return nil
 }
 

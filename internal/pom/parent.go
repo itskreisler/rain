@@ -6,17 +6,60 @@ import (
 	"path/filepath"
 )
 
+// parentCache reutiliza cadenas de parents entre POMs del mismo grafo. En
+// AndroidX/Compose decenas de artefactos comparten el mismo parent y antes se
+// volvía a leer (y a parsear) por cada hijo.
+type parentCache map[string][]*Project
+
+// projectCoord calcula la coordenada efectiva de un POM. Maven permite omitir
+// groupId/version en el hijo y heredarlos del parent; MergeProperties aplica
+// ese mismo fallback.
+func projectCoord(p *Project) string {
+	group, version := p.GroupID, p.Version
+	if p.Parent != nil {
+		if group == "" {
+			group = p.Parent.GroupID
+		}
+		if version == "" {
+			version = p.Parent.Version
+		}
+	}
+	return group + ":" + p.ArtifactID + ":" + version
+}
+
 // ResolveParentChain descarga recursivamente la cadena de parents de un POM
 // y devuelve la lista ordenada de hijo a raíz (el primero es el POM original).
 func ResolveParentChain(child *Project, cacheDir string) ([]*Project, error) {
+	return resolveParentChain(child, cacheDir, make(parentCache))
+}
+
+// resolveParentChain es la implementación con caché compartida y detección de
+// ciclos: un POM malformado con A → B → A antes no terminaba nunca.
+func resolveParentChain(child *Project, cacheDir string, cache parentCache) ([]*Project, error) {
+	key := projectCoord(child)
+	if chain, ok := cache[key]; ok {
+		return chain, nil
+	}
+
 	chain := []*Project{child}
+	seen := map[string]bool{key: true}
 	current := child
 
 	for current.Parent != nil {
 		parentCoord := fmt.Sprintf("%s:%s:%s",
 			current.Parent.GroupID, current.Parent.ArtifactID, current.Parent.Version)
+		if seen[parentCoord] {
+			return nil, fmt.Errorf("ciclo de parents en %s", parentCoord)
+		}
+		seen[parentCoord] = true
 
-		// Verificar si ya está en caché
+		// La cadena de este parent ya se resolvió en otra rama del grafo.
+		if sub, ok := cache[parentCoord]; ok {
+			chain = append(chain, sub...)
+			cache[key] = chain
+			return chain, nil
+		}
+
 		groupPath := filepath.Join(cacheDir, current.Parent.GroupID)
 		cachedPath := filepath.Join(groupPath, current.Parent.ArtifactID+"-"+current.Parent.Version+".pom")
 
@@ -43,6 +86,7 @@ func ResolveParentChain(child *Project, cacheDir string) ([]*Project, error) {
 		current = parentPOM
 	}
 
+	cache[key] = chain
 	return chain, nil
 }
 

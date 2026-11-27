@@ -152,9 +152,62 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   cambiar de canción. El README incluye una checklist con lo implementado y lo
   pendiente (servicio en segundo plano, preajustes de ecualizador, letras,
   temporizador, radio por Internet, widgets y Android Auto).
+- **Dependencias `local:`.** `dependencies = ['local:foo:1.0']` lee
+  `native/foo-1.0.aar` (o `.jar`) sin consultar Maven ni resolver POMs. Así un
+  proyecto con un AAR propio no necesita copiarlo a mano en `.rain-deps/aars`.
+- **Variantes de producto.** `[build] flavor = "github"` compila
+  `app/src/<flavor>/java` y `app/src/<flavor>/res` además de `src/main`; los
+  recursos de la variante sobrescriben los del main. `rain gradle` elige la
+  primera variante declarada y avisa de que solo se compila esa.
+- **Librerías nativas del proyecto.** `rain build` empaqueta las `.so` de
+  `src/main/jniLibs/<abi>/` (o `jniLibs/<abi>/` en layout plano) y de
+  `<raíz>/build/jni/<abi>/` (configurable con `[build] native_libs_dir`), con
+  prioridad sobre las de los AAR. Cambiar una invalida la caché incremental.
+- **Assets sin scripts externos.** `[[assets.copy]]` copia ficheros con globs
+  (`**` incluido) a `assets/` antes de compilar recursos; `replace = true`
+  descarta los ficheros anteriores del destino. Los assets empaquetados
+  entran en el hash de recursos: ya no hay que borrar `.rain-res-hash` a mano
+  tras regenerarlos. Los symlinks dentro de `assets/` se hashean por su
+  destino en lugar de abrirse como ficheros.
+- **Variante sin nativos.** `[build] exclude_assets` y `[build] no_native_libs`
+  (o `--exclude-assets` y `--no-native-libs`) permiten generar un APK sin el
+  runtime Node ni las `.so`, sin scripts que escondan carpetas ni reemplacen el
+  APK firmado.
+- **Compilación nativa desde Rain.** `[native] script = "native/build.sh"`
+  ejecuta el script del proyecto antes de compilar, con `ANDROID_NDK_HOME`
+  apuntando al NDK existente o al gestionado (`rain doctor --fix --ndk` lo
+  descarga). El paso se cachea por hash de entradas y versión de NDK, y las
+  `.so` resultantes se empaquetan y firman en el pipeline normal.
+  `--skip-native-build` reutiliza las bibliotecas ya generadas. El hash ignora
+  los directorios `build/` generados por el propio script, para que la caché no
+  se invalide a sí misma.
+
+### Rendimiento
+
+- **Resolución de dependencias compartida.** Se resuelven todas las raíces en un
+  único DFS con `visited` y caché de cadenas de parents: antes cada raíz volvía
+  a descargar y parsear el subgrafo común. Las propiedades de los POM se
+  sustituyen con un `strings.Replacer` reutilizable en vez de recorrer todas las
+  propiedades por cada campo. Los parents con ciclos se detectan en lugar de
+  no terminar.
+- **Chequeo incremental lineal.** `changedSources` usa un set de fuentes
+  modificadas y tokeniza cada archivo una sola vez, en vez de buscar cada
+  declaración en todo el texto; `hasClassFiles` corta el recorrido en cuanto
+  encuentra una clase. Sin marca de compilación se comprueban todas las fuentes.
+- **Menos trabajo repetido.** La deduplicación de servicios y la detección de
+  ABIs usan mapas, los globs de `rain fmt` se compilan una sola vez, los
+  directorios ignorados se consultan en O(1), y el ZIP de build-tools se abre
+  una sola vez. La memoria de `doctor` se lee una sola vez y las firmas de
+  archivos se calculan en streaming.
+- **Salida reproducible.** Los atributos de recursos se escriben en orden
+  determinista y los proveedores de servicio conservan el orden de inserción.
 
 ### Corregido
 
+- **`rain gradle` traducía `JavaVersion.VERSION_1_8` como `java_target = 1`.**
+  El prefijo `1_` no es el nivel de bytecode, así que el `rain.toml` generado
+  fallaba al compilar; ahora se importa como `8`. Lo mismo aplica a
+  `JvmTarget.JVM_1_8`.
 - **Smoke test de Windows.** Las pruebas del toolchain usan lanzadores `.cmd`
   válidos y eliminan también las copias sin extensión de `aapt2` y `zipalign`
   que puedan haber dejado versiones anteriores.

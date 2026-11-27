@@ -122,14 +122,18 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer func() { _ = in.Close() }()
 		out, err := os.Create(target)
 		if err != nil {
+			_ = in.Close()
 			return err
 		}
-		if _, err := io.Copy(out, in); err != nil {
+		_, copyErr := io.Copy(out, in)
+		// Se cierra aquí, dentro de la visita, y no con defer: en un árbol con
+		// muchas clases los descriptores se acumulaban hasta acabar el Walk.
+		_ = in.Close()
+		if copyErr != nil {
 			_ = out.Close()
-			return err
+			return copyErr
 		}
 		return out.Close()
 	})

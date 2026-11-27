@@ -29,6 +29,10 @@ func newBuildCmd() *cobra.Command {
 		release              bool
 		allowDebugSigning    bool
 		kotlinBackendThreads int
+		nativeLibsDir        string
+		excludeAssets        []string
+		noNativeLibs         bool
+		skipNativeBuild      bool
 	)
 
 	cmd := &cobra.Command{
@@ -41,7 +45,13 @@ func newBuildCmd() *cobra.Command {
 			"(AndroidManifest.xml, java/ y res/ en la raíz).\n\n" +
 			"Si se omite --android-jar, rain busca el android.jar instalado por\n" +
 			"\"rain doctor --fix\" o en el SDK del sistema. La variable\n" +
-			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.",
+			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.\n\n" +
+			"--native-libs-dir añade .so de <abi>/*.so (build/jni se detecta solo),\n" +
+			"--exclude-assets node quita assets/node del APK y --no-native-libs\n" +
+			"genera la variante sin bibliotecas nativas.\n\n" +
+			"Si rain.toml define [native] script, Rain ejecuta ese script antes de\n" +
+			"compilar, con el NDK gestionado en ANDROID_NDK_HOME. --skip-native-build\n" +
+			"usa las .so ya generadas sin volver a ejecutarlo.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if kotlinBackendThreads < 0 {
@@ -66,10 +76,16 @@ func newBuildCmd() *cobra.Command {
 				return fmt.Errorf("resolviendo android.jar: %w", err)
 			}
 
-			if len(args) == 1 {
-				return runBuildDir(args[0], absJar, release, allowDebugSigning, kotlinBackendThreads)
+			opts := buildOverrides{
+				NativeLibsDir:   nativeLibsDir,
+				ExcludeAssets:   excludeAssets,
+				NoNativeLibs:    noNativeLibs,
+				SkipNativeBuild: skipNativeBuild,
 			}
-			return runBuild(absJar, release, allowDebugSigning, kotlinBackendThreads)
+			if len(args) == 1 {
+				return runBuildDir(args[0], absJar, release, allowDebugSigning, kotlinBackendThreads, opts)
+			}
+			return runBuild(absJar, release, allowDebugSigning, kotlinBackendThreads, opts)
 		},
 	}
 
@@ -77,19 +93,50 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&release, "release", "r", false, "compilar en modo release (R8)")
 	cmd.Flags().BoolVar(&allowDebugSigning, "allow-debug-signing", false, "permitir firmar un release con la keystore de debug (con aviso)")
 	cmd.Flags().IntVar(&kotlinBackendThreads, "Xbackend-threads", 0, "hilos del backend de Kotlin (0 usa todos los núcleos disponibles)")
+	cmd.Flags().StringVar(&nativeLibsDir, "native-libs-dir", "", "directorio adicional con <abi>/*.so (por defecto build/jni si existe)")
+	cmd.Flags().StringSliceVar(&excludeAssets, "exclude-assets", nil, "rutas de assets/ que no se empaquetan (p. ej. node)")
+	cmd.Flags().BoolVar(&noNativeLibs, "no-native-libs", false, "no empaquetar ninguna biblioteca nativa")
+	cmd.Flags().BoolVar(&skipNativeBuild, "skip-native-build", false, "no ejecutar [native] script; usar las .so existentes")
 
 	return cmd
 }
 
-func runBuild(androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int) error {
+// buildOverrides son las opciones de empaquetado que se pueden forzar desde
+// la línea de comandos. Si el flag no se da, manda el rain.toml.
+type buildOverrides struct {
+	NativeLibsDir   string
+	ExcludeAssets   []string
+	NoNativeLibs    bool
+	SkipNativeBuild bool
+}
+
+// apply devuelve el valor efectivo de cada opción: un flag explícito gana al
+// rain.toml; --no-native-libs solo puede añadirse, nunca desactivar la config.
+func (o buildOverrides) apply(cfg config.Config) config.Config {
+	if o.NativeLibsDir != "" {
+		cfg.Build.NativeLibsDir = o.NativeLibsDir
+	}
+	if len(o.ExcludeAssets) > 0 {
+		cfg.Build.ExcludeAssets = append([]string{}, o.ExcludeAssets...)
+	}
+	if o.NoNativeLibs {
+		cfg.Build.NoNativeLibs = true
+	}
+	if o.SkipNativeBuild || o.NoNativeLibs {
+		cfg.Native.Script = ""
+	}
+	return cfg
+}
+
+func runBuild(androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuild", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t", androidJar, release, allowDebugSigning), "Ejecuta la compilación de un proyecto configurado con rain.toml")
-	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads)
+	return runBuildOrCheck(androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads, opts)
 }
 
 // runBuildOrCheck compila el proyecto. Con checkOnly solo valida los tipos
 // (compile Kotlin y Java) y no genera DEX, APK ni firma. Con fast el chequeo
 // es incremental: solo recompila lo que ha cambiado.
-func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildOrCheck", fmt.Sprintf("androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta el flujo de compilación o verificación de tipos para un proyecto rain")
 	cfg, err := config.Read("rain.toml")
 	if err != nil {
@@ -102,9 +149,15 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 				return fmt.Errorf("resolviendo el directorio actual: %w", absErr)
 			}
 			ui.VerboseLog("sin rain.toml; compilando con layout plano")
-			return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+			return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 		}
 		return fmt.Errorf("no se pudo leer rain.toml: %w (usa rain init o rain build <dir>)", err)
+	}
+
+	cfg = opts.apply(cfg)
+	projectDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolviendo la raíz del proyecto: %w", err)
 	}
 
 	mavenrepo.ExtraRepositories = cfg.Repositories.Extra
@@ -164,6 +217,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 		ui.Info("=== Compilando módulo: %s ===", mod.Name)
 		bc := resolveModuleBuildConfig(cfg, mod.Path)
 		bcfg := build.Config{
+			ProjectDir:           projectDir,
 			AppDir:               mod.Path,
 			BuildDir:             filepath.Join(mod.Path, "build"),
 			LibsDir:              "libs",
@@ -177,6 +231,12 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			VersionName:          bc.VersionName,
 			AppName:              cfg.Project.Name,
 			JVMTarget:            bc.JavaTarget,
+			Flavor:               cfg.Build.Flavor,
+			NativeLibsDir:        cfg.Build.NativeLibsDir,
+			ExcludeAssets:        cfg.Build.ExcludeAssets,
+			Assets:               cfg.Assets,
+			Native:               cfg.Native,
+			NoNativeLibs:         cfg.Build.NoNativeLibs,
 			Libs:                 libs,
 			AllowDebugSigning:    allowDebugSigning,
 			CheckOnly:            checkOnly,
@@ -290,26 +350,35 @@ func resolveCoordinates(deps []string) ([]string, error) {
 	devlog("resolveCoordinates", fmt.Sprintf("deps=%v", deps), "Resuelve y desduplica coordenadas de dependencias")
 	var coords []string
 	seen := make(map[string]bool)
+	var remotas []string
+	for _, d := range deps {
+		if strings.HasPrefix(d, "local:") {
+			continue
+		}
+		remotas = append(remotas, d)
+	}
 
+	// Un único recorrido compartido: antes cada raíz repetía el subgrafo
+	// común, multiplicando descargas y parseos por el número de raíces.
+	// Las coordenadas local: no tienen POM: se resuelven desde native/.
+	resolved, err := pom.ResolveTransitiveMany(remotas, "cache")
+	if err != nil {
+		return nil, fmt.Errorf("resolviendo dependencias: %w", err)
+	}
+	for _, d := range resolved {
+		coord := d.Coordinate()
+		if !seen[coord] {
+			seen[coord] = true
+			coords = append(coords, coord)
+		}
+	}
 	for _, dep := range deps {
-		resolved, err := pom.ResolveTransitive(dep, "cache")
-		if err != nil {
-			return nil, fmt.Errorf("resolviendo %s: %w", dep, err)
-		}
-		for _, d := range resolved {
-			coord := d.Coordinate()
-			if !seen[coord] {
-				seen[coord] = true
-				coords = append(coords, coord)
-			}
-		}
 		if !seen[dep] {
 			seen[dep] = true
 			coords = append(coords, dep)
 		}
 	}
-	// "Highest wins" global: cada dependencia declarada se resolvió por
-	// separado, así que la unión puede traer varias versiones del mismo
+	// "Highest wins" global: la unión puede traer varias versiones del mismo
 	// artefacto. Dejarlas todas en el classpath rompe kotlinc/javac.
 	return pom.DedupeCoordinates(coords), nil
 }
@@ -319,10 +388,21 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	devlog("prepareAARSet", fmt.Sprintf("coords=%v, dir=%s", coords, dir), "Descarga y prepara el conjunto de AARs y JARs de dependencias")
 	// Si las dependencias ya estaban preparadas y no han cambiado, se
 	// reutilizan: extraer decenas de AAR de Compose cuesta varios segundos
-	// en cada build y no aporta nada si el resultado es el mismo.
-	if set, ok := aar.LoadCache(dir, coords); ok {
-		ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
-		return set, nil
+	// en cada build y no aporta nada si el resultado es el mismo. Los AAR
+	// locales se vuelven a copiar siempre: el fichero del proyecto puede
+	// cambiar sin que cambie su coordenada.
+	usesLocal := false
+	for _, coord := range coords {
+		if strings.HasPrefix(coord, "local:") {
+			usesLocal = true
+			break
+		}
+	}
+	if !usesLocal {
+		if set, ok := aar.LoadCache(dir, coords); ok {
+			ui.VerboseLog("dependencias sin cambios, reutilizando %s", dir)
+			return set, nil
+		}
 	}
 
 	// La descarga es el cuello de botella de un build frío: cada AAR se pide
@@ -347,33 +427,43 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	}
 	results := make([]prepared, len(coords))
 	client := aar.NewClient()
+	client.LocalDir = "native"
 	pb := ui.NewProgressBar(len(coords), "Preparando ")
-	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var progressMu sync.Mutex
 	var done int64
 
-	for i, coord := range coords {
-		wg.Add(1)
-		go func(i int, coord string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			set, err := client.Prepare([]string{coord}, dir)
-			if err != nil {
-				results[i] = prepared{err: err}
-			} else {
-				results[i] = prepared{libs: set.Libraries}
-			}
-
-			n := int(atomic.AddInt64(&done, 1))
-			progressMu.Lock()
-			pb.Current = n
-			pb.Render()
-			progressMu.Unlock()
-		}(i, coord)
+	// Pool fijo: el semáforo limitaba la concurrencia, pero creaba una
+	// goroutine por coordenada. Con cientos de AARs casi todas dormían.
+	type job struct {
+		i     int
+		coord string
 	}
+	jobs := make(chan job)
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				set, err := client.Prepare([]string{j.coord}, dir)
+				if err != nil {
+					results[j.i] = prepared{err: err}
+				} else {
+					results[j.i] = prepared{libs: set.Libraries}
+				}
+
+				n := int(atomic.AddInt64(&done, 1))
+				progressMu.Lock()
+				pb.Current = n
+				pb.Render()
+				progressMu.Unlock()
+			}
+		}()
+	}
+	for i, coord := range coords {
+		jobs <- job{i: i, coord: coord}
+	}
+	close(jobs)
 	wg.Wait()
 	pb.Finish()
 
@@ -401,9 +491,9 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 
 // runBuildDir compila un directorio sin rain.toml usando el layout plano de
 // android2apk, o entra en el directorio si allí hay un rain.toml.
-func runBuildDir(dir, androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int) error {
+func runBuildDir(dir, androidJar string, release, allowDebugSigning bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t", dir, androidJar, release, allowDebugSigning), "Compila un proyecto desde un directorio o layout plano")
-	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads)
+	return runBuildOrCheckDir(dir, androidJar, release, allowDebugSigning, false, false, kotlinBackendThreads, opts)
 }
 
 // layoutProyecto describe cómo compilar un directorio.
@@ -431,7 +521,7 @@ func detectarLayout(dir string) layoutProyecto {
 
 // runBuildOrCheckDir hace lo que runBuildDir, pero en modo check solo valida
 // los tipos del código (y con fast, solo lo modificado).
-func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runBuildOrCheckDir", fmt.Sprintf("dir=%s, androidJar=%s, release=%t, allowDebugSigning=%t, checkOnly=%t, fast=%t", dir, androidJar, release, allowDebugSigning, checkOnly, fast), "Ejecuta la compilación o verificación para un directorio específico")
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -452,18 +542,18 @@ func runBuildOrCheckDir(dir, androidJar string, release, allowDebugSigning, chec
 			return fmt.Errorf("entrando en %s: %w", absDir, err)
 		}
 		defer func() { _ = os.Chdir(previous) }()
-		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+		return runBuildOrCheck(androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 	case layoutDesconocido:
 		return usageErr("%s no contiene rain.toml ni AndroidManifest.xml", dir)
 	}
 
-	return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads)
+	return runFlatBuild(absDir, androidJar, release, allowDebugSigning, checkOnly, fast, kotlinBackendThreads, opts)
 }
 
 // runFlatBuild compila absDir con el layout plano de android2apk. No hay
 // rain.toml: el package y los datos del APK salen del manifest y de
 // app.properties, con los defaults de Rain como respaldo.
-func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int) error {
+func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOnly, fast bool, kotlinBackendThreads int, opts buildOverrides) error {
 	devlog("runFlatBuild", fmt.Sprintf("absDir=%s, androidJar=%s", absDir, androidJar), "Compila un proyecto con layout plano")
 	props := readProperties(filepath.Join(absDir, "app.properties"))
 	name := props["name"]
@@ -481,6 +571,7 @@ func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOn
 
 	ui.Info("=== Compilando %s (layout plano) ===", name)
 	bcfg := build.Config{
+		ProjectDir:           absDir,
 		AppDir:               absDir,
 		BuildDir:             filepath.Join(absDir, "build"),
 		LibsDir:              filepath.Join(absDir, "libs"),
@@ -493,6 +584,9 @@ func runFlatBuild(absDir, androidJar string, release, allowDebugSigning, checkOn
 		VersionName:          s.VersionName,
 		JVMTarget:            s.JavaTarget,
 		AppName:              name,
+		NativeLibsDir:        opts.NativeLibsDir,
+		ExcludeAssets:        opts.ExcludeAssets,
+		NoNativeLibs:         opts.NoNativeLibs,
 		AllowDebugSigning:    allowDebugSigning,
 		CheckOnly:            checkOnly,
 		FastCheck:            fast,

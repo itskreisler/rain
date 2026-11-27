@@ -68,6 +68,19 @@ func TestMentionsIdentifierNoCasaConPrefijos(t *testing.T) {
 	if mentionsIdentifier("obj.miFuncion()", "miFuncion") != true {
 		t.Error("debería encontrar un identificador tras un punto")
 	}
+	if mentionsIdentifier("cualquier texto", "") {
+		t.Error("un nombre vacío no debería encontrarse (bucle infinito)")
+	}
+}
+
+func TestMentionsAnyIdentifierCoincideConMentionsIdentifier(t *testing.T) {
+	text := "val miFuncion = 1 // obj.otro.miFuncion()"
+	for _, name := range []string{"miFuncion", "otro", "val", "ausente", "1"} {
+		names := map[string]bool{name: true}
+		if got, want := mentionsAnyIdentifier(text, names), mentionsIdentifier(text, name); got != want {
+			t.Errorf("mentionsAnyIdentifier(%q) = %t, quiero %t", name, got, want)
+		}
+	}
 }
 
 func TestSourcesStampRoundTrip(t *testing.T) {
@@ -146,6 +159,30 @@ func TestChangedSourcesRespetaLaMarca(t *testing.T) {
 	}
 	if len(changed) != 0 {
 		t.Errorf("modificados = %d, quiero 0: %v", len(changed), changed)
+	}
+}
+
+func TestChangedSourcesSinMarcaCompruebaTodo(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	src := filepath.Join(app, "src", "main", "java")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("creando %s: %v", src, err)
+	}
+	for _, name := range []string{"A.kt", "B.java"} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte("class A\n"), 0o644); err != nil {
+			t.Fatalf("escribiendo %s: %v", name, err)
+		}
+	}
+
+	// Hay clases en obj/ pero falta la marca: no se puede asumir que no hay
+	// cambios, así que todas las fuentes deben volver a compilarse.
+	changed, _, err := changedSources(Config{AppDir: app}, time.Time{})
+	if err != nil {
+		t.Fatalf("changedSources: %v", err)
+	}
+	if len(changed) != 2 {
+		t.Errorf("modificados = %d, quiero 2: %v", len(changed), changed)
 	}
 }
 

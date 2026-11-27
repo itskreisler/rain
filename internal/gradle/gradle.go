@@ -15,6 +15,9 @@ import (
 	"strings"
 )
 
+// reFlavorCreate extrae los nombres de create("...") dentro de productFlavors.
+var reFlavorCreate = regexp.MustCompile(`create\(\s*"([^"]+)"`)
+
 // Project es el resultado de analizar un proyecto Gradle.
 type Project struct {
 	// RootDir es el directorio donde está settings.gradle.kts.
@@ -67,6 +70,11 @@ type Module struct {
 	// ProguardFiles son las reglas de R8/ProGuard del módulo, con la ruta
 	// relativa a la raíz del proyecto ("app/proguard-rules.pro").
 	ProguardFiles []string
+	// HasFlavors indica si el módulo declara productFlavors.
+	HasFlavors bool
+	// Flavors son los nombres declarados en productFlavors, en orden. El
+	// importador elige el primero como variante por defecto.
+	Flavors []string
 }
 
 // Dependency es una dependencia declarada en el bloque dependencies.
@@ -144,6 +152,11 @@ func Detect(dir string) (*Project, error) {
 		}
 	}
 
+	if proj.App != nil && proj.App.HasFlavors {
+		proj.Warnings = append(proj.Warnings,
+			"el proyecto usa productFlavors: rain compila solo la variante indicada en [build] flavor del rain.toml")
+	}
+
 	if proj.App == nil {
 		return proj, fmt.Errorf("no se encontró ningún módulo de aplicación (plugin com.android.application)")
 	}
@@ -159,6 +172,88 @@ func findSettingsFile(dir string) string {
 		}
 	}
 	return ""
+}
+
+// moduleBlocks reúne los bloques que ParseModule necesita leer de un archivo
+// de build. Los que empiezan por "kotlin" se guardan por separado: el global
+// y el que está dentro de "android" (donde suele estar jvmTarget).
+type moduleBlocks struct {
+	plugins         string
+	android         string
+	dependencies    string
+	kotlin          string
+	defaultConfig   string
+	compileOptions  string
+	kotlinInAndroid string
+
+	hasPlugins         bool
+	hasAndroid         bool
+	hasDependencies    bool
+	hasKotlin          bool
+	hasDefaultConfig   bool
+	hasCompileOptions  bool
+	hasKotlinInAndroid bool
+
+	androidOpen  int
+	androidClose int
+}
+
+// buildBlocks hace stripComments una sola vez, calcula los pares de llaves
+// una sola vez y recorre el código una sola vez para sacar todos los bloques.
+// Así ParseModule no repite el escaneo de findBlock para cada bloque.
+func buildBlocks(src string) moduleBlocks {
+	clean := stripComments(src)
+	ends := braceEnds(clean)
+	var b moduleBlocks
+
+	for i := 0; i < len(clean); i++ {
+		switch clean[i] {
+		case 'p':
+			if !b.hasPlugins {
+				if body, _, _, ok := tryBlock(clean, ends, "plugins", i, len(clean)); ok {
+					b.plugins, b.hasPlugins = body, true
+				}
+			}
+		case 'a':
+			if !b.hasAndroid {
+				if body, open, end, ok := tryBlock(clean, ends, "android", i, len(clean)); ok {
+					b.android, b.hasAndroid = body, true
+					b.androidOpen, b.androidClose = open, end
+				}
+			}
+		case 'd':
+			if !b.hasDependencies {
+				if body, _, _, ok := tryBlock(clean, ends, "dependencies", i, len(clean)); ok {
+					b.dependencies, b.hasDependencies = body, true
+				}
+			}
+			// Los bloques internos se buscan solo dentro del cuerpo de
+			// android, con el mismo criterio que findBlock(android, ...).
+			if b.hasAndroid && !b.hasDefaultConfig && i > b.androidOpen {
+				if body, _, _, ok := tryBlock(clean, ends, "defaultConfig", i, b.androidClose); ok {
+					b.defaultConfig, b.hasDefaultConfig = body, true
+				}
+			}
+		case 'c':
+			if b.hasAndroid && !b.hasCompileOptions && i > b.androidOpen {
+				if body, _, _, ok := tryBlock(clean, ends, "compileOptions", i, b.androidClose); ok {
+					b.compileOptions, b.hasCompileOptions = body, true
+				}
+			}
+		case 'k':
+			if !b.hasKotlin {
+				if body, _, _, ok := tryBlock(clean, ends, "kotlin", i, len(clean)); ok {
+					b.kotlin, b.hasKotlin = body, true
+				}
+			}
+			if b.hasAndroid && !b.hasKotlinInAndroid && i > b.androidOpen {
+				if body, _, _, ok := tryBlock(clean, ends, "kotlin", i, b.androidClose); ok {
+					b.kotlinInAndroid, b.hasKotlinInAndroid = body, true
+				}
+			}
+		}
+	}
+	return b
 }
 
 // ParseModule lee el build.gradle.kts de un módulo.
@@ -180,42 +275,49 @@ func ParseModule(dir string) (*Module, error) {
 		return nil, err
 	}
 	src := string(data)
+	blocks := buildBlocks(src)
 
 	mod := &Module{
 		Name: ":" + filepath.Base(dir),
 		Path: filepath.Base(dir),
 	}
 
-	if plugins, ok := findBlock(src, "plugins"); ok {
-		for _, m := range rePluginID.FindAllStringSubmatch(plugins, -1) {
+	if blocks.hasPlugins {
+		for _, m := range rePluginID.FindAllStringSubmatch(blocks.plugins, -1) {
 			mod.Plugins = append(mod.Plugins, m[1])
 		}
 	}
 
-	android, _ := findBlock(src, "android")
+	android := blocks.android
 	if android != "" {
 		mod.Namespace = stringValue(android, "namespace")
 		mod.CompileSdk = intValue(android, "compileSdk")
-		if defaultConfig, ok := findBlock(android, "defaultConfig"); ok {
-			mod.ApplicationID = stringValue(defaultConfig, "applicationId")
-			mod.MinSdk = intValue(defaultConfig, "minSdk")
-			mod.TargetSdk = intValue(defaultConfig, "targetSdk")
-			mod.VersionCode = intValue(defaultConfig, "versionCode")
-			mod.VersionName = stringValue(defaultConfig, "versionName")
+		if flavors, ok := findBlock(android, "productFlavors"); ok {
+			mod.HasFlavors = true
+			for _, m := range reFlavorCreate.FindAllStringSubmatch(flavors, -1) {
+				mod.Flavors = append(mod.Flavors, m[1])
+			}
 		}
-		if compileOptions, ok := findBlock(android, "compileOptions"); ok {
-			mod.JavaTarget = javaVersion(compileOptions)
+		if blocks.hasDefaultConfig {
+			mod.ApplicationID = stringValue(blocks.defaultConfig, "applicationId")
+			mod.MinSdk = intValue(blocks.defaultConfig, "minSdk")
+			mod.TargetSdk = intValue(blocks.defaultConfig, "targetSdk")
+			mod.VersionCode = intValue(blocks.defaultConfig, "versionCode")
+			mod.VersionName = stringValue(blocks.defaultConfig, "versionName")
 		}
-		if kotlin, ok := findBlock(android, "kotlin"); ok {
-			if target := javaVersion(kotlin); target > 0 {
+		if blocks.hasCompileOptions {
+			mod.JavaTarget = javaVersion(blocks.compileOptions)
+		}
+		if blocks.hasKotlinInAndroid {
+			if target := javaVersion(blocks.kotlinInAndroid); target > 0 {
 				mod.JavaTarget = target
 			}
 		}
 	}
 
 	// El bloque dependencies.
-	if deps, ok := findBlock(src, "dependencies"); ok {
-		sets := parseDependencies(deps)
+	if blocks.hasDependencies {
+		sets := parseDependencies(blocks.dependencies)
 		mod.Dependencies = sets.Common
 		mod.DebugDependencies = sets.Debug
 		mod.ReleaseDependencies = sets.Release
@@ -225,10 +327,8 @@ func ParseModule(dir string) (*Module, error) {
 
 	// El target de Java también puede estar fuera del bloque android
 	// (kotlin { compilerOptions { ... } }).
-	if mod.JavaTarget == 0 {
-		if kotlin, ok := findBlock(src, "kotlin"); ok {
-			mod.JavaTarget = javaVersion(kotlin)
-		}
+	if mod.JavaTarget == 0 && blocks.hasKotlin {
+		mod.JavaTarget = javaVersion(blocks.kotlin)
 	}
 
 	// Las reglas de R8 del módulo. Solo se importan las que están dentro del

@@ -72,10 +72,11 @@ func newCheckCmd() *cobra.Command {
 				return fmt.Errorf("resolviendo android.jar: %w", err)
 			}
 
+			opts := buildOverrides{}
 			if len(args) == 1 {
-				return runBuildOrCheckDir(args[0], absJar, release, false, true, fast, kotlinBackendThreads)
+				return runBuildOrCheckDir(args[0], absJar, release, false, true, fast, kotlinBackendThreads, opts)
 			}
-			return runBuildOrCheck(absJar, release, false, true, fast, kotlinBackendThreads)
+			return runBuildOrCheck(absJar, release, false, true, fast, kotlinBackendThreads, opts)
 		},
 	}
 

@@ -25,16 +25,19 @@ func (d ResolvedDep) Coordinate() string {
 // descargar se omiten (con Warning) en vez de abortar toda la resolución: el
 // grafo de AndroidX trae artefactos antiguos/no publicados que no aportan nada.
 func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error) {
-	// Los módulos KMP publican en la raíz un JAR de metadata y dejan el
-	// código Android en un artefacto hermano (available-at). Resolver el POM
-	// raíz arrastraría dependencias de otras plataformas (skiko, ui-uikit…),
-	// así que se empieza por la variante Android, igual que Gradle.
-	rootCoord = AndroidVariantCoordinate(rootCoord, filepath.Join(cacheDir, "metadata"))
+	return ResolveTransitiveMany([]string{rootCoord}, cacheDir)
+}
 
+// ResolveTransitiveMany resuelve varias raíces con un único DFS compartido.
+// Las raíces de un mismo proyecto suelen solapar gran parte del subgrafo;
+// repetir el recorrido por raíz multiplicaba descargas y parseos por el
+// número de raíces (O(D·V) en vez de O(V + D)).
+func ResolveTransitiveMany(rootCoords []string, cacheDir string) ([]ResolvedDep, error) {
 	resolved := make(map[string]ResolvedDep) // key: group:artifact
 	order := make([]string, 0, 16)           // claves en orden de descubrimiento
 	visited := make(map[string]bool)         // key: group:artifact:version
 	skipped := make(map[string]bool)         // coordenadas omitidas
+	chains := make(parentCache)              // cadenas de parents ya resueltas
 
 	// record guarda la dependencia conservando el orden de descubrimiento.
 	// Iterar el mapa directamente daría un orden aleatorio en cada ejecución:
@@ -47,9 +50,12 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		resolved[key] = dep
 	}
 
-	var walk func(coord string, depth int) error
-	walk = func(coord string, depth int) error {
-		if visited[coord] || skipped[coord] {
+	var walk func(coord string, root string, depth int) error
+	walk = func(coord string, root string, depth int) error {
+		// La raíz se procesa siempre, aunque ya apareciera como rama de otra
+		// raíz: así se mantiene el error crítico si su POM no se puede leer.
+		isRoot := coord == root
+		if !isRoot && (visited[coord] || skipped[coord]) {
 			return nil
 		}
 		visited[coord] = true
@@ -72,7 +78,7 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			path, dlErr := DownloadPOM(coord, groupPath)
 			if dlErr != nil {
 				// No abortamos: la rama se omite. Solo la raíz es crítica.
-				if coord == rootCoord {
+				if isRoot {
 					return fmt.Errorf("descargando POM raíz %s: %w", coord, dlErr)
 				}
 				skipped[coord] = true
@@ -82,7 +88,7 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			p, err = ParsePOM(path)
 		}
 		if err != nil {
-			if coord == rootCoord {
+			if isRoot {
 				return fmt.Errorf("parseando POM %s: %w", coord, err)
 			}
 			skipped[coord] = true
@@ -90,10 +96,10 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			return nil
 		}
 
-		// Resolver cadena de parents
-		chain, err := ResolveParentChain(p, cacheDir)
+		// Resolver cadena de parents con caché compartida y control de ciclos.
+		chain, err := resolveParentChain(p, cacheDir, chains)
 		if err != nil {
-			if coord == rootCoord {
+			if isRoot {
 				return fmt.Errorf("resolviendo parents de %s: %w", coord, err)
 			}
 			skipped[coord] = true
@@ -108,7 +114,7 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		// Resolver dependencias directas de este POM
 		deps, err := ResolveDependencies(p, mgmt, props)
 		if err != nil {
-			if coord == rootCoord {
+			if isRoot {
 				return fmt.Errorf("resolviendo dependencias de %s: %w", coord, err)
 			}
 			skipped[coord] = true
@@ -156,13 +162,13 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 			}
 
 			// Recursión
-			if err := walk(newCoord, depth+1); err != nil {
+			if err := walk(newCoord, root, depth+1); err != nil {
 				return err
 			}
 		}
 
 		// Añadir este artefacto al resultado (si no es la raíz)
-		if coord != rootCoord {
+		if !isRoot {
 			key := moduleKey(group, artifact)
 			if existing, ok := resolved[key]; !ok || versionLess(existing.Version, version) {
 				record(key, ResolvedDep{group, artifact, version})
@@ -172,8 +178,15 @@ func ResolveTransitive(rootCoord string, cacheDir string) ([]ResolvedDep, error)
 		return nil
 	}
 
-	if err := walk(rootCoord, 0); err != nil {
-		return nil, err
+	// Los módulos KMP publican en la raíz un JAR de metadata y dejan el
+	// código Android en un artefacto hermano (available-at). Resolver el POM
+	// raíz arrastraría dependencias de otras plataformas (skiko, ui-uikit…),
+	// así que se empieza por la variante Android, igual que Gradle.
+	for _, declared := range rootCoords {
+		root := AndroidVariantCoordinate(declared, filepath.Join(cacheDir, "metadata"))
+		if err := walk(root, root, 0); err != nil {
+			return nil, err
+		}
 	}
 
 	// Convertir a slice respetando el orden de descubrimiento.
@@ -341,11 +354,17 @@ func numericPrefix(segment string) (int, bool) {
 	return atoi(segment[:i]), true
 }
 
-// atoi convierte un prefijo numérico ya validado.
+// atoi convierte un prefijo numérico ya validado. Los segmentos de versión
+// muy largos se saturan en vez de desbordar silenciosamente y compararse mal.
 func atoi(s string) int {
+	const maxSegment = 1<<31 - 1
 	n := 0
 	for i := 0; i < len(s); i++ {
-		n = n*10 + int(s[i]-'0')
+		digit := int(s[i] - '0')
+		if n > (maxSegment-digit)/10 {
+			return maxSegment
+		}
+		n = n*10 + digit
 	}
 	return n
 }

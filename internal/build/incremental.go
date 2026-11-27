@@ -102,6 +102,12 @@ func changedSources(cfg Config, stamp time.Time) (changed []string, dependents [
 	if err != nil {
 		return nil, nil, err
 	}
+	// Sin marca de compilación previa hay que tratar todas las fuentes como
+	// modificadas. Dejar `changed` vacío hacía que fastCheck no comprobara
+	// nada cuando había clases en obj/ pero faltaba el fichero de marca.
+	if stamp.IsZero() {
+		return append([]string{}, all...), nil, nil
+	}
 	if len(changed) == 0 {
 		return nil, nil, nil
 	}
@@ -118,29 +124,58 @@ func changedSources(cfg Config, stamp time.Time) (changed []string, dependents [
 	}
 
 	// Ficheros que mencionan esos nombres: son los que pueden romperse.
+	// El set evita el containsPath lineal por cada fuente (O(n²) en total).
+	changedSet := make(map[string]bool, len(changed))
+	for _, path := range changed {
+		changedSet[path] = true
+	}
+
 	for _, path := range all {
-		if containsPath(changed, path) {
+		if changedSet[path] {
 			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		text := string(data)
-		for name := range names {
-			if mentionsIdentifier(text, name) {
-				dependents = append(dependents, path)
-				break
-			}
+		// Antes se buscaba cada declaración por separado en todo el texto.
+		// Ahora se tokeniza una vez y se consulta el set de nombres.
+		if mentionsAnyIdentifier(string(data), names) {
+			dependents = append(dependents, path)
 		}
 	}
 
 	return changed, dependents, nil
 }
 
+// mentionsAnyIdentifier recorre el texto una sola vez, extrae identificadores
+// completos y comprueba si alguno está en names. Equivale a llamar a
+// mentionsIdentifier para cada nombre, pero en O(len(texto)) en vez de
+// O(len(texto)·len(names)).
+func mentionsAnyIdentifier(text string, names map[string]bool) bool {
+	i := 0
+	for i < len(text) {
+		if !isIdentChar(text[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(text) && isIdentChar(text[i]) {
+			i++
+		}
+		if names[text[start:i]] {
+			return true
+		}
+	}
+	return false
+}
+
 // mentionsIdentifier busca un identificador completo en el texto, sin que
 // forme parte de otro más largo.
 func mentionsIdentifier(text, name string) bool {
+	if name == "" {
+		return false
+	}
 	idx := 0
 	for {
 		i := strings.Index(text[idx:], name)
@@ -168,15 +203,6 @@ func isIdentChar(c byte) bool {
 		(c >= 'a' && c <= 'z') ||
 		(c >= 'A' && c <= 'Z') ||
 		(c >= '0' && c <= '9')
-}
-
-func containsPath(list []string, path string) bool {
-	for _, p := range list {
-		if p == path {
-			return true
-		}
-	}
-	return false
 }
 
 // describeFastCheck resume qué se va a recompilar, para el log.
@@ -260,11 +286,13 @@ func hasClassFiles(objDir string) bool {
 		if err != nil {
 			return err
 		}
-		if found || info == nil {
+		if info == nil {
 			return nil
 		}
 		if !info.IsDir() && strings.HasSuffix(path, ".class") {
 			found = true
+			// Basta con encontrar una clase: no hace falta seguir recorriendo.
+			return filepath.SkipAll
 		}
 		return nil
 	})

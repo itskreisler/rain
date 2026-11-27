@@ -128,15 +128,79 @@ func (c Config) libraryResourceInputs() []string {
 	return out
 }
 
-// nativeLibs devuelve las .so que deben empaquetarse. Con un set de
-// dependencias se usan solo las del set; recorrer jni/ entero empaquetaría las
-// de dependencias que ya no están en rain.toml pero siguen en disco.
-func (c Config) nativeLibs() (map[string]string, error) {
-	if c.Libs == nil {
-		// Modo simple: sin AARs no hay jni/ que empaquetar.
-		return nil, nil
+// nativeLibsExtraDir resuelve el directorio adicional de .so. Sin configuración
+// explícita se usa <raíz>/build/jni cuando existe: es el layout que ya usan
+// proyectos que compilan las librerías antes de invocar Rain.
+func (c Config) nativeLibsExtraDir() string {
+	if c.NativeLibsDir != "" {
+		if filepath.IsAbs(c.NativeLibsDir) {
+			return c.NativeLibsDir
+		}
+		return filepath.Join(c.projectRoot(), c.NativeLibsDir)
 	}
-	return c.Libs.NativeLibs(), nil
+	guess := filepath.Join(c.projectRoot(), "build", "jni")
+	if dirExists(guess) {
+		return guess
+	}
+	return ""
+}
+
+// nativeLibs devuelve las .so que deben empaquetarse. Además de las de los
+// AAR se empaquetan las del propio módulo en jniLibs/<abi>/; en caso de
+// colisión gana la local, como hace Gradle cuando la app sobrescribe una .so
+// de una dependencia.
+func (c Config) nativeLibs() (map[string]string, error) {
+	out := make(map[string]string)
+	if c.NoNativeLibs {
+		return out, nil
+	}
+	for name, path := range localNativeLibs(c.AppDir, c.nativeLibsExtraDir()) {
+		out[name] = path
+	}
+	if c.Libs == nil {
+		return out, nil
+	}
+	for name, path := range c.Libs.NativeLibs() {
+		if _, ok := out[name]; !ok {
+			out[name] = path
+		}
+	}
+	return out, nil
+}
+
+// localNativeLibs indexa las .so de jniLibs/<abi>/ del módulo y las de un
+// directorio adicional con <abi>/*.so (por ejemplo build/jni). Solo acepta un
+// nivel de ABI: <raíz>/<abi>/libfoo.so se empaqueta como lib/<abi>/libfoo.so.
+// El directorio propio del módulo gana en caso de colisión.
+func localNativeLibs(appDir, extraDir string) map[string]string {
+	out := make(map[string]string)
+	for _, root := range []string{extraDir, filepath.Join(sourceRoot(appDir), "jniLibs")} {
+		if root == "" || !dirExists(root) {
+			continue
+		}
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			parts := strings.Split(filepath.ToSlash(rel), "/")
+			if len(parts) != 2 || !strings.HasSuffix(parts[1], ".so") {
+				return nil
+			}
+			out["lib/"+parts[0]+"/"+parts[1]] = path
+			return nil
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // dedupeJarsByClass resuelve definiciones duplicadas de clases entre jars. Los

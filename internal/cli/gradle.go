@@ -27,7 +27,8 @@ func newGradleCmd() *cobra.Command {
 		Long: "Lee la configuración de un proyecto Gradle (Kotlin DSL) y escribe un\n" +
 			"rain.toml equivalente, para poder compilarlo con \"rain build\" sin Gradle.\n\n" +
 			"Se importan el namespace, los niveles de API, las versiones, las\n" +
-			"dependencias (resolviendo los BOM) y los annotation processors de kapt.\n\n" +
+			"dependencias (resolviendo los BOM) y los annotation processors de kapt.\n" +
+			"Si hay productFlavors, se elige la primera variante como [build] flavor.\n\n" +
 			"El rain.toml se escribe en la raíz del proyecto Gradle, que es donde\n" +
 			"está el módulo de la app.",
 		Args: cobra.MaximumNArgs(1),
@@ -102,6 +103,13 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 		name = app.ApplicationID
 	}
 
+	// Gradle no tiene una variante única: se elige la primera declarada y se
+	// escribe en el rain.toml para que el usuario pueda cambiarla.
+	var flavor string
+	if len(app.Flavors) > 0 {
+		flavor = app.Flavors[0]
+	}
+
 	cfg := config.Config{
 		Mode: "completo",
 		Project: config.Project{
@@ -117,6 +125,7 @@ func gradleConfig(proj *gradle.Project) (config.Config, error) {
 			VersionName:   app.VersionName,
 			ApplicationID: app.ApplicationID,
 			JavaTarget:    app.JavaTarget,
+			Flavor:        flavor,
 			ProguardFiles: app.ProguardFiles,
 		},
 		Modules: []config.Module{{Name: "app", Path: app.Path}},

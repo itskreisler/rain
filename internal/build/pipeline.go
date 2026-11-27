@@ -3,6 +3,7 @@ package build
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -20,10 +21,14 @@ import (
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/hilt"
 	"github.com/itskreisler/rain/internal/memenv"
+	"github.com/itskreisler/rain/internal/toolchain"
 	"github.com/itskreisler/rain/internal/ui"
 )
 
 type Config struct {
+	// ProjectDir es la raíz del rain.toml. Las reglas [[assets.copy]] usan
+	// rutas relativas a ella. Si está vacía se deduce de AppDir.
+	ProjectDir  string
 	AppDir      string
 	BuildDir    string
 	LibsDir     string
@@ -46,6 +51,18 @@ type Config struct {
 	ComposePlugin string
 	// JVMTarget es el target de bytecode (8 por defecto; 11 con Compose).
 	JVMTarget int
+	// Flavor es la variante de producto que se compila además de src/main.
+	Flavor string
+	// NativeLibsDir aporta .so adicionales en formato <abi>/*.so.
+	NativeLibsDir string
+	// ExcludeAssets son rutas relativas a assets/ que no se empaquetan.
+	ExcludeAssets []string
+	// Assets son reglas de copia ejecutadas antes de compilar recursos.
+	Assets config.Assets
+	// Native ejecuta un script de compilación nativa antes de los recursos.
+	Native config.Native
+	// NoNativeLibs descarta todas las .so del APK (variante sin runtime nativo).
+	NoNativeLibs bool
 	// KotlinBackendThreads controla -Xbackend-threads de kotlinc.
 	// El valor cero conserva el comportamiento por defecto de Rain.
 	KotlinBackendThreads int
@@ -85,6 +102,226 @@ func sourceRoot(appDir string) string {
 		return gradleRoot
 	}
 	return appDir
+}
+
+// flavorSourceDir devuelve app/src/<flavor> si la variante existe. El nombre
+// se valida para que un rain.toml no pueda apuntar fuera del módulo.
+var flavorNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+func flavorSourceDir(appDir, flavor string) string {
+	if flavor == "" || !flavorNameRe.MatchString(flavor) {
+		return ""
+	}
+	dir := filepath.Join(appDir, "src", flavor)
+	if !dirExists(dir) {
+		return ""
+	}
+	return dir
+}
+
+// assetGlobExpr convierte un glob en regexp. ** cruza directorios (y **/ puede
+// casar con cero niveles), igual que en el resto de globs de Rain.
+func assetGlobExpr(pattern string) string {
+	var expr strings.Builder
+	expr.WriteString("^")
+	pattern = filepath.ToSlash(pattern)
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					expr.WriteString("(?:.*/)?")
+					i += 2
+				} else {
+					expr.WriteString(".*")
+					i++
+				}
+			} else {
+				expr.WriteString("[^/]*")
+			}
+		case '?':
+			expr.WriteString("[^/]")
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+			expr.WriteByte('\\')
+			expr.WriteByte(pattern[i])
+		default:
+			expr.WriteByte(pattern[i])
+		}
+	}
+	expr.WriteString("$")
+	return expr.String()
+}
+
+func compileAssetGlobs(patterns []string) []*regexp.Regexp {
+	out := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		if re, err := regexp.Compile(assetGlobExpr(pattern)); err == nil {
+			out = append(out, re)
+		} else {
+			ui.Warn("glob de assets ignorado (%q): %v", pattern, err)
+		}
+	}
+	return out
+}
+
+func matchesAssetGlob(rel string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(filepath.ToSlash(rel)) {
+			return true
+		}
+	}
+	return false
+}
+
+// projectRoot devuelve la raíz del rain.toml. En proyectos sin configuración
+// explícita se deduce del módulo app; en layout plano es el propio módulo.
+func (c Config) projectRoot() string {
+	if c.ProjectDir != "" {
+		return c.ProjectDir
+	}
+	if filepath.Base(c.AppDir) == "app" {
+		return filepath.Dir(c.AppDir)
+	}
+	return c.AppDir
+}
+
+// prepareAssets construye el directorio que se pasa a aapt2. Sin exclusiones
+// ni reglas de copia devuelve el original. Con ellas genera build/assets con
+// una copia filtrada de los assets del módulo y de las reglas [[assets.copy]].
+// Todo lo que se empaqueta pasa por aquí, así que hashear este directorio
+// basta para invalidar el APK base cuando cambia cualquier asset.
+func (c Config) prepareAssets() (string, error) {
+	src := filepath.Join(sourceRoot(c.AppDir), "assets")
+	// CLI pasa AppDir relativo ("app") mientras projectRoot es absoluto: sin
+	// normalizar, filepath.Rel(src, to) falla aunque ambas rutas sean la misma.
+	if abs, err := filepath.Abs(src); err == nil {
+		src = abs
+	}
+	if len(c.ExcludeAssets) == 0 && len(c.Assets.Copy) == 0 {
+		return src, nil
+	}
+
+	dst := filepath.Join(c.BuildDir, "assets")
+	if err := os.RemoveAll(dst); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return "", err
+	}
+
+	excluded := make([]string, 0, len(c.ExcludeAssets))
+	for _, item := range c.ExcludeAssets {
+		clean := filepath.ToSlash(filepath.Clean(item))
+		if clean != "." && clean != "/" {
+			excluded = append(excluded, strings.Trim(clean, "/"))
+		}
+	}
+	isExcluded := func(rel string) bool {
+		rel = filepath.ToSlash(rel)
+		for _, prefix := range excluded {
+			if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Ficheros ya presentes en assets/, salvo los excluidos.
+	if err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if isExcluded(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		dest := filepath.Join(dst, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		return copyFile(path, dest)
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+
+	root := c.projectRoot()
+	for _, rule := range c.Assets.Copy {
+		if rule.From == "" || rule.To == "" {
+			return "", fmt.Errorf("[[assets.copy]] necesita from y to")
+		}
+		from := rule.From
+		if !filepath.IsAbs(from) {
+			from = filepath.Join(root, from)
+		}
+		to := rule.To
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(root, to)
+		}
+		relTo, err := filepath.Rel(src, to)
+		if err != nil || relTo == ".." || strings.HasPrefix(relTo, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("[[assets.copy]] to=%q debe estar dentro de %s", rule.To, src)
+		}
+		// exclude_assets manda también sobre las copias: si la variante actual
+		// excluye "node", una regla que rellena assets/node no debe reintroducirlo.
+		if isExcluded(relTo) {
+			ui.VerboseLog("[[assets.copy]] omitida: %s está excluida de assets", rule.To)
+			continue
+		}
+		if rule.Replace && relTo != "." {
+			if err := os.RemoveAll(filepath.Join(dst, relTo)); err != nil {
+				return "", err
+			}
+		}
+		if !dirExists(from) {
+			ui.Warn("[[assets.copy]]: no existe %s, se omite", from)
+			continue
+		}
+		include := compileAssetGlobs(rule.Include)
+		exclude := compileAssetGlobs(rule.Exclude)
+		copied := 0
+		err = filepath.Walk(from, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(from, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if len(include) > 0 && !matchesAssetGlob(rel, include) {
+				return nil
+			}
+			if matchesAssetGlob(rel, exclude) {
+				return nil
+			}
+			dest := filepath.Join(dst, relTo, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return err
+			}
+			if err := copyFile(path, dest); err != nil {
+				return err
+			}
+			copied++
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("copiando assets de %s: %w", from, err)
+		}
+		ui.VerboseLog("%d assets copiados de %s a %s", copied, from, to)
+	}
+	return dst, nil
 }
 
 func manifestPath(appDir string) string {
@@ -179,7 +416,225 @@ func substituteManifestPlaceholders(src, dst string, cfg Config) (string, error)
 	return dst, nil
 }
 
+// nativeInputs son las rutas que invalidan el paso nativo. Si el proyecto no
+// declara ninguna, se toman el script y los directorios de fuentes habituales.
+func (c Config) nativeInputs() []string {
+	root := c.projectRoot()
+	paths := []string{}
+	if c.Native.Script != "" {
+		paths = append(paths, c.Native.Script)
+	}
+	if len(c.Native.Inputs) > 0 {
+		paths = append(paths, c.Native.Inputs...)
+	} else {
+		for _, guess := range []string{"native", "third_party"} {
+			if dirExists(filepath.Join(root, guess)) {
+				paths = append(paths, guess)
+			}
+		}
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// nativeOutputs son los directorios en los que se esperan .so tras el script.
+func (c Config) nativeOutputs() []string {
+	root := c.projectRoot()
+	paths := c.Native.Outputs
+	if len(paths) == 0 {
+		paths = []string{
+			filepath.Join(root, "app", "src", "main", "jniLibs"),
+			filepath.Join(sourceRoot(c.AppDir), "jniLibs"),
+			filepath.Join(root, "build", "jni"),
+		}
+		if c.NativeLibsDir != "" {
+			paths = append(paths, c.NativeLibsDir)
+		}
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (c Config) nativeOutputsReady() bool {
+	for _, dir := range c.nativeOutputs() {
+		found := false
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				// Directorio ausente o sin permisos: se prueba el siguiente.
+				return filepath.SkipAll
+			}
+			if info == nil || info.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(info.Name(), ".so") {
+				found = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeHash incluye el script, sus entradas y la versión del NDK. Cambiar
+// cualquier fuente C o el NDK fuerza una nueva ejecución; no hace falta borrar
+// marcas a mano como en los scripts externos. Los directorios `build` que el
+// propio script genera dentro de las entradas se ignoran: si se hashearan, la
+// segunda ejecución invalidaría siempre la marca.
+func (c Config) nativeHash(ndk string) (string, error) {
+	h := sha256.New()
+	_, _ = h.Write([]byte("rain-native-v2\x00"))
+	_, _ = h.Write([]byte(toolchain.NDKVersion))
+	_, _ = h.Write([]byte(ndk))
+
+	for _, root := range c.nativeInputs() {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info == nil {
+				return nil
+			}
+			if info.IsDir() {
+				if path != root && (info.Name() == "build" || strings.HasPrefix(info.Name(), ".")) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, relErr := filepath.Rel(c.projectRoot(), path)
+			if relErr != nil {
+				return relErr
+			}
+			sum, err := hashFile(path)
+			if err != nil {
+				return err
+			}
+			_, _ = h.Write([]byte(filepath.ToSlash(rel)))
+			_, _ = h.Write(sum)
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// prepareNative ejecuta el script de build nativo, si hay uno, antes de que el
+// pipeline calcule hashes y compile recursos. El NDK se descarga solo si no
+// existe; las .so resultantes se empaquetan después por nativeLibs().
+func (c Config) prepareNative() error {
+	if c.Native.Script == "" || c.NoNativeLibs {
+		return nil
+	}
+	root := c.projectRoot()
+	script := c.Native.Script
+	if !filepath.IsAbs(script) {
+		script = filepath.Join(root, script)
+	}
+	if !fileExists(script) {
+		return fmt.Errorf("no se encontró el script nativo %s", script)
+	}
+
+	if err := os.MkdirAll(c.BuildDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio de build: %w", err)
+	}
+
+	manager, err := toolchain.New()
+	if err != nil {
+		return err
+	}
+	ndk, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		return fmt.Errorf("preparando NDK: %w", err)
+	}
+	ui.VerboseLog("NDK: %s", ndk)
+
+	hash, err := c.nativeHash(ndk)
+	if err != nil {
+		return fmt.Errorf("hash nativo: %w", err)
+	}
+	stamp := filepath.Join(c.BuildDir, ".rain-native-hash")
+	prev, _ := os.ReadFile(stamp)
+	if string(prev) == hash && c.nativeOutputsReady() {
+		ui.Info("código nativo sin cambios, reutilizando bibliotecas")
+		return nil
+	}
+
+	ui.Info("compilando código nativo...")
+	if err := runNativeScript(script, root, ndk); err != nil {
+		return fmt.Errorf("script nativo %s: %w", c.Native.Script, err)
+	}
+	if !c.nativeOutputsReady() {
+		return fmt.Errorf("el script nativo terminó pero no generó .so en %v", c.nativeOutputs())
+	}
+	if err := os.WriteFile(stamp, []byte(hash), 0644); err != nil {
+		return fmt.Errorf("guardando marca nativa: %w", err)
+	}
+	return nil
+}
+
+// runNativeScript lanza el script desde la raíz del proyecto con el toolchain
+// LLVM del NDK delante del PATH. Se respeta el NDK del usuario si ya lo tiene.
+func runNativeScript(script, root, ndk string) error {
+	var cmd *exec.Cmd
+	lower := strings.ToLower(script)
+	switch {
+	case runtime.GOOS == "windows" && (strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")):
+		cmd = exec.Command("cmd", "/C", script)
+	case runtime.GOOS != "windows":
+		if st, err := os.Stat(script); err == nil && st.Mode()&0111 != 0 {
+			cmd = exec.Command(script)
+		} else {
+			cmd = exec.Command("bash", script)
+		}
+	default:
+		cmd = exec.Command(script)
+	}
+	cmd.Dir = root
+
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "ANDROID_NDK_HOME="+ndk, "ANDROID_NDK_ROOT="+ndk)
+	if bin, err := filepath.Glob(filepath.Join(ndk, "toolchains", "llvm", "prebuilt", "*", "bin")); err == nil && len(bin) > 0 {
+		env = append(env, "PATH="+bin[0]+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func hashFile(path string) ([]byte, error) {
+	// filepath.Walk no sigue symlinks: un enlace a un directorio llega aquí
+	// como "fichero" y os.Open+io.Copy fallaría con "is a directory". El
+	// contenido relevante de un symlink es su destino, así que se hashea eso.
+	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return nil, err
+		}
+		h := sha256.New()
+		_, _ = h.Write([]byte("symlink\x00"))
+		_, _ = h.Write([]byte(target))
+		return h.Sum(nil), nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -197,10 +652,13 @@ func hashFile(path string) ([]byte, error) {
 // Se incluyen los recursos y los manifests de las librerías (extraPaths): si
 // una dependencia cambia de versión, sus recursos cambian, y el APK base debe
 // rehacerse aunque los recursos de la app no se hayan tocado.
-func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
+func computeResourceHash(appDir, assetsDir string, extraPaths ...string) (string, error) {
 	var files []string
 	resDir := resPath(appDir)
 	manifest := manifestPath(appDir)
+	if assetsDir == "" {
+		assetsDir = filepath.Join(sourceRoot(appDir), "assets")
+	}
 
 	if err := filepath.Walk(resDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -215,6 +673,20 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 	}
 	if _, err := os.Stat(manifest); err == nil {
 		files = append(files, manifest)
+	}
+	// Los assets se empaquetan en el APK base: sin hashearlos, cambiar un
+	// fichero de assets/node reutilizaba el APK anterior. Por eso los scripts
+	// de algunos proyectos tenían que borrar .rain-res-hash a mano.
+	if err := filepath.Walk(assetsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info != nil && !info.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return "", err
 	}
 	for _, extra := range extraPaths {
 		if extra == "" {
@@ -254,6 +726,19 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
 }
 
+// skipDirSet precalcula las rutas limpias de skipDirs. Consultar el mapa es
+// O(1) por directorio visitado, frente al barrido lineal de la lista; se
+// conserva la comparación exacta de rutas (tras filepath.Clean) de siempre.
+func skipDirSet(skipDirs []string) map[string]bool {
+	set := make(map[string]bool, len(skipDirs))
+	for _, skip := range skipDirs {
+		if skip != "" {
+			set[filepath.Clean(skip)] = true
+		}
+	}
+	return set
+}
+
 // collectJavaSources devuelve todas las rutas .java bajo root (recursivo).
 // Un root inexistente devuelve (nil, nil): no tener fuentes es válido.
 //
@@ -261,16 +746,15 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 // layout plano el root es el propio módulo, así que sin esto se colaría
 // build/gen: los R.java generados se compilarían dos veces por build.
 func collectJavaSources(root string, skipDirs ...string) ([]string, error) {
+	skips := skipDirSet(skipDirs)
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			for _, skip := range skipDirs {
-				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
-					return filepath.SkipDir
-				}
+			if skips[filepath.Clean(path)] {
+				return filepath.SkipDir
 			}
 			return nil
 		}
@@ -353,6 +837,11 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	}); err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
+	// Las .so de jniLibs van dentro del APK: cambiar una debe invalidar la
+	// compilación aunque las fuentes Java y Kotlin estén intactas.
+	for _, path := range localNativeLibs(appDir, "") {
+		files = append(files, path)
+	}
 	entries, _ := os.ReadDir(libsDir)
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".jar") {
@@ -400,6 +889,47 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	}
 
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
+}
+
+// computeConfigJavaHash añade a la clave del DEX lo que computeJavaHash no ve:
+// las fuentes de la variante elegida y las .so de un directorio externo.
+func computeConfigJavaHash(cfg Config, genDir string) (string, error) {
+	base, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
+	if err != nil {
+		return "", err
+	}
+
+	var files []string
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		javaFiles, err := collectJavaSources(filepath.Join(flavor, "java"))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		kotlinFiles, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		files = append(files, javaFiles...)
+		files = append(files, kotlinFiles...)
+	}
+	if !cfg.NoNativeLibs {
+		for _, path := range localNativeLibs(cfg.AppDir, cfg.nativeLibsExtraDir()) {
+			files = append(files, path)
+		}
+	}
+	sort.Strings(files)
+
+	h := sha256.New()
+	_, _ = h.Write([]byte(base))
+	for _, path := range files {
+		sum, err := hashFile(path)
+		if err != nil {
+			return "", err
+		}
+		_, _ = h.Write(sum)
+		_, _ = h.Write([]byte(path))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // computeDexDepsHash calcula la clave del DEX de dependencias cacheado.
@@ -640,6 +1170,12 @@ func Run(cfg Config) error {
 		return fmt.Errorf("creando directorio de build: %w", err)
 	}
 
+	// El código nativo se genera antes de hashear recursos y fuentes: sus .so
+	// entran en la caché del DEX y en el APK final.
+	if err := cfg.prepareNative(); err != nil {
+		return err
+	}
+
 	genDir := filepath.Join(cfg.BuildDir, "gen")
 	if err := os.MkdirAll(genDir, 0755); err != nil {
 		return fmt.Errorf("creando directorio gen: %w", err)
@@ -650,7 +1186,17 @@ func Run(cfg Config) error {
 	flatDir := filepath.Join(cfg.BuildDir, "res")
 	baseApk := filepath.Join(cfg.BuildDir, "base.apk")
 
-	currentResHash, err := computeResourceHash(cfg.AppDir, cfg.libraryResourceInputs()...)
+	assetsDir, err := cfg.prepareAssets()
+	if err != nil {
+		return fmt.Errorf("preparando assets: %w", err)
+	}
+	resInputs := cfg.libraryResourceInputs()
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		if flavorRes := filepath.Join(flavor, "res"); dirExists(flavorRes) {
+			resInputs = append(resInputs, flavorRes)
+		}
+	}
+	currentResHash, err := computeResourceHash(cfg.AppDir, assetsDir, resInputs...)
 	if err != nil {
 		return fmt.Errorf("hash de recursos: %w", err)
 	}
@@ -704,6 +1250,50 @@ func Run(cfg Config) error {
 			}
 		} else {
 			ui.VerboseLog("sin directorio res/, se enlaza solo el manifest")
+		}
+
+		// Los recursos de la variante se compilan aparte y sobrescriben los de
+		// src/main con el mismo nombre, igual que hace el overlay de Gradle.
+		if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+			if flavorRes := filepath.Join(flavor, "res"); dirExists(flavorRes) {
+				flavorFlat := filepath.Join(cfg.BuildDir, "flavor-flat")
+				if err := os.RemoveAll(flavorFlat); err != nil {
+					return err
+				}
+				if err := os.MkdirAll(flavorFlat, 0o755); err != nil {
+					return err
+				}
+				cmd := exec.Command("aapt2", "compile", "--dir", flavorRes, "-o", flavorFlat)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					return fmt.Errorf("aapt2 compile (variante %s): %w", cfg.Flavor, err)
+				}
+				entries, err := os.ReadDir(flavorFlat)
+				if err != nil {
+					return err
+				}
+				if err := os.MkdirAll(flatDir, 0o755); err != nil {
+					return err
+				}
+				yaVisto := make(map[string]bool, len(appFlatFiles))
+				for _, f := range appFlatFiles {
+					yaVisto[filepath.Base(f)] = true
+				}
+				for _, e := range entries {
+					if e.IsDir() || !strings.HasSuffix(e.Name(), ".flat") {
+						continue
+					}
+					if err := copyFile(filepath.Join(flavorFlat, e.Name()), filepath.Join(flatDir, e.Name())); err != nil {
+						return err
+					}
+					if !yaVisto[e.Name()] {
+						appFlatFiles = append(appFlatFiles, filepath.Join(flatDir, e.Name()))
+						yaVisto[e.Name()] = true
+					}
+				}
+				ui.VerboseLog("recursos de la variante %s fusionados", cfg.Flavor)
+			}
 		}
 
 		ui.Info("enlazando recursos...")
@@ -777,8 +1367,8 @@ func Run(cfg Config) error {
 			"--version-name", cfg.VersionName,
 			"--auto-add-overlay",
 		}
-		if assets := filepath.Join(sourceRoot(cfg.AppDir), "assets"); dirExists(assets) {
-			args = append(args, "-A", assets)
+		if dirExists(assetsDir) {
+			args = append(args, "-A", assetsDir)
 		}
 
 		var libFlatFiles []string
@@ -879,7 +1469,7 @@ public final class BuildConfig {
 	javaHashPath := filepath.Join(cfg.BuildDir, javaHashFile)
 	dexHashPath := filepath.Join(cfg.BuildDir, dexHashFile)
 
-	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
+	currentJavaHash, err := computeConfigJavaHash(cfg, genDir)
 	if err != nil {
 		return fmt.Errorf("hash de java: %w", err)
 	}
@@ -1246,6 +1836,21 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("buscando fuentes Java: %w", err)
 	}
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		kotlinFlavor, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"), cfg.BuildDir)
+		if err != nil {
+			return nil, err
+		}
+		javaFlavor, err := collectJavaSources(filepath.Join(flavor, "java"), cfg.BuildDir)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("buscando fuentes Java de la variante: %w", err)
+		}
+		kotlinFiles = append(kotlinFiles, kotlinFlavor...)
+		javaFiles = append(javaFiles, javaFlavor...)
+		if len(kotlinFlavor)+len(javaFlavor) > 0 {
+			ui.VerboseLog("variante %s: %d fuentes añadidas", cfg.Flavor, len(kotlinFlavor)+len(javaFlavor))
+		}
+	}
 	return compileSourceSet(cfg, genDir, objDir, kotlinFiles, javaFiles)
 }
 
@@ -1255,16 +1860,15 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 // root es el módulo entero, así que sin esto se recorrerían los artefactos de
 // build/ (decenas de MiB) en cada compilación.
 func collectKotlinFiles(root string, skipDirs ...string) ([]string, error) {
+	skips := skipDirSet(skipDirs)
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info != nil && info.IsDir() {
-			for _, skip := range skipDirs {
-				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
-					return filepath.SkipDir
-				}
+			if skips[filepath.Clean(path)] {
+				return filepath.SkipDir
 			}
 			return nil
 		}
@@ -1762,41 +2366,60 @@ func sanitizeTag(value string) string {
 }
 
 // detectABI mira lib/<abi>/ dentro del proyecto; sin código nativo es "universal".
+// Un solo Walk sustituye al ReadDir anidado: un conjunto recoge las ABIs que
+// tienen algún .so directamente debajo, y luego se ordena para ser determinista.
 func detectABI(appDir string) string {
 	libDir := filepath.Join(appDir, "lib")
-	entries, err := os.ReadDir(libDir)
-	if err != nil {
+	st, err := os.Stat(libDir)
+	if err != nil || !st.IsDir() {
 		return "universal"
 	}
-
-	var abis []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		hasSo := false
-		files, err := os.ReadDir(filepath.Join(libDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if strings.HasSuffix(f.Name(), ".so") {
-				hasSo = true
-				break
-			}
-		}
-		if hasSo {
-			abis = append(abis, entry.Name())
-		}
+	// Walk aplica Lstat a la raíz: si lib/ es un enlace simbólico se recorre la
+	// ruta resuelta, igual que hacía os.ReadDir.
+	if resolved, err := filepath.EvalSymlinks(libDir); err == nil {
+		libDir = resolved
 	}
+
+	abis := make(map[string]bool)
+	_ = filepath.Walk(libDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// Un directorio de ABI ilegible se ignora, como antes.
+			if info != nil && info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(libDir, path)
+		if err != nil {
+			// No debería pasar (ambas rutas son absolutas); se propaga para
+			// no silenciar un error inesperado del recorrido.
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		// Solo cuentan los hijos directos de lib/<abi>/, no los .so anidados.
+		if len(parts) == 2 && strings.HasSuffix(parts[1], ".so") {
+			abis[parts[0]] = true
+		}
+		// El ReadDir original tampoco bajaba dentro de lib/<abi>/: podar aquí
+		// evita recorrer subárboles que no pueden aportar ABIs.
+		if info != nil && info.IsDir() && len(parts) >= 2 {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
 	if len(abis) == 0 {
 		return "universal"
 	}
-	sort.Strings(abis)
-	if strings.Join(abis, "_") == "arm64-v8a_armeabi-v7a_x86_x86_64" {
+	names := make([]string, 0, len(abis))
+	for abi := range abis {
+		names = append(names, abi)
+	}
+	sort.Strings(names)
+	if strings.Join(names, "_") == "arm64-v8a_armeabi-v7a_x86_x86_64" {
 		return "universal"
 	}
-	return strings.Join(abis, "_")
+	return strings.Join(names, "_")
 }
 
 func dexNumber(path string) int {
@@ -1957,8 +2580,14 @@ func ValidateJVMTarget(target int) error {
 			return nil
 		}
 	}
+	// Antes se repetía el literal "%d " y el mensaje mostraba marcadores en
+	// vez de los valores reales. Se formatean los targets permitidos.
+	valid := make([]string, len(validJVMTargets))
+	for i, value := range validJVMTargets {
+		valid[i] = strconv.Itoa(value)
+	}
 	return fmt.Errorf("java_target %d no válido: usa uno de %s",
-		target, strings.Trim(strings.Repeat("%d ", len(validJVMTargets)), " "))
+		target, strings.Join(valid, " "))
 }
 
 // jvmTarget devuelve el target de bytecode: 17 por defecto (como AGP) y el
@@ -1981,16 +2610,23 @@ func (c Config) appliesComposePlugin() bool {
 
 // usesCompose detecta si alguna fuente Kotlin importa algo de androidx.compose.
 func (c Config) usesCompose() bool {
-	for _, path := range c.findKotlinSources() {
+	found := false
+	// Un único paseo: findKotlinSources enumera las fuentes y el callback
+	// inspecciona su contenido. Antes se recorría el árbol y después se
+	// releían todas las fuentes recogidas.
+	c.findKotlinSources(func(path string) {
+		if found {
+			return
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return
 		}
 		if strings.Contains(string(data), "androidx.compose") {
-			return true
+			found = true
 		}
-	}
-	return false
+	})
+	return found
 }
 
 // composePlugin localiza compose-compiler-plugin.jar (explícito, ~/.rain o la
@@ -2021,8 +2657,10 @@ func (c Config) composePlugin() string {
 	return ""
 }
 
-// findKotlinSources lista las fuentes .kt del proyecto.
-func (c Config) findKotlinSources() []string {
+// findKotlinSources lista las fuentes .kt del proyecto, en orden de Walk.
+// El callback opcional permite examinar cada fuente durante el mismo paseo,
+// sin recorrer el árbol dos veces cuando además hay que detectar Compose.
+func (c Config) findKotlinSources(inspect ...func(string)) []string {
 	var sources []string
 	_ = filepath.Walk(sourceRoot(c.AppDir), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -2034,8 +2672,12 @@ func (c Config) findKotlinSources() []string {
 			}
 			return nil
 		}
-		if info != nil && strings.HasSuffix(path, ".kt") {
-			sources = append(sources, path)
+		if info == nil || !strings.HasSuffix(path, ".kt") {
+			return nil
+		}
+		sources = append(sources, path)
+		if len(inspect) > 0 && inspect[0] != nil {
+			inspect[0](path)
 		}
 		return nil
 	})

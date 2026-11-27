@@ -103,11 +103,15 @@ func DownloadModuleMetadata(coordinate string, destDir string) (string, error) {
 		return "", err
 	}
 
+	// La ruta del grupo en la URL es la misma para todos los repositorios:
+	// se calcula una sola vez en vez de repetir ReplaceAll en cada intento.
+	groupURLPath := strings.ReplaceAll(group, ".", "/")
+
 	client := httpx.NewClient()
 	var lastErr error
 	for _, repo := range mavenrepo.For(repositories, group) {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.module",
-			repo, strings.ReplaceAll(group, ".", "/"), artifact, version, artifact, version)
+			repo, groupURLPath, artifact, version, artifact, version)
 
 		resp, err := client.Get(url)
 		if err != nil {

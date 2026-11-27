@@ -29,6 +29,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -136,8 +137,34 @@ func (i Info) Tight() bool {
 	return i.TotalBytes > 0 && budget*4 < i.TotalBytes
 }
 
-// Detect lee la memoria disponible del sistema o del contenedor.
+// Estado de la detección de memoria, calculado una sola vez por proceso.
+var (
+	detectOnce = new(sync.Once)
+	detected   Info
+	// detectFn es el punto de inyección de los tests para simular otro entorno.
+	detectFn = detect
+)
+
+// Detect devuelve la memoria disponible del sistema o del contenedor.
+//
+// Describe, HeapLimit, GoMemoryLimit, GoGCPercent y doctor pueden preguntar por
+// ella varias veces en la misma ejecución. Como /proc/meminfo y los cgroups no
+// cambian mientras Rain corre, se mide una sola vez y se devuelve una copia del
+// resultado: así se evitan lecturas y llamadas al sistema redundantes.
 func Detect() Info {
+	detectOnce.Do(func() { detected = detectFn() })
+	return detected
+}
+
+// resetDetect descarta la medición cacheada. Solo la usan los tests que
+// simulan un entorno distinto dentro del mismo proceso.
+func resetDetect() {
+	detectOnce = new(sync.Once)
+	detected = Info{}
+}
+
+// detect hace la lectura real de memoria; Detect la memoiza.
+func detect() Info {
 	info := Info{}
 	info.TotalBytes, info.AvailableBytes = readMemInfo()
 
@@ -487,11 +514,9 @@ func FormatSize(bytes int64) string {
 	if bytes <= 0 {
 		return "0m"
 	}
+	// Redondeo hacia abajo: mejor quedarse corto que pasarse. La división
+	// entera ya deja `gran` por debajo de `bytes`, no hace falta corregirlo.
 	gran := bytes / heapGranularity * heapGranularity
-	if gran < bytes {
-		// Redondeo hacia abajo: mejor quedarse corto que pasarse.
-		gran = bytes / heapGranularity * heapGranularity
-	}
 	if gran < minHeapBytes {
 		gran = minHeapBytes
 	}
