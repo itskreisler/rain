@@ -235,3 +235,14 @@ func TestFindBlockIgnoresBracesInStrings(t *testing.T) {
 		t.Errorf("implementation = %q", got)
 	}
 }
+
+// TestMatchBraceAuxiliar comprueba que el auxiliar clásico sigue disponible
+// para búsquedas puntuales, aunque findBlocks use la tabla de braceEnds.
+func TestMatchBraceAuxiliar(t *testing.T) {
+	if got := matchBrace("{}", 0); got != 1 {
+		t.Errorf("matchBrace({}) = %d, se esperaba 1", got)
+	}
+	if got := matchBrace("{", 0); got != -1 {
+		t.Errorf("matchBrace({) = %d, se esperaba -1", got)
+	}
+}

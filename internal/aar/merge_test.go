@@ -152,3 +152,18 @@ func TestParseResourcesRejectsNonResourcesRoot(t *testing.T) {
 		t.Fatal("una raíz distinta de <resources> debería fallar")
 	}
 }
+
+func TestWriteResourcesOrdenaAtributos(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "merged.xml")
+	res := &resourcesElement{attrs: map[string]string{"z": "último", "a": "primero", "m": "medio"}}
+	if err := writeResources(path, res); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `<resources a="primero" m="medio" z="último">`) {
+		t.Errorf("atributos desordenados en merged.xml:\n%s", data)
+	}
+}

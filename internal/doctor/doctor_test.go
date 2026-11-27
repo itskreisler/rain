@@ -167,6 +167,36 @@ func TestFindAndroidJarInvalidReturnsPath(t *testing.T) {
 	}
 }
 
+func TestFindAndroidJarNoRevalidaLaMismaRuta(t *testing.T) {
+	dir := t.TempDir()
+	jar := filepath.Join(dir, "android.jar")
+	writeJar(t, jar, []string{"android/Manifest.class"})
+
+	// El mismo jar aparece dos veces en la lista de candidatos.
+	t.Setenv("RAIN_ANDROID_JAR", jar)
+	t.Setenv("ANDROID_JAR", jar)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	original := validAndroidJarFn
+	t.Cleanup(func() { validAndroidJarFn = original })
+	llamadas := 0
+	validAndroidJarFn = func(path string) bool {
+		llamadas++
+		return original(path)
+	}
+
+	got, ok := FindAndroidJar()
+	if !ok || got != jar {
+		t.Fatalf("FindAndroidJar = (%q, %t), quiero (%q, true)", got, ok, jar)
+	}
+	if llamadas != 1 {
+		t.Errorf("se validó el jar %d veces, quiero 1", llamadas)
+	}
+}
+
 func TestDetectPlatform(t *testing.T) {
 	got := DetectPlatform()
 	switch got {

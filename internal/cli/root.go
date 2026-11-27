@@ -136,28 +136,26 @@ func NewRootCmd(info BuildInfo) *cobra.Command {
 	return root
 }
 
+// reemplazosPlantillaUso traduce de una sola pasada los encabezados que Cobra
+// genera en inglés. El orden importa: "Global Flags:" va antes que "Flags:".
+var reemplazosPlantillaUso = strings.NewReplacer(
+	`Global Flags:`, `Opciones globales:`,
+	`Flags:`, `Opciones:`,
+	`Available Commands:`, `Comandos disponibles:`,
+	`Additional Commands:`, `Comandos adicionales:`,
+	`Additional help topics:`, `Temas de ayuda adicionales:`,
+	`Aliases:`, `Alias:`,
+	`Examples:`, `Ejemplos:`,
+	`Usage:`, `Uso:`,
+	`Use "{{.CommandPath}} [command] --help" for more information about a command.`, `Usa "{{.CommandPath}} [command] --help" para más información sobre un comando.`,
+)
+
 // traducirPlantillaDeUso traduce los encabezados que Cobra genera en inglés
 // en la plantilla de ayuda. Se aplica solo al comando raíz: el getter de
 // Cobra propaga la plantilla a todos los subcomandos.
 func traducirPlantillaDeUso(root *cobra.Command) {
 	devlog("traducirPlantillaDeUso", fmt.Sprintf("cmd=%s", root.Name()), "Traduce al español los encabezados de la ayuda generados por Cobra")
-	plantilla := root.UsageTemplate()
-	// El orden importa: "Global Flags:" se reemplaza antes que "Flags:".
-	reemplazos := [][2]string{
-		{`Global Flags:`, `Opciones globales:`},
-		{`Flags:`, `Opciones:`},
-		{`Available Commands:`, `Comandos disponibles:`},
-		{`Additional Commands:`, `Comandos adicionales:`},
-		{`Additional help topics:`, `Temas de ayuda adicionales:`},
-		{`Aliases:`, `Alias:`},
-		{`Examples:`, `Ejemplos:`},
-		{`Usage:`, `Uso:`},
-		{`Use "{{.CommandPath}} [command] --help" for more information about a command.`, `Usa "{{.CommandPath}} [command] --help" para más información sobre un comando.`},
-	}
-	for _, reemplazo := range reemplazos {
-		plantilla = strings.ReplaceAll(plantilla, reemplazo[0], reemplazo[1])
-	}
-	root.SetUsageTemplate(plantilla)
+	root.SetUsageTemplate(reemplazosPlantillaUso.Replace(root.UsageTemplate()))
 }
 
 // traducirFlagsDeAyuda pone en español las descripciones que Cobra genera

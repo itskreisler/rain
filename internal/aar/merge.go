@@ -243,8 +243,15 @@ func writeResources(path string, res *resourcesElement) error {
 	var buf strings.Builder
 	buf.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	buf.WriteString("<resources")
-	for k, v := range res.attrs {
-		fmt.Fprintf(&buf, " %s=%q", k, v)
+	// range sobre un mapa no tiene orden garantizado: sin ordenar las claves
+	// el merged.xml cambiaría entre builds con el mismo contenido.
+	keys := make([]string, 0, len(res.attrs))
+	for k := range res.attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&buf, " %s=%q", k, res.attrs[k])
 	}
 	buf.WriteString(">\n")
 	for _, child := range res.children {

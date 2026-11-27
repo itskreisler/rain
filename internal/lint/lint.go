@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -282,16 +283,17 @@ func Format(ctx context.Context, opts Options) ([]string, error) {
 	// En modo check se formatea en sitio y se restauran los originales: así
 	// ktlint y google-java-format deciden realmente qué cambiaría, sin que el
 	// usuario tenga que revertir nada a mano.
+	var snapshot map[string][]byte
 	if opts.Check {
-		snapshot := snapshotFiles(append(append([]string{}, opts.KotlinFiles...), opts.JavaFiles...))
+		snapshot = snapshotFiles(append(append([]string{}, opts.KotlinFiles...), opts.JavaFiles...))
 		defer restoreFiles(snapshot)
 	}
 
-	kotlinChanged, err := formatKotlin(ctx, opts)
+	kotlinChanged, err := formatKotlin(ctx, opts, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	javaChanged, err := formatJava(ctx, opts)
+	javaChanged, err := formatJava(ctx, opts, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +302,7 @@ func Format(ctx context.Context, opts Options) ([]string, error) {
 	return changed, nil
 }
 
-func formatKotlin(ctx context.Context, opts Options) ([]string, error) {
+func formatKotlin(ctx context.Context, opts Options, snapshot map[string][]byte) ([]string, error) {
 	if len(opts.KotlinFiles) == 0 {
 		return nil, nil
 	}
@@ -309,7 +311,7 @@ func formatKotlin(ctx context.Context, opts Options) ([]string, error) {
 		return nil, fmt.Errorf("ktlint no está instalado (instálalo con: rain lint --install)")
 	}
 
-	before := sums(opts.KotlinFiles)
+	before := sums(opts.KotlinFiles, snapshot)
 	args := []string{"--relative", "--format", "**/*.kt"}
 	args = append(args, sourcePatterns(opts)...)
 	cmd := toolCommand(ctx, path, args)
@@ -377,7 +379,7 @@ func googleJavaFormatCommand(ctx context.Context, path string, args []string) *e
 	return exec.CommandContext(ctx, path, args...)
 }
 
-func formatJava(ctx context.Context, opts Options) ([]string, error) {
+func formatJava(ctx context.Context, opts Options, snapshot map[string][]byte) ([]string, error) {
 	if len(opts.JavaFiles) == 0 {
 		return nil, nil
 	}
@@ -386,7 +388,7 @@ func formatJava(ctx context.Context, opts Options) ([]string, error) {
 		return nil, fmt.Errorf("google-java-format no está instalado (instálalo con: rain lint --install)")
 	}
 
-	before := sums(opts.JavaFiles)
+	before := sums(opts.JavaFiles, snapshot)
 	args := googleJavaFormatArgs(opts)
 	args = append(args, opts.JavaFiles...)
 	cmd := googleJavaFormatCommand(ctx, path, args)
@@ -417,10 +419,15 @@ func restoreFiles(snapshot map[string][]byte) {
 }
 
 // sums guarda la suma previa de cada fichero para detectar cambios después de
-// ejecutar el formateador.
-func sums(files []string) map[string]string {
+// ejecutar el formateador. En modo --check los bytes originales ya están en
+// snapshot y se aprovechan para no leer los ficheros dos veces.
+func sums(files []string, snapshot map[string][]byte) map[string]string {
 	before := make(map[string]string, len(files))
 	for _, file := range files {
+		if data, ok := snapshot[file]; ok {
+			before[file] = sumBytes(data)
+			continue
+		}
 		if sum, err := fileSum(file); err == nil {
 			before[file] = sum
 		}
@@ -462,14 +469,27 @@ func findDetektConfig(projectDir string) string {
 	return ""
 }
 
-// fileSum devuelve la suma SHA-256 de un fichero, para detectar cambios.
+// fileSum devuelve la suma SHA-256 de un fichero, para detectar cambios. El
+// contenido se pasa por el hasher en bloques: la memoria es constante aunque
+// el fichero sea grande.
 func fileSum(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = f.Close() }()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// sumBytes calcula la suma de unos bytes que ya se habían leído (--check).
+func sumBytes(data []byte) string {
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // runKtlint ejecuta ktlint sobre las fuentes Kotlin.

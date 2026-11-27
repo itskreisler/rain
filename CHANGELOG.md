@@ -153,6 +153,26 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   pendiente (servicio en segundo plano, preajustes de ecualizador, letras,
   temporizador, radio por Internet, widgets y Android Auto).
 
+### Rendimiento
+
+- **Resolución de dependencias compartida.** Se resuelven todas las raíces en un
+  único DFS con `visited` y caché de cadenas de parents: antes cada raíz volvía
+  a descargar y parsear el subgrafo común. Las propiedades de los POM se
+  sustituyen con un `strings.Replacer` reutilizable en vez de recorrer todas las
+  propiedades por cada campo. Los parents con ciclos se detectan en lugar de
+  no terminar.
+- **Chequeo incremental lineal.** `changedSources` usa un set de fuentes
+  modificadas y tokeniza cada archivo una sola vez, en vez de buscar cada
+  declaración en todo el texto; `hasClassFiles` corta el recorrido en cuanto
+  encuentra una clase. Sin marca de compilación se comprueban todas las fuentes.
+- **Menos trabajo repetido.** La deduplicación de servicios y la detección de
+  ABIs usan mapas, los globs de `rain fmt` se compilan una sola vez, los
+  directorios ignorados se consultan en O(1), y el ZIP de build-tools se abre
+  una sola vez. La memoria de `doctor` se lee una sola vez y las firmas de
+  archivos se calculan en streaming.
+- **Salida reproducible.** Los atributos de recursos se escriben en orden
+  determinista y los proveedores de servicio conservan el orden de inserción.
+
 ### Corregido
 
 - **Smoke test de Windows.** Las pruebas del toolchain usan lanzadores `.cmd`

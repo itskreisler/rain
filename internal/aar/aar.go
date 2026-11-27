@@ -194,6 +194,15 @@ func (s *Set) ServiceFiles() (map[string][]string, error) {
 		return nil, err
 	}
 
+	// Se siembra el índice con los servicios de los jars y se sigue con los
+	// de la raíz de los AAR, manteniendo el orden de inserción por servicio.
+	idx := newServiceIndex()
+	for service, impls := range out {
+		for _, impl := range impls {
+			idx.add(service, impl)
+		}
+	}
+
 	// AAR: los servicios están en la raíz del AAR, no en classes.jar.
 	for _, lib := range s.Libraries {
 		for service, path := range lib.ServiceFiles {
@@ -202,17 +211,17 @@ func (s *Set) ServiceFiles() (map[string][]string, error) {
 				continue
 			}
 			for _, impl := range parseServiceFile(string(data)) {
-				addServiceImpl(out, service, impl)
+				idx.add(service, impl)
 			}
 		}
 	}
-	return out, nil
+	return idx.byService, nil
 }
 
 // ServiceFilesFromJars lee los META-INF/services de un conjunto de jars y
 // devuelve los proveedores indexados por nombre de servicio.
 func ServiceFilesFromJars(jars []string) (map[string][]string, error) {
-	out := map[string][]string{}
+	idx := newServiceIndex()
 	for _, jar := range jars {
 		fromJar, err := serviceFilesFromJar(jar)
 		if err != nil {
@@ -220,27 +229,48 @@ func ServiceFilesFromJars(jars []string) (map[string][]string, error) {
 		}
 		for service, impls := range fromJar {
 			for _, impl := range impls {
-				addServiceImpl(out, service, impl)
+				idx.add(service, impl)
 			}
 		}
 	}
-	return out, nil
+	return idx.byService, nil
 }
 
-// addServiceImpl añade una implementación al servicio, ignorando vacíos,
-// comentarios y duplicados.
-func addServiceImpl(out map[string][]string, service, impl string) {
+// serviceKey identifica de forma exacta un par servicio/implementación.
+type serviceKey struct {
+	service string
+	impl    string
+}
+
+// serviceIndex agrupa los proveedores por servicio y deduplica con un set.
+// Antes addServiceImpl recorría la lista en cada inserción (O(n²) si un
+// servicio concentraba muchas implementaciones).
+type serviceIndex struct {
+	byService map[string][]string
+	seen      map[serviceKey]bool
+}
+
+func newServiceIndex() *serviceIndex {
+	return &serviceIndex{
+		byService: make(map[string][]string),
+		seen:      make(map[serviceKey]bool),
+	}
+}
+
+// add ignora vacíos, comentarios y duplicados, conservando el orden de
+// inserción de las implementaciones de cada servicio.
+func (idx *serviceIndex) add(service, impl string) {
 	service = strings.TrimSpace(service)
 	impl = strings.TrimSpace(impl)
 	if service == "" || impl == "" || strings.HasPrefix(impl, "#") {
 		return
 	}
-	for _, existing := range out[service] {
-		if existing == impl {
-			return
-		}
+	key := serviceKey{service: service, impl: impl}
+	if idx.seen[key] {
+		return
 	}
-	out[service] = append(out[service], impl)
+	idx.seen[key] = true
+	idx.byService[service] = append(idx.byService[service], impl)
 }
 
 // serviceFilesFromJar lee los META-INF/services de un jar.
@@ -460,12 +490,16 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 		return "", err
 	}
 
+	// La lista de repositorios no cambia entre las dos fases (store y red):
+	// antes se calculaba dos veces, con un contains lineal en cada una.
+	repos := mavenrepo.For(repositories, group)
+
 	// El store global evita descargar dos veces el mismo artefacto en
 	// proyectos distintos. Se consulta antes de recorrer los repositorios,
 	// pero hace falta saber cuál sirvió la coordenada: se prueba cada repo.
 	store := depstore.New()
 	if store != nil {
-		for _, repo := range mavenrepo.For(repositories, group) {
+		for _, repo := range repos {
 			if !store.HasOriginal(coord, repo, ext) {
 				continue
 			}
@@ -476,7 +510,7 @@ func (c *Client) download(coord, dir, ext string) (string, error) {
 	}
 
 	var lastErr error
-	for _, repo := range mavenrepo.For(repositories, group) {
+	for _, repo := range repos {
 		url := fmt.Sprintf("%s/%s/%s/%s/%s-%s.%s", repo, groupPath, artifact, version, artifact, version, ext)
 		resp, err := c.httpClient().Get(url)
 		if err != nil {
@@ -557,6 +591,8 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 	lib := &Library{Coordinate: coord}
 	jarDir := filepath.Join(dir, "jars")
 	resBase := filepath.Join(dir, "res", artifact+"-"+version)
+	// Set de ABIs: antes se buscaba en un slice por cada .so del AAR.
+	abis := make(map[string]bool)
 
 	for _, f := range zr.File {
 		switch {
@@ -602,9 +638,7 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 				return nil, err
 			}
 			lib.NativeFiles = append(lib.NativeFiles, dest)
-			if abi := strings.Split(rel, "/")[0]; !contains(lib.NativeABIs, abi) {
-				lib.NativeABIs = append(lib.NativeABIs, abi)
-			}
+			abis[strings.Split(rel, "/")[0]] = true
 		case f.Name == "proguard.txt":
 			dest := filepath.Join(dir, "proguard", artifact+"-"+version+".pro")
 			if err := extractFile(f, dest); err != nil {
@@ -633,6 +667,10 @@ func (c *Client) extractAAR(coord, artifact, version, aarPath, dir string) (*Lib
 	// Un AAR con recursos pero sin código no debe aportar --extra-packages.
 	if lib.ClassJar == "" {
 		lib.Package = ""
+	}
+	lib.NativeABIs = make([]string, 0, len(abis))
+	for abi := range abis {
+		lib.NativeABIs = append(lib.NativeABIs, abi)
 	}
 	sort.Strings(lib.NativeABIs)
 	return lib, nil
@@ -671,13 +709,4 @@ func readZipFile(f *zip.File) ([]byte, error) {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
-}
-
-func contains(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }

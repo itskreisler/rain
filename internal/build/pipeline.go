@@ -254,6 +254,19 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
 }
 
+// skipDirSet precalcula las rutas limpias de skipDirs. Consultar el mapa es
+// O(1) por directorio visitado, frente al barrido lineal de la lista; se
+// conserva la comparación exacta de rutas (tras filepath.Clean) de siempre.
+func skipDirSet(skipDirs []string) map[string]bool {
+	set := make(map[string]bool, len(skipDirs))
+	for _, skip := range skipDirs {
+		if skip != "" {
+			set[filepath.Clean(skip)] = true
+		}
+	}
+	return set
+}
+
 // collectJavaSources devuelve todas las rutas .java bajo root (recursivo).
 // Un root inexistente devuelve (nil, nil): no tener fuentes es válido.
 //
@@ -261,16 +274,15 @@ func computeResourceHash(appDir string, extraPaths ...string) (string, error) {
 // layout plano el root es el propio módulo, así que sin esto se colaría
 // build/gen: los R.java generados se compilarían dos veces por build.
 func collectJavaSources(root string, skipDirs ...string) ([]string, error) {
+	skips := skipDirSet(skipDirs)
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			for _, skip := range skipDirs {
-				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
-					return filepath.SkipDir
-				}
+			if skips[filepath.Clean(path)] {
+				return filepath.SkipDir
 			}
 			return nil
 		}
@@ -1255,16 +1267,15 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 // root es el módulo entero, así que sin esto se recorrerían los artefactos de
 // build/ (decenas de MiB) en cada compilación.
 func collectKotlinFiles(root string, skipDirs ...string) ([]string, error) {
+	skips := skipDirSet(skipDirs)
 	var sources []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info != nil && info.IsDir() {
-			for _, skip := range skipDirs {
-				if skip != "" && filepath.Clean(path) == filepath.Clean(skip) {
-					return filepath.SkipDir
-				}
+			if skips[filepath.Clean(path)] {
+				return filepath.SkipDir
 			}
 			return nil
 		}
@@ -1762,41 +1773,60 @@ func sanitizeTag(value string) string {
 }
 
 // detectABI mira lib/<abi>/ dentro del proyecto; sin código nativo es "universal".
+// Un solo Walk sustituye al ReadDir anidado: un conjunto recoge las ABIs que
+// tienen algún .so directamente debajo, y luego se ordena para ser determinista.
 func detectABI(appDir string) string {
 	libDir := filepath.Join(appDir, "lib")
-	entries, err := os.ReadDir(libDir)
-	if err != nil {
+	st, err := os.Stat(libDir)
+	if err != nil || !st.IsDir() {
 		return "universal"
 	}
-
-	var abis []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		hasSo := false
-		files, err := os.ReadDir(filepath.Join(libDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if strings.HasSuffix(f.Name(), ".so") {
-				hasSo = true
-				break
-			}
-		}
-		if hasSo {
-			abis = append(abis, entry.Name())
-		}
+	// Walk aplica Lstat a la raíz: si lib/ es un enlace simbólico se recorre la
+	// ruta resuelta, igual que hacía os.ReadDir.
+	if resolved, err := filepath.EvalSymlinks(libDir); err == nil {
+		libDir = resolved
 	}
+
+	abis := make(map[string]bool)
+	_ = filepath.Walk(libDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// Un directorio de ABI ilegible se ignora, como antes.
+			if info != nil && info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(libDir, path)
+		if err != nil {
+			// No debería pasar (ambas rutas son absolutas); se propaga para
+			// no silenciar un error inesperado del recorrido.
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		// Solo cuentan los hijos directos de lib/<abi>/, no los .so anidados.
+		if len(parts) == 2 && strings.HasSuffix(parts[1], ".so") {
+			abis[parts[0]] = true
+		}
+		// El ReadDir original tampoco bajaba dentro de lib/<abi>/: podar aquí
+		// evita recorrer subárboles que no pueden aportar ABIs.
+		if info != nil && info.IsDir() && len(parts) >= 2 {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
 	if len(abis) == 0 {
 		return "universal"
 	}
-	sort.Strings(abis)
-	if strings.Join(abis, "_") == "arm64-v8a_armeabi-v7a_x86_x86_64" {
+	names := make([]string, 0, len(abis))
+	for abi := range abis {
+		names = append(names, abi)
+	}
+	sort.Strings(names)
+	if strings.Join(names, "_") == "arm64-v8a_armeabi-v7a_x86_x86_64" {
 		return "universal"
 	}
-	return strings.Join(abis, "_")
+	return strings.Join(names, "_")
 }
 
 func dexNumber(path string) int {
@@ -1957,8 +1987,14 @@ func ValidateJVMTarget(target int) error {
 			return nil
 		}
 	}
+	// Antes se repetía el literal "%d " y el mensaje mostraba marcadores en
+	// vez de los valores reales. Se formatean los targets permitidos.
+	valid := make([]string, len(validJVMTargets))
+	for i, value := range validJVMTargets {
+		valid[i] = strconv.Itoa(value)
+	}
 	return fmt.Errorf("java_target %d no válido: usa uno de %s",
-		target, strings.Trim(strings.Repeat("%d ", len(validJVMTargets)), " "))
+		target, strings.Join(valid, " "))
 }
 
 // jvmTarget devuelve el target de bytecode: 17 por defecto (como AGP) y el
@@ -1981,16 +2017,23 @@ func (c Config) appliesComposePlugin() bool {
 
 // usesCompose detecta si alguna fuente Kotlin importa algo de androidx.compose.
 func (c Config) usesCompose() bool {
-	for _, path := range c.findKotlinSources() {
+	found := false
+	// Un único paseo: findKotlinSources enumera las fuentes y el callback
+	// inspecciona su contenido. Antes se recorría el árbol y después se
+	// releían todas las fuentes recogidas.
+	c.findKotlinSources(func(path string) {
+		if found {
+			return
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return
 		}
 		if strings.Contains(string(data), "androidx.compose") {
-			return true
+			found = true
 		}
-	}
-	return false
+	})
+	return found
 }
 
 // composePlugin localiza compose-compiler-plugin.jar (explícito, ~/.rain o la
@@ -2021,8 +2064,10 @@ func (c Config) composePlugin() string {
 	return ""
 }
 
-// findKotlinSources lista las fuentes .kt del proyecto.
-func (c Config) findKotlinSources() []string {
+// findKotlinSources lista las fuentes .kt del proyecto, en orden de Walk.
+// El callback opcional permite examinar cada fuente durante el mismo paseo,
+// sin recorrer el árbol dos veces cuando además hay que detectar Compose.
+func (c Config) findKotlinSources(inspect ...func(string)) []string {
 	var sources []string
 	_ = filepath.Walk(sourceRoot(c.AppDir), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -2034,8 +2079,12 @@ func (c Config) findKotlinSources() []string {
 			}
 			return nil
 		}
-		if info != nil && strings.HasSuffix(path, ".kt") {
-			sources = append(sources, path)
+		if info == nil || !strings.HasSuffix(path, ".kt") {
+			return nil
+		}
+		sources = append(sources, path)
+		if len(inspect) > 0 && inspect[0] != nil {
+			inspect[0](path)
 		}
 		return nil
 	})

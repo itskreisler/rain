@@ -567,6 +567,10 @@ func TestValidateJVMTarget(t *testing.T) {
 			t.Errorf("ValidateJVMTarget(%d) = nil, quiero error", invalid)
 		}
 	}
+	// El error debe mostrar los valores permitidos, no marcadores "%d".
+	if err := ValidateJVMTarget(9); err == nil || !strings.Contains(err.Error(), "8 11 17 21") {
+		t.Errorf("ValidateJVMTarget(9) = %v, quiero el listado 8 11 17 21", err)
+	}
 }
 
 func TestProguardFilesIncludesUserRulesAndLibs(t *testing.T) {

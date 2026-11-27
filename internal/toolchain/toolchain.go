@@ -261,14 +261,7 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 	}
 	defer func() { _ = os.Remove(tmp) }()
 
-	tools := []struct {
-		name      string
-		dest      string
-		mode      os.FileMode
-		match     func(string) bool
-		native    bool
-		linuxOnly bool
-	}{
+	tools := []buildTool{
 		{
 			name: "apksigner.jar", dest: m.ApksignerJar(), mode: 0o644,
 			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") },
@@ -290,18 +283,72 @@ func (m *Manager) ensureBuildTools(ctx context.Context) error {
 			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" },
 		},
 	}
+
+	pending := make([]buildTool, 0, len(tools))
 	for _, tool := range tools {
-		if (tool.native && !native) || (tool.linuxOnly && !libcxx) {
+		if (tool.native && !native) || (tool.linuxOnly && !libcxx) || fileExists(tool.dest) {
 			continue
 		}
-		if fileExists(tool.dest) {
+		pending = append(pending, tool)
+	}
+	if len(pending) == 0 {
+		return m.publishNativeBinaries()
+	}
+	if err := extractBuildTools(tmp, pending); err != nil {
+		return err
+	}
+	return m.publishNativeBinaries()
+}
+
+// buildTool describe una herramienta a extraer del ZIP de build-tools.
+type buildTool struct {
+	name      string
+	dest      string
+	mode      os.FileMode
+	match     func(string) bool
+	native    bool
+	linuxOnly bool
+}
+
+// extractBuildTools abre el ZIP una sola vez y localiza todas las herramientas
+// en un único recorrido. Antes se abría y se recorría una vez por herramienta
+// (cinco veces), aunque siempre fuera el mismo archivo.
+func extractBuildTools(zipPath string, tools []buildTool) error {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = zr.Close() }()
+
+	// Índice por nombre de fichero. Si hay varias entradas con el mismo nombre
+	// se conserva la primera que encaja, igual que hacía extractOneMode.
+	porNombre := make(map[string]*zip.File, len(tools))
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
 			continue
 		}
-		if err := extractOneMode(tmp, tool.match, tool.dest, tool.mode); err != nil {
+		nombre := filepath.Base(f.Name)
+		if _, yaVisto := porNombre[nombre]; yaVisto {
+			continue
+		}
+		for _, tool := range tools {
+			if filepath.Base(tool.name) == nombre && tool.match(f.Name) {
+				porNombre[nombre] = f
+				break
+			}
+		}
+	}
+
+	for _, tool := range tools {
+		f := porNombre[filepath.Base(tool.name)]
+		if f == nil {
+			return fmt.Errorf("%s: no se encontró %s dentro del ZIP", tool.name, tool.dest)
+		}
+		if err := extractZipFile(f, tool.dest, tool.mode); err != nil {
 			return fmt.Errorf("%s: %w", tool.name, err)
 		}
 	}
-	return m.publishNativeBinaries()
+	return nil
 }
 
 func (m *Manager) libcxxPath() string {
@@ -317,6 +364,13 @@ func (m *Manager) publishNativeBinaries() error {
 	return m.publishNativeBinariesFor(nativeBuildToolsAvailable())
 }
 
+// zipalignWrapper sustituye al binario de Google, que enlaza libc++ de
+// build-tools y no arranca en las distribuciones que no lo traen.
+const zipalignWrapper = "#!/bin/sh\n" +
+	"# Lanzador de Rain para zipalign (necesita libc++ de build-tools).\n" +
+	"LD_LIBRARY_PATH=\"$HOME/.rain/toolchain/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" " +
+	"exec \"$HOME/.rain/toolchain/zipalign\" \"$@\"\n"
+
 func (m *Manager) publishNativeBinariesFor(native bool) error {
 	if err := os.MkdirAll(m.BinDir(), 0o755); err != nil {
 		return err
@@ -330,15 +384,19 @@ func (m *Manager) publishNativeBinariesFor(native bool) error {
 			continue
 		}
 		dst := filepath.Join(m.BinDir(), name)
-		content, err := os.ReadFile(src)
-		if err != nil {
-			return err
-		}
+
+		// El contenido de zipalign se descarta: no tiene sentido leer un
+		// binario que va a sustituirse por el wrapper. En Windows se mantiene
+		// el comportamiento histórico: el nombre termina en .exe y no se sustituye.
+		var content []byte
 		if name == "zipalign" {
-			content = []byte("#!/bin/sh\n" +
-				"# Lanzador de Rain para zipalign (necesita libc++ de build-tools).\n" +
-				"LD_LIBRARY_PATH=\"$HOME/.rain/toolchain/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" " +
-				"exec \"$HOME/.rain/toolchain/zipalign\" \"$@\"\n")
+			content = []byte(zipalignWrapper)
+		} else {
+			var err error
+			content, err = os.ReadFile(src)
+			if err != nil {
+				return err
+			}
 		}
 		if existing, err := os.ReadFile(dst); err == nil && string(content) == string(existing) {
 			continue
@@ -578,17 +636,23 @@ func extractOneMode(zipPath string, match func(string) bool, dest string, mode o
 		if f.FileInfo().IsDir() || !match(f.Name) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return err
-		}
-		tmp := dest + ".part"
-		if err := copyZipFile(f, tmp, mode); err != nil {
-			_ = os.Remove(tmp)
-			return err
-		}
-		return os.Rename(tmp, dest)
+		return extractZipFile(f, dest, mode)
 	}
 	return fmt.Errorf("no se encontró %s dentro del ZIP", dest)
+}
+
+// extractZipFile copia una entrada ya localizada a dest con el permiso pedido,
+// usando un temporal para no dejar un fichero a medias si falla la copia.
+func extractZipFile(f *zip.File, dest string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	tmp := dest + ".part"
+	if err := copyZipFile(f, tmp, mode); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dest)
 }
 
 func extractPrefix(zipPath, prefix, destDir string) error {

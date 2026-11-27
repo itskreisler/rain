@@ -176,10 +176,56 @@ func TestHiltBaseName(t *testing.T) {
 		"com/example/Outer$Inner":    "com/example/Hilt_Outer_Inner",
 		"MainActivity":               "Hilt_MainActivity",
 		"com/example/nested/Thing$1": "com/example/nested/Hilt_Thing_1",
+		"com$externo/Outer$Inner$1":  "com$externo/Hilt_Outer_Inner_1",
 	}
 	for input, want := range cases {
 		if got := HiltBaseName(input); got != want {
 			t.Errorf("HiltBaseName(%q) = %q, se esperaba %q", input, got, want)
 		}
+	}
+}
+
+// TestPoolIndexReutilizaPrimerIndice comprueba que el índice del pool devuelve
+// el mismo resultado que los bucles lineales originales, incluidos duplicados.
+func TestPoolIndexReutilizaPrimerIndice(t *testing.T) {
+	utf8Entry := func(value string) poolEntry {
+		data := append([]byte{tagUtf8}, byte(len(value)>>8), byte(len(value)))
+		data = append(data, value...)
+		return poolEntry{tag: tagUtf8, data: data}
+	}
+	classEntry := func(nameIndex uint16) poolEntry {
+		return poolEntry{
+			tag:      tagClass,
+			data:     []byte{tagClass, byte(nameIndex >> 8), byte(nameIndex)},
+			refIndex: nameIndex,
+		}
+	}
+	cf := &classFile{
+		pool: []poolEntry{
+			{}, // el índice 0 no existe
+			utf8Entry("com/example/A"),
+			utf8Entry("com/example/B"),
+			utf8Entry("com/example/A"), // duplicado posterior
+			classEntry(1),
+			classEntry(3), // misma clase apuntando a otro Utf8 igual
+		},
+		poolCount: 6,
+	}
+	if got := cf.addClassEntry("com/example/A"); got != 4 {
+		t.Fatalf("addClassEntry devolvió %d, se esperaba el primer índice 4", got)
+	}
+	if got := cf.addUtf8("com/example/A"); got != 1 {
+		t.Fatalf("addUtf8 devolvió %d, se esperaba el primer índice 1", got)
+	}
+	// Una clase nueva añade primero su Utf8 y después su Class.
+	size := len(cf.pool)
+	if got := cf.addClassEntry("com/example/C"); got != uint16(size+1) {
+		t.Fatalf("addClassEntry nuevo devolvió %d, se esperaba %d", got, size+1)
+	}
+	if got := cf.addClassEntry("com/example/C"); got != uint16(size+1) {
+		t.Fatalf("addClassEntry repetido devolvió %d, se esperaba %d", got, size+1)
+	}
+	if len(cf.pool) != size+2 {
+		t.Fatalf("el pool creció a %d entradas, se esperaban %d", len(cf.pool), size+2)
 	}
 }

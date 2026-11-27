@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Anotaciones que convierten una clase en "entry point" de Hilt. Son las
@@ -18,16 +21,27 @@ var entryPointAnnotations = []string{
 // clase: Hilt_MainActivity, Hilt_MyApp... Las clases anidadas usan "_" en
 // lugar de "$" (Hilt_Foo_Bar), igual que hace el plugin de Gradle.
 func HiltBaseName(internalName string) string {
-	simple := internalName
-	if idx := strings.LastIndex(internalName, "/"); idx >= 0 {
-		simple = internalName[idx+1:]
+	// Antes se buscaba dos veces el último '/' y se creaba una cadena intermedia
+	// con ReplaceAll. Ahora el separador se localiza una sola vez y el nombre se
+	// copia sustituyendo '$' sobre la marcha. Se copia byte a byte para no
+	// alterar secuencias UTF-8 inválidas, igual que hacía ReplaceAll.
+	sep := strings.LastIndexByte(internalName, '/')
+	simpleStart := 0
+	if sep >= 0 {
+		simpleStart = sep + 1
 	}
-	simple = strings.ReplaceAll(simple, "$", "_")
-	pkg := ""
-	if idx := strings.LastIndex(internalName, "/"); idx >= 0 {
-		pkg = internalName[:idx+1]
+	var out strings.Builder
+	out.Grow(len(internalName) + len("Hilt_"))
+	out.WriteString(internalName[:simpleStart])
+	out.WriteString("Hilt_")
+	for i := simpleStart; i < len(internalName); i++ {
+		c := internalName[i]
+		if c == '$' {
+			c = '_'
+		}
+		out.WriteByte(c)
 	}
-	return pkg + "Hilt_" + simple
+	return out.String()
 }
 
 // IsEntryPoint indica si el class file corresponde a una clase anotada con
@@ -118,37 +132,88 @@ func TransformClass(data []byte) ([]byte, bool, error) {
 // TransformDir reescribe en el sitio todas las clases anotadas de un
 // directorio de clases compiladas. Devuelve cuántas se han tocado.
 func TransformDir(dir string) (int, error) {
-	count := 0
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	type classPath struct {
+		path string
+		mode os.FileMode
+	}
+	// Walk recorre en orden: recogemos las rutas y su modo para repartirlas
+	// después entre workers sin perder ese orden al informar de resultados.
+	var paths []classPath
+	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() || !strings.HasSuffix(path, ".class") {
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		out, changed, err := TransformClass(data)
-		if err != nil {
-			// Una clase que no se puede parsear no es culpa de Hilt: se
-			// avisa y se sigue, igual que hace el plugin de Gradle (que
-			// ignora las clases que no puede instrumentar).
-			fmt.Fprintf(os.Stderr, "aviso: no se pudo transformar %s: %v\n", path, err)
-			return nil
-		}
-		if !changed {
-			return nil
-		}
-		if err := os.WriteFile(path, out, info.Mode().Perm()); err != nil {
-			return err
-		}
-		count++
+		paths = append(paths, classPath{path: path, mode: info.Mode().Perm()})
 		return nil
 	})
-	if err != nil {
-		return count, err
+	if len(paths) == 0 {
+		return 0, walkErr
 	}
-	return count, nil
+
+	type jobResult struct {
+		warning string
+		err     error
+	}
+	results := make([]jobResult, len(paths))
+	// Pool fijo de workers: cada uno toma el siguiente índice de forma atómica
+	// y escribe un fichero distinto, así que la salida en disco es la misma.
+	var next atomic.Int64
+	var changed atomic.Int64
+	workers := runtime.NumCPU()
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= len(paths) {
+					return
+				}
+				job := paths[i]
+				data, err := os.ReadFile(job.path)
+				if err != nil {
+					results[i].err = err
+					continue
+				}
+				out, modified, err := TransformClass(data)
+				if err != nil {
+					// Una clase que no se puede parsear no es culpa de Hilt: se
+					// avisa y se sigue, igual que hace el plugin de Gradle (que
+					// ignora las clases que no puede instrumentar). El aviso se
+					// guarda para imprimirlo después en orden del Walk.
+					results[i].warning = fmt.Sprintf("aviso: no se pudo transformar %s: %v\n", job.path, err)
+					continue
+				}
+				if !modified {
+					continue
+				}
+				if err := os.WriteFile(job.path, out, job.mode); err != nil {
+					results[i].err = err
+					continue
+				}
+				changed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Publicamos avisos y primer error en el orden del Walk, aunque el trabajo
+	// se haya ejecutado en paralelo: los mensajes siguen siendo deterministas.
+	var firstErr error
+	for _, res := range results {
+		if res.warning != "" {
+			fmt.Fprint(os.Stderr, res.warning)
+		}
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+		}
+	}
+	if walkErr != nil {
+		return int(changed.Load()), walkErr
+	}
+	return int(changed.Load()), firstErr
 }

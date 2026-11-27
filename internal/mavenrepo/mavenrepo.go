@@ -37,14 +37,25 @@ func For(base []string, group string) []string {
 	repos := make([]string, 0, len(base)+len(ExtraRepositories)+1)
 	repos = append(repos, base...)
 
-	if isGitHubGroup(group) && !contains(repos, JitPack) {
+	// La pertenencia se resuelve con un mapa: antes cada repo añadido
+	// recorría linealmente la lista ya construida. La lista de salida se sigue
+	// construyendo en el mismo orden (y base se copia tal cual).
+	seen := make(map[string]bool, len(base)+len(ExtraRepositories)+1)
+	for _, repo := range repos {
+		seen[repo] = true
+	}
+
+	if isGitHubGroup(group) && !seen[JitPack] {
 		repos = append(repos, JitPack)
+		seen[JitPack] = true
 	}
 
 	for _, extra := range ExtraRepositories {
-		if extra != "" && !contains(repos, extra) {
-			repos = append(repos, extra)
+		if extra == "" || seen[extra] {
+			continue
 		}
+		repos = append(repos, extra)
+		seen[extra] = true
 	}
 	return repos
 }

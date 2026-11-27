@@ -291,25 +291,26 @@ func resolveCoordinates(deps []string) ([]string, error) {
 	var coords []string
 	seen := make(map[string]bool)
 
+	// Un único recorrido compartido: antes cada raíz repetía el subgrafo
+	// común, multiplicando descargas y parseos por el número de raíces.
+	resolved, err := pom.ResolveTransitiveMany(deps, "cache")
+	if err != nil {
+		return nil, fmt.Errorf("resolviendo dependencias: %w", err)
+	}
+	for _, d := range resolved {
+		coord := d.Coordinate()
+		if !seen[coord] {
+			seen[coord] = true
+			coords = append(coords, coord)
+		}
+	}
 	for _, dep := range deps {
-		resolved, err := pom.ResolveTransitive(dep, "cache")
-		if err != nil {
-			return nil, fmt.Errorf("resolviendo %s: %w", dep, err)
-		}
-		for _, d := range resolved {
-			coord := d.Coordinate()
-			if !seen[coord] {
-				seen[coord] = true
-				coords = append(coords, coord)
-			}
-		}
 		if !seen[dep] {
 			seen[dep] = true
 			coords = append(coords, dep)
 		}
 	}
-	// "Highest wins" global: cada dependencia declarada se resolvió por
-	// separado, así que la unión puede traer varias versiones del mismo
+	// "Highest wins" global: la unión puede traer varias versiones del mismo
 	// artefacto. Dejarlas todas en el classpath rompe kotlinc/javac.
 	return pom.DedupeCoordinates(coords), nil
 }
@@ -348,32 +349,41 @@ func prepareAARSet(coords []string, dir string) (*aar.Set, error) {
 	results := make([]prepared, len(coords))
 	client := aar.NewClient()
 	pb := ui.NewProgressBar(len(coords), "Preparando ")
-	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var progressMu sync.Mutex
 	var done int64
 
-	for i, coord := range coords {
-		wg.Add(1)
-		go func(i int, coord string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			set, err := client.Prepare([]string{coord}, dir)
-			if err != nil {
-				results[i] = prepared{err: err}
-			} else {
-				results[i] = prepared{libs: set.Libraries}
-			}
-
-			n := int(atomic.AddInt64(&done, 1))
-			progressMu.Lock()
-			pb.Current = n
-			pb.Render()
-			progressMu.Unlock()
-		}(i, coord)
+	// Pool fijo: el semáforo limitaba la concurrencia, pero creaba una
+	// goroutine por coordenada. Con cientos de AARs casi todas dormían.
+	type job struct {
+		i     int
+		coord string
 	}
+	jobs := make(chan job)
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				set, err := client.Prepare([]string{j.coord}, dir)
+				if err != nil {
+					results[j.i] = prepared{err: err}
+				} else {
+					results[j.i] = prepared{libs: set.Libraries}
+				}
+
+				n := int(atomic.AddInt64(&done, 1))
+				progressMu.Lock()
+				pb.Current = n
+				pb.Render()
+				progressMu.Unlock()
+			}
+		}()
+	}
+	for i, coord := range coords {
+		jobs <- job{i: i, coord: coord}
+	}
+	close(jobs)
 	wg.Wait()
 	pb.Finish()
 

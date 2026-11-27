@@ -513,14 +513,27 @@ func Recommendations(platform Platform, profile Profile) []string {
 	}
 }
 
+// validAndroidJarFn es el punto de inyección de los tests para contar las
+// validaciones sin depender del ZIP que haya en la máquina.
+var validAndroidJarFn = validAndroidJar
+
 func FindAndroidJar() (string, bool) {
 	var invalid string
+	// RAIN_ANDROID_JAR, ANDROID_JAR, ANDROID_HOME y ANDROID_SDK_ROOT pueden
+	// apuntar al mismo jar. Se valida cada ruta una sola vez para no abrir el
+	// ZIP repetidamente, sin alterar el orden de prioridad de los candidatos.
+	validados := make(map[string]bool)
 	for _, path := range androidJarCandidates() {
 		st, err := os.Stat(path)
 		if err != nil || st.IsDir() {
 			continue
 		}
-		if validAndroidJar(path) {
+		valid, yaValidado := validados[path]
+		if !yaValidado {
+			valid = validAndroidJarFn(path)
+			validados[path] = valid
+		}
+		if valid {
 			return path, true
 		}
 		if invalid == "" {

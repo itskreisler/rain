@@ -103,7 +103,7 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{nativeNameFor("aapt2", runtime.GOOS), nativeNameFor("zipalign", runtime.GOOS)} {
-		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("binario"), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(manager.ToolDir(), name), []byte("BINARIO-DESCARTADO"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,8 +117,13 @@ func TestPublishNativeBinariesUsaWrapperParaZipalign(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	if !strings.Contains(string(out), "LD_LIBRARY_PATH") || !strings.Contains(string(out), "lib64") {
-		t.Errorf("el wrapper de zipalign no fija LD_LIBRARY_PATH:\n%s", out)
+	// El contenido del binario se descarta por completo: solo se publica el
+	// wrapper, sin leer el ZIP ni copiar el ejecutable original.
+	if string(out) != zipalignWrapper {
+		t.Errorf("wrapper de zipalign inesperado:\n%s", out)
+	}
+	if strings.Contains(string(out), "BINARIO-DESCARTADO") {
+		t.Error("el wrapper de zipalign conservó contenido del binario original")
 	}
 }
 
@@ -216,6 +221,72 @@ func TestLibcxxSoloEnLinux(t *testing.T) {
 		if got := needsLibcxx(goos); got != want {
 			t.Errorf("needsLibcxx(%q) = %t, quiero %t", goos, got, want)
 		}
+	}
+}
+
+func TestExtractBuildToolsUnSoloRecorrido(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "build-tools.zip")
+	writeZipFile(t, zipPath, map[string]string{
+		// Un apksigner fuera de lib/ no debe tapar al que sí sirve.
+		"otro/apksigner.jar":                   "no sirve",
+		"android-16/lib/apksigner.jar":         "apksigner",
+		"android-16/" + nativeName("aapt2"):    "aapt2",
+		"android-16/" + nativeName("zipalign"): "zipalign",
+		"android-16/lib64/libc++.so":           "libcxx",
+		"android-16/lib64/libc++.so.1":         "libcxx1",
+		"android-16/lib/otro.jar":              "ruido",
+	})
+
+	dest := func(name string) string { return filepath.Join(dir, "toolchain", name) }
+	tools := []buildTool{
+		{name: "apksigner.jar", dest: dest("apksigner.jar"), mode: 0o644,
+			match: func(n string) bool { return strings.HasSuffix(n, "/lib/apksigner.jar") }},
+		{name: nativeName("aapt2"), dest: dest(nativeName("aapt2")), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("aapt2") }},
+		{name: nativeName("zipalign"), dest: dest(nativeName("zipalign")), mode: 0o755,
+			match: func(n string) bool { return filepath.Base(n) == nativeName("zipalign") }},
+		{name: "libc++.so", dest: dest("lib64/libc++.so"), mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so" }},
+		{name: "libc++.so.1", dest: dest("lib64/libc++.so.1"), mode: 0o644,
+			match: func(n string) bool { return filepath.Base(n) == "libc++.so.1" }},
+	}
+	if err := extractBuildTools(zipPath, tools); err != nil {
+		t.Fatalf("extractBuildTools: %v", err)
+	}
+
+	for _, tc := range []struct{ path, contenido string }{
+		{dest("apksigner.jar"), "apksigner"},
+		{dest(nativeName("aapt2")), "aapt2"},
+		{dest(nativeName("zipalign")), "zipalign"},
+		{dest("lib64/libc++.so"), "libcxx"},
+		{dest("lib64/libc++.so.1"), "libcxx1"},
+	} {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("lectura de %s: %v", tc.path, err)
+		}
+		if string(data) != tc.contenido {
+			t.Errorf("%s = %q, quiero %q", tc.path, data, tc.contenido)
+		}
+	}
+	info, err := os.Stat(dest(nativeName("aapt2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Errorf("permisos de aapt2 = %v, quiero 0755", info.Mode().Perm())
+	}
+
+	// El mensaje de error de una herramienta ausente se conserva.
+	missing := buildTool{
+		name: "missing.bin", dest: dest("missing.bin"), mode: 0o644,
+		match: func(n string) bool { return filepath.Base(n) == "missing.bin" },
+	}
+	err = extractBuildTools(zipPath, []buildTool{missing})
+	want := "missing.bin: no se encontró " + dest("missing.bin") + " dentro del ZIP"
+	if err == nil || err.Error() != want {
+		t.Errorf("error con herramienta ausente = %v, quiero %q", err, want)
 	}
 }
 
