@@ -178,7 +178,9 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   apuntando al NDK existente o al gestionado (`rain doctor --fix --ndk` lo
   descarga). El paso se cachea por hash de entradas y versión de NDK, y las
   `.so` resultantes se empaquetan y firman en el pipeline normal.
-  `--skip-native-build` reutiliza las bibliotecas ya generadas.
+  `--skip-native-build` reutiliza las bibliotecas ya generadas. El hash ignora
+  los directorios `build/` generados por el propio script, para que la caché no
+  se invalide a sí misma.
 
 ### Rendimiento
 

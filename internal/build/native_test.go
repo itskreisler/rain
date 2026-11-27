@@ -31,7 +31,8 @@ func TestPrepareNativeCacheaPorEntradas(t *testing.T) {
 	script := filepath.Join(root, "native", "build.sh")
 	writeHashFile(t, script, `#!/bin/sh
 echo run >> ejecuciones.txt
-mkdir -p app/src/main/jniLibs/arm64-v8a
+mkdir -p native/build app/src/main/jniLibs/arm64-v8a
+echo generated >> native/build/generated.h
 echo so > app/src/main/jniLibs/arm64-v8a/libtest.so
 `)
 	if err := os.Chmod(script, 0o755); err != nil {

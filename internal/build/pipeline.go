@@ -495,10 +495,12 @@ func (c Config) nativeOutputsReady() bool {
 
 // nativeHash incluye el script, sus entradas y la versión del NDK. Cambiar
 // cualquier fuente C o el NDK fuerza una nueva ejecución; no hace falta borrar
-// marcas a mano como en los scripts externos.
+// marcas a mano como en los scripts externos. Los directorios `build` que el
+// propio script genera dentro de las entradas se ignoran: si se hashearan, la
+// segunda ejecución invalidaría siempre la marca.
 func (c Config) nativeHash(ndk string) (string, error) {
 	h := sha256.New()
-	_, _ = h.Write([]byte("rain-native-v1\x00"))
+	_, _ = h.Write([]byte("rain-native-v2\x00"))
 	_, _ = h.Write([]byte(toolchain.NDKVersion))
 	_, _ = h.Write([]byte(ndk))
 
@@ -507,7 +509,13 @@ func (c Config) nativeHash(ndk string) (string, error) {
 			if err != nil {
 				return err
 			}
-			if info == nil || info.IsDir() {
+			if info == nil {
+				return nil
+			}
+			if info.IsDir() {
+				if path != root && (info.Name() == "build" || strings.HasPrefix(info.Name(), ".")) {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			rel, relErr := filepath.Rel(c.projectRoot(), path)

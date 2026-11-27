@@ -136,9 +136,12 @@ ha ejecutado sin errores en esta rama.
   script a mano y luego parcheaba el APK. Rain lo invoca desde la raíz con el
   NDK en el entorno. La marca `.rain-native-hash` evita repetirlo: calcular la
   clave es un `Walk` de `O(n)` sobre las entradas declaradas (por defecto
-  `native/` y `third_party/`), con `hashFile` ya cacheado por fichero. Solo se
-  ejecuta el script cuando cambia una entrada o la versión del NDK; si no hay
-  `.so` en las salidas, falla antes de escribir la marca.
+  `native/` y `third_party/`), con `hashFile` ya cacheado por fichero. Los
+  subdirectorios `build/` y ocultos se omiten: los scripts suelen escribir en
+  `native/build/`, y hashear ese resultado invalidaba la marca en cada pasada
+  (regresión detectada con Buddy). Solo se ejecuta el script cuando cambia una
+  entrada o la versión del NDK; si no hay `.so` en las salidas, falla antes de
+  escribir la marca.
 - [x] Assets (`computeResourceHash`, `prepareAssets`): antes los assets no
   entraban en la clave de caché y había que borrar `.rain-res-hash`. Ahora un
   `Walk` de `O(n)` sobre el directorio efectivo (ya filtrado y con las copias
@@ -206,6 +209,16 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
   `hashFile` ahora hashea el destino de los symlinks con `os.Readlink` en vez
   de abrirlos, y el build vuelve a pasar. Hay un test que cambia el destino
   de un symlink y comprueba que el hash de recursos cambia.
+- [x] Compilación nativa real de `buddy-android`: con los submódulos
+  inicializados y `[native] script = 'native/build.sh'`, `rain --devlog build`
+  ejecuta el script desde la raíz con `ANDROID_NDK_HOME` apuntando al NDK
+  gestionado r27c y genera `libtalloc.so`, `libandroid-shmem.so`, `libproot.so`,
+  `libproot-loader.so` y `libbuddypty.so`. Rain empaqueta las 5 en
+  `lib/arm64-v8a/` y firma el APK en 168 s; `apksigner verify --verbose`:
+  `Verifies` con v3 y 1 firmante. El script requiere `gawk` (`strtonum`) en el
+  entorno; no se parcheó el proyecto, se instaló la dependencia del sistema.
+  Una segunda pasada imprimió `código nativo sin cambios, reutilizando
+  bibliotecas`, terminó en 9 s y volvió a producir un APK con firma v3 válida.
 
 ## 5. Complejidades que NO requirieron cambio
 
