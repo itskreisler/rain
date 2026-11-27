@@ -130,10 +130,15 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
 - [x] `make build` genera `./rain` con versión, commit y fecha.
 - [x] `./rain doctor --fix --profile complex` prepara `~/.rain`: toolchain
   completo (R8 9.5.28, build-tools 36, Android 36, Kotlin 2.4.21, Compose).
-- [ ] `./rain --devlog build examples/compose` genera el APK del ejemplo con
-  más de mil iconos.
-- [ ] `java -jar ~/.rain/toolchain/apksigner.jar verify --verbose <apk>` valida
-  el APK resultante.
+- [x] `./rain --devlog build examples/compose` genera el APK del ejemplo con
+  más de mil iconos: `FireIconCatalog-1.0-universal.apk` (14,7 MiB, 1431 s el
+  primer build; un `kotlinc` huérfano del build interrumpido duplicaba CPU/RAM
+  y se eliminó).
+- [x] `java -jar ~/.rain/toolchain/apksigner.jar verify --verbose <apk>` valida
+  el APK resultante: v1, v2 y v3 correctos, 1 firmante.
+- [x] Segundo build sin cambios: 7 s, imprime `java sin cambios, reutilizando
+  classes.dex` y no invoca a `kotlinc`. Confirma que el coste repetido es
+  `O(fuentes)` de hash, no `O(fuentes)` de compilación.
 
 ## 5. Complejidades que NO requirieron cambio
 
