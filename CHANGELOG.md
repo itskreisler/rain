@@ -155,6 +155,12 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 
 ### Rendimiento
 
+- **Kotlin incremental por ABI.** Un cambio que no altera lo que ven los
+  llamadores (por ejemplo, un literal de texto en la UI) compila solo los
+  ficheros tocados con una sola invocación de `kotlinc`, usando el índice
+  `build/.rain-kt-hashes.json`. Siguen obligando a compilar todo kapt, Compose,
+  los cambios de ABI o de ficheros, las entradas de build distintas y la falta
+  de marcas de compilación.
 - **Resolución de dependencias compartida.** Se resuelven todas las raíces en un
   único DFS con `visited` y caché de cadenas de parents: antes cada raíz volvía
   a descargar y parsear el subgrafo común. Las propiedades de los POM se

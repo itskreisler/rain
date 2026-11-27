@@ -135,7 +135,30 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
 - [ ] `java -jar ~/.rain/toolchain/apksigner.jar verify --verbose <apk>` valida
   el APK resultante.
 
-## 5. Complejidades que NO requirieron cambio
+## 5. Compilación incremental de Kotlin (rama `kotlin-incremental-hash`)
+
+- [x] **Índice por fichero y subconjunto de fuentes** — `internal/build/kotlinincr.go`
+  - Antes: cualquier cambio en un `.kt` borraba `obj/` y pasaba los N ficheros
+    a `kotlinc` (compilación `O(N)`).
+  - Después: `build/.rain-kt-hashes.json` (`rain-kt-v1`) guarda los hashes
+    `content` y `abi` de cada fuente. La detección sigue siendo `O(fuentes)`,
+    pero si solo cambia `content` con `abi` idéntico se hace una única llamada
+    a `kotlinc` con los k ficheros tocados (compilación `O(k)`).
+  - La ABI cubre package/imports, firmas y supertipos, modificadores, miembros
+    de tipos, cuerpos `inline` y valores `const`. Una línea no clasificable
+    (cadena triple, identificador con backticks, llaves sin cerrar) hace que el
+    fichero completo entre en la ABI para forzar la compilación completa.
+  - Fallback a completo: sin índice, versión distinta, marcas ausentes,
+    entradas de build o entorno distintos, kapt o Compose, ficheros
+    añadidos/borrados, ABI cambiada o error al calcular el índice. En el
+    subconjunto no se borra `obj/`: solo se retiran las clases obsoletas de los
+    ficheros recompilados (fachada y clases declaradas, con sus `Nombre$*`).
+  - Comprobar: `go test ./internal/build -run 'IndiceKotlin|LimpiezaClasesKotlin|CompileKotlinSubset'`.
+  - **Pendiente de verificar:** build real de un ejemplo con dos compilaciones
+    consecutivas (cambio de literal y vuelta atrás) y verificación del APK con
+    `apksigner`. Aquí solo se han ejecutado tests y análisis estático.
+
+## 6. Complejidades que NO requirieron cambio
 
 - `O(1)`: búsquedas en mapas (`pom/transitive.go`, `aar/manifest.go`,
   `build/deps.go`), `os.Stat` de cachés, `detectarLayout`.

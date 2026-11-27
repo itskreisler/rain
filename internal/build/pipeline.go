@@ -951,9 +951,39 @@ public final class BuildConfig {
 			return fmt.Errorf("creando directorio de objetos: %w", err)
 		}
 
-		kotlinSources, err := compileSources(cfg, genDir, objDir)
-		if err != nil {
-			return err
+		// El índice permite saltarse los ficheros Kotlin cuya ABI no cambia
+		// (por ejemplo, al editar un literal dentro de una función). Si no se
+		// puede calcular, se compila todo: es la opción conservadora.
+		currentIndex, indexErr := buildKotlinIndex(cfg, genDir)
+		var kotlinSubset []string
+		if indexErr == nil {
+			prevIndex, err := loadKotlinIndex(kotlinIndexPath(cfg.BuildDir))
+			if err != nil {
+				prevIndex = nil
+			}
+			plan := kotlinIncrementalPlan(prevIndex, currentIndex, cfg)
+			if !plan.full {
+				kotlinSubset = plan.files
+				ui.Info("Kotlin incremental: %d fichero(s) con la ABI intacta", len(kotlinSubset))
+			}
+		} else {
+			ui.VerboseLog("índice Kotlin no disponible, se compila todo: %v", indexErr)
+		}
+
+		var kotlinSources []string
+		var compileErr error
+		if len(kotlinSubset) > 0 {
+			kotlinSources, compileErr = compileKotlinSubset(cfg, genDir, objDir, kotlinSubset)
+		} else {
+			kotlinSources, compileErr = compileSources(cfg, genDir, objDir)
+		}
+		if compileErr != nil {
+			return compileErr
+		}
+		if indexErr == nil {
+			if err := saveKotlinIndex(cfg.BuildDir, currentIndex); err != nil {
+				ui.VerboseLog("no se pudo guardar el índice Kotlin: %v", err)
+			}
 		}
 
 		// Marca de compilación correcta: a partir de aquí "rain check --fast"
