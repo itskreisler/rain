@@ -15,6 +15,9 @@ import (
 	"strings"
 )
 
+// reFlavorCreate extrae los nombres de create("...") dentro de productFlavors.
+var reFlavorCreate = regexp.MustCompile(`create\(\s*"([^"]+)"`)
+
 // Project es el resultado de analizar un proyecto Gradle.
 type Project struct {
 	// RootDir es el directorio donde está settings.gradle.kts.
@@ -67,10 +70,11 @@ type Module struct {
 	// ProguardFiles son las reglas de R8/ProGuard del módulo, con la ruta
 	// relativa a la raíz del proyecto ("app/proguard-rules.pro").
 	ProguardFiles []string
-	// HasFlavors indica si el módulo declara productFlavors. Rain no sabe
-	// elegir variantes, así que el importador avisa en lugar de generar un
-	// rain.toml que luego no compila.
+	// HasFlavors indica si el módulo declara productFlavors.
 	HasFlavors bool
+	// Flavors son los nombres declarados en productFlavors, en orden. El
+	// importador elige el primero como variante por defecto.
+	Flavors []string
 }
 
 // Dependency es una dependencia declarada en el bloque dependencies.
@@ -150,7 +154,7 @@ func Detect(dir string) (*Project, error) {
 
 	if proj.App != nil && proj.App.HasFlavors {
 		proj.Warnings = append(proj.Warnings,
-			"el proyecto usa productFlavors: rain solo compila src/main; copia los ficheros de la variante elegida a src/main antes de build")
+			"el proyecto usa productFlavors: rain compila solo la variante indicada en [build] flavor del rain.toml")
 	}
 
 	if proj.App == nil {
@@ -288,7 +292,12 @@ func ParseModule(dir string) (*Module, error) {
 	if android != "" {
 		mod.Namespace = stringValue(android, "namespace")
 		mod.CompileSdk = intValue(android, "compileSdk")
-		mod.HasFlavors = strings.Contains(android, "productFlavors")
+		if flavors, ok := findBlock(android, "productFlavors"); ok {
+			mod.HasFlavors = true
+			for _, m := range reFlavorCreate.FindAllStringSubmatch(flavors, -1) {
+				mod.Flavors = append(mod.Flavors, m[1])
+			}
+		}
 		if blocks.hasDefaultConfig {
 			mod.ApplicationID = stringValue(blocks.defaultConfig, "applicationId")
 			mod.MinSdk = intValue(blocks.defaultConfig, "minSdk")

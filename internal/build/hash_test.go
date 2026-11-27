@@ -17,6 +17,34 @@ func writeHashFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestComputeConfigJavaHashIncluyeFlavor(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "app")
+	writeHashFile(t, filepath.Join(app, "src", "main", "AndroidManifest.xml"), "<manifest/>")
+	flavorJava := filepath.Join(app, "src", "github", "java", "app", "buddy", "Flavor.java")
+	writeHashFile(t, flavorJava, "class Flavor { static final boolean FDROID = false; }")
+
+	cfg := Config{AppDir: app, LibsDir: filepath.Join(dir, "libs"), Flavor: "github"}
+	gen := filepath.Join(app, "build", "gen")
+	primero, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	writeHashFile(t, flavorJava, "class Flavor { static final boolean FDROID = true; }")
+	segundo, err := computeConfigJavaHash(cfg, gen)
+	if err != nil {
+		t.Fatalf("computeConfigJavaHash: %v", err)
+	}
+	if primero == segundo {
+		t.Errorf("cambiar una fuente de la variante no invalidó el hash: %s", primero)
+	}
+
+	// Un nombre de variante con traversal no debe salir del módulo.
+	if got := flavorSourceDir(app, "../fdroid"); got != "" {
+		t.Errorf("flavorSourceDir con traversal = %q, quiero vacío", got)
+	}
+}
+
 func TestComputeJavaHashIncluyeJniLibs(t *testing.T) {
 	dir := t.TempDir()
 	app := filepath.Join(dir, "app")

@@ -155,11 +155,13 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
 - **Dependencias `local:`.** `dependencies = ['local:foo:1.0']` lee
   `native/foo-1.0.aar` (o `.jar`) sin consultar Maven ni resolver POMs. Así un
   proyecto con un AAR propio no necesita copiarlo a mano en `.rain-deps/aars`.
+- **Variantes de producto.** `[build] flavor = "github"` compila
+  `app/src/<flavor>/java` y `app/src/<flavor>/res` además de `src/main`; los
+  recursos de la variante sobrescriben los del main. `rain gradle` elige la
+  primera variante declarada y avisa de que solo se compila esa.
 - **Librerías nativas del proyecto.** `rain build` empaqueta las `.so` de
   `src/main/jniLibs/<abi>/` (o `jniLibs/<abi>/` en layout plano), con prioridad
-  sobre las de los AAR. Cambiar una invalida la caché incremental. `rain gradle`
-  avisa cuando el proyecto usa `productFlavors`, porque Rain solo compila
-  `src/main`.
+  sobre las de los AAR. Cambiar una invalida la caché incremental.
 
 ### Rendimiento
 

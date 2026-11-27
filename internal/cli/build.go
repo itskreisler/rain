@@ -177,6 +177,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			VersionName:          bc.VersionName,
 			AppName:              cfg.Project.Name,
 			JVMTarget:            bc.JavaTarget,
+			Flavor:               cfg.Build.Flavor,
 			Libs:                 libs,
 			AllowDebugSigning:    allowDebugSigning,
 			CheckOnly:            checkOnly,

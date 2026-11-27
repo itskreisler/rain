@@ -285,6 +285,9 @@ android {
 	if proj.App == nil || !proj.App.HasFlavors {
 		t.Fatalf("HasFlavors = false, se esperaba true")
 	}
+	if len(proj.App.Flavors) != 1 || proj.App.Flavors[0] != "free" {
+		t.Errorf("Flavors = %v, quiero [free]", proj.App.Flavors)
+	}
 	var avisado bool
 	for _, w := range proj.Warnings {
 		if strings.Contains(w, "productFlavors") {

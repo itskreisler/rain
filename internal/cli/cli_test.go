@@ -11,6 +11,7 @@ import (
 
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/doctor"
+	"github.com/itskreisler/rain/internal/gradle"
 )
 
 // runCmd ejecuta el árbol de comandos con args, capturando stdout, y devuelve
@@ -424,6 +425,22 @@ func TestBuildRequiresProject(t *testing.T) {
 	_, err := runCmd(t, "build", ".")
 	if err == nil {
 		t.Fatal("build sin proyecto debería fallar")
+	}
+}
+
+func TestGradleConfigEligePrimerFlavor(t *testing.T) {
+	app := &gradle.Module{
+		Plugins: []string{"com.android.application"},
+		Flavors: []string{"github", "fdroid"},
+	}
+	proj := &gradle.Project{App: app, Modules: []gradle.Module{*app}}
+
+	cfg, err := gradleConfig(proj)
+	if err != nil {
+		t.Fatalf("gradleConfig: %v", err)
+	}
+	if cfg.Build.Flavor != "github" {
+		t.Errorf("Flavor = %q, quiero github", cfg.Build.Flavor)
 	}
 }
 

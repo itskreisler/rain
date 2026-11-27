@@ -247,6 +247,12 @@ A `local:<artifact>:<version>` dependency is read from
 `native/<artifact>-<version>.aar` (or `.jar`) and copied into Rain's dependency
 cache; it skips Maven and POM resolution entirely.
 
+For Gradle projects with `productFlavors`, set `flavor = "github"` under
+`[build]` to compile `app/src/<flavor>/java` and `app/src/<flavor>/res` in
+addition to `src/main` (flavor resources override main resources of the same
+name). `rain gradle` writes the first declared flavor automatically. Only the
+selected variant is compiled.
+
 Native libraries under `app/src/main/jniLibs/<abi>/*.so` (or `jniLibs/<abi>/`
 in a flat project) are packaged into `lib/<abi>/` automatically and take
 precedence over libraries coming from AAR dependencies. `rain gradle` warns

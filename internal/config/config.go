@@ -102,9 +102,12 @@ type Build struct {
 	VersionName string `toml:"version_name"`
 	// ApplicationID permite separar el id de la app del namespace del código.
 	ApplicationID string `toml:"application_id"`
-	// JavaTarget es el nivel de bytecode (8, 11, 17, 21). 0 = automático.
 	// JavaTarget es el nivel de bytecode del código Java/Kotlin. 0 = automático.
 	JavaTarget int `toml:"java_target"`
+	// Flavor elige la variante de producto de Gradle que se compila: Rain
+	// incluye app/src/<flavor>/java y app/src/<flavor>/res además de src/main.
+	// Vacío compila solo src/main.
+	Flavor string `toml:"flavor"`
 	// ProguardFiles son archivos con reglas de R8/ProGuard adicionales a las
 	// que rain encuentra por su cuenta (proguard-rules.pro en el módulo).
 	// Las rutas son relativas a la raíz del proyecto.

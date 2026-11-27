@@ -125,6 +125,10 @@ ha ejecutado sin errores en esta rama.
 - [x] `.so` del módulo (`internal/build/deps.go`, `pipeline.go`): un `Walk` de
   `jniLibs/<abi>/` indexa las librerías en un mapa `O(n)` y las añade al hash
   incremental. Las locales ganan a las del AAR en caso de colisión.
+- [x] Variantes de producto (`[build] flavor`): las fuentes de
+  `src/<flavor>/{java,kotlin}` se recogen en una pasada `O(n)` adicional y se
+  incluyen en el hash del DEX; los recursos de la variante se compilan aparte
+  y sobrescriben los del main. `rain gradle` elige el primer flavor declarado.
 - [x] `CHANGELOG.md` documenta los cambios visibles.
 
 ## 4. Verificación (marcar solo tras ejecutar)
@@ -155,6 +159,13 @@ Entorno usado: Go 1.27.4 (estable), golangci-lint 2.15.0 y goimports 0.52.0.
   firmante; `unzip -l` confirma `lib/arm64-v8a/` con `libproot.so`,
   `libproot-loader.so`, `libtalloc.so`, `libandroid-shmem.so` y
   `libbuddypty.so`.
+- [x] Build limpio de `buddy-android` en clon sin cambios manuales:
+  `rain gradle .` detecta `Flavors:[github fdroid]`, escribe
+  `java_target = 8` y `flavor = 'github'`; `rain build .` compila en 61 s sin
+  copiar `Flavor.java` a `src/main`. `apksigner verify --verbose`: `Verifies`
+  con v3 y 1 firmante.
+- [x] Cambiar `flavor` a `fdroid` en el `rain.toml` fuerza la recompilación
+  Java (el hash incluye la variante) y genera un APK igualmente válido en 66 s.
 
 ## 5. Complejidades que NO requirieron cambio
 

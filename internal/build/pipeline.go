@@ -46,6 +46,8 @@ type Config struct {
 	ComposePlugin string
 	// JVMTarget es el target de bytecode (8 por defecto; 11 con Compose).
 	JVMTarget int
+	// Flavor es la variante de producto que se compila además de src/main.
+	Flavor string
 	// KotlinBackendThreads controla -Xbackend-threads de kotlinc.
 	// El valor cero conserva el comportamiento por defecto de Rain.
 	KotlinBackendThreads int
@@ -85,6 +87,21 @@ func sourceRoot(appDir string) string {
 		return gradleRoot
 	}
 	return appDir
+}
+
+// flavorSourceDir devuelve app/src/<flavor> si la variante existe. El nombre
+// se valida para que un rain.toml no pueda apuntar fuera del módulo.
+var flavorNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+func flavorSourceDir(appDir, flavor string) string {
+	if flavor == "" || !flavorNameRe.MatchString(flavor) {
+		return ""
+	}
+	dir := filepath.Join(appDir, "src", flavor)
+	if !dirExists(dir) {
+		return ""
+	}
+	return dir
 }
 
 func manifestPath(appDir string) string {
@@ -419,6 +436,44 @@ func computeJavaHash(appDir, libsDir, genDir string, release bool, depsJars ...s
 	return fmt.Sprintf("%x", global.Sum(nil)), nil
 }
 
+// computeConfigJavaHash incluye en la clave del DEX las fuentes de la variante
+// elegida. Están fuera de src/main, así que computeJavaHash no las ve.
+func computeConfigJavaHash(cfg Config, genDir string) (string, error) {
+	base, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
+	if err != nil {
+		return "", err
+	}
+	flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor)
+	if flavor == "" {
+		return base, nil
+	}
+
+	var files []string
+	javaFiles, err := collectJavaSources(filepath.Join(flavor, "java"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	kotlinFiles, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	files = append(files, javaFiles...)
+	files = append(files, kotlinFiles...)
+	sort.Strings(files)
+
+	h := sha256.New()
+	_, _ = h.Write([]byte(base))
+	for _, path := range files {
+		sum, err := hashFile(path)
+		if err != nil {
+			return "", err
+		}
+		_, _ = h.Write(sum)
+		_, _ = h.Write([]byte(path))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
 // computeDexDepsHash calcula la clave del DEX de dependencias cacheado.
 //
 // La clave cubre los jars originales (en el orden en que se dexan, porque ese
@@ -667,7 +722,13 @@ func Run(cfg Config) error {
 	flatDir := filepath.Join(cfg.BuildDir, "res")
 	baseApk := filepath.Join(cfg.BuildDir, "base.apk")
 
-	currentResHash, err := computeResourceHash(cfg.AppDir, cfg.libraryResourceInputs()...)
+	resInputs := cfg.libraryResourceInputs()
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		if flavorRes := filepath.Join(flavor, "res"); dirExists(flavorRes) {
+			resInputs = append(resInputs, flavorRes)
+		}
+	}
+	currentResHash, err := computeResourceHash(cfg.AppDir, resInputs...)
 	if err != nil {
 		return fmt.Errorf("hash de recursos: %w", err)
 	}
@@ -721,6 +782,50 @@ func Run(cfg Config) error {
 			}
 		} else {
 			ui.VerboseLog("sin directorio res/, se enlaza solo el manifest")
+		}
+
+		// Los recursos de la variante se compilan aparte y sobrescriben los de
+		// src/main con el mismo nombre, igual que hace el overlay de Gradle.
+		if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+			if flavorRes := filepath.Join(flavor, "res"); dirExists(flavorRes) {
+				flavorFlat := filepath.Join(cfg.BuildDir, "flavor-flat")
+				if err := os.RemoveAll(flavorFlat); err != nil {
+					return err
+				}
+				if err := os.MkdirAll(flavorFlat, 0o755); err != nil {
+					return err
+				}
+				cmd := exec.Command("aapt2", "compile", "--dir", flavorRes, "-o", flavorFlat)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					return fmt.Errorf("aapt2 compile (variante %s): %w", cfg.Flavor, err)
+				}
+				entries, err := os.ReadDir(flavorFlat)
+				if err != nil {
+					return err
+				}
+				if err := os.MkdirAll(flatDir, 0o755); err != nil {
+					return err
+				}
+				yaVisto := make(map[string]bool, len(appFlatFiles))
+				for _, f := range appFlatFiles {
+					yaVisto[filepath.Base(f)] = true
+				}
+				for _, e := range entries {
+					if e.IsDir() || !strings.HasSuffix(e.Name(), ".flat") {
+						continue
+					}
+					if err := copyFile(filepath.Join(flavorFlat, e.Name()), filepath.Join(flatDir, e.Name())); err != nil {
+						return err
+					}
+					if !yaVisto[e.Name()] {
+						appFlatFiles = append(appFlatFiles, filepath.Join(flatDir, e.Name()))
+						yaVisto[e.Name()] = true
+					}
+				}
+				ui.VerboseLog("recursos de la variante %s fusionados", cfg.Flavor)
+			}
 		}
 
 		ui.Info("enlazando recursos...")
@@ -896,7 +1001,7 @@ public final class BuildConfig {
 	javaHashPath := filepath.Join(cfg.BuildDir, javaHashFile)
 	dexHashPath := filepath.Join(cfg.BuildDir, dexHashFile)
 
-	currentJavaHash, err := computeJavaHash(cfg.AppDir, cfg.LibsDir, genDir, cfg.Release, cfg.libraryJars()...)
+	currentJavaHash, err := computeConfigJavaHash(cfg, genDir)
 	if err != nil {
 		return fmt.Errorf("hash de java: %w", err)
 	}
@@ -1262,6 +1367,21 @@ func compileSources(cfg Config, genDir, objDir string) ([]string, error) {
 	javaFiles, err := collectJavaSources(sourceRoot(cfg.AppDir), cfg.BuildDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("buscando fuentes Java: %w", err)
+	}
+	if flavor := flavorSourceDir(cfg.AppDir, cfg.Flavor); flavor != "" {
+		kotlinFlavor, err := collectKotlinFiles(filepath.Join(flavor, "kotlin"), cfg.BuildDir)
+		if err != nil {
+			return nil, err
+		}
+		javaFlavor, err := collectJavaSources(filepath.Join(flavor, "java"), cfg.BuildDir)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("buscando fuentes Java de la variante: %w", err)
+		}
+		kotlinFiles = append(kotlinFiles, kotlinFlavor...)
+		javaFiles = append(javaFiles, javaFlavor...)
+		if len(kotlinFlavor)+len(javaFlavor) > 0 {
+			ui.VerboseLog("variante %s: %d fuentes añadidas", cfg.Flavor, len(kotlinFlavor)+len(javaFlavor))
+		}
 	}
 	return compileSourceSet(cfg, genDir, objDir, kotlinFiles, javaFiles)
 }

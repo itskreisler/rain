@@ -44,6 +44,22 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadFlavor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rain.toml")
+	if err := os.WriteFile(path, []byte("[build]\nflavor = \"github\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Build.Flavor != "github" {
+		t.Errorf("Flavor = %q, quiero github", got.Build.Flavor)
+	}
+}
+
 func TestReadOpcionesDeLintYFormato(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rain.toml")
