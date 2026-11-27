@@ -132,6 +132,13 @@ ha ejecutado sin errores en esta rama.
 - [x] `.so` externas (`native_libs_dir`, `build/jni`): un segundo `Walk` de
   `O(n)` indexa `<abi>/*.so` en el mismo mapa que `jniLibs`; el DEX se
   invalida cuando cambian. `NoNativeLibs` corta el empaquetado en O(1).
+- [x] Compilación nativa (`[native] script`): antes cada usuario ejecutaba su
+  script a mano y luego parcheaba el APK. Rain lo invoca desde la raíz con el
+  NDK en el entorno. La marca `.rain-native-hash` evita repetirlo: calcular la
+  clave es un `Walk` de `O(n)` sobre las entradas declaradas (por defecto
+  `native/` y `third_party/`), con `hashFile` ya cacheado por fichero. Solo se
+  ejecuta el script cuando cambia una entrada o la versión del NDK; si no hay
+  `.so` en las salidas, falla antes de escribir la marca.
 - [x] Assets (`computeResourceHash`, `prepareAssets`): antes los assets no
   entraban en la clave de caché y había que borrar `.rain-res-hash`. Ahora un
   `Walk` de `O(n)` sobre el directorio efectivo (ya filtrado y con las copias

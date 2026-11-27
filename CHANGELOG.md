@@ -173,6 +173,12 @@ Las versiones se calculan automáticamente a partir de los mensajes de commit
   (o `--exclude-assets` y `--no-native-libs`) permiten generar un APK sin el
   runtime Node ni las `.so`, sin scripts que escondan carpetas ni reemplacen el
   APK firmado.
+- **Compilación nativa desde Rain.** `[native] script = "native/build.sh"`
+  ejecuta el script del proyecto antes de compilar, con `ANDROID_NDK_HOME`
+  apuntando al NDK existente o al gestionado (`rain doctor --fix --ndk` lo
+  descarga). El paso se cachea por hash de entradas y versión de NDK, y las
+  `.so` resultantes se empaquetan y firman en el pipeline normal.
+  `--skip-native-build` reutiliza las bibliotecas ya generadas.
 
 ### Rendimiento
 

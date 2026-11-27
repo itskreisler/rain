@@ -137,11 +137,11 @@ descriptive copy such as `<name>-<version>-<abi>.apk`.
 | Command | Description | Flags |
 | --- | --- | --- |
 | `rain init` | Initialize a new project | `--template simple\|completo` |
-| `rain build [dir]` | Build and sign APK; auto-detects the flat android2apk layout | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--verbose`, `--quiet` |
+| `rain build [dir]` | Build and sign APK; auto-detects the flat android2apk layout | `--android-jar <path>`, `--release`, `--allow-debug-signing`, `--native-libs-dir`, `--exclude-assets`, `--no-native-libs`, `--skip-native-build`, `--verbose`, `--quiet` |
 | `rain check [dir]` | Type-check without generating an APK | `--fast`, `--android-jar <path>`, `--release` |
 | `rain lint [dir]` | Run static analysis (ktlint, detekt, PMD) | `--install`, `--tools`, `--fail-on`, `--type-resolution` |
 | `rain fmt [dir]` | Format Kotlin (ktlint) and Java (google-java-format) | `--check` |
-| `rain doctor` | Diagnose and install the toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--install`, `--yes`, `--dry-run`, `--json`, `--print-install` |
+| `rain doctor` | Diagnose and install the toolchain | `--profile simple\|complex`, `--fix`, `--lint`, `--ndk`, `--install`, `--yes`, `--dry-run`, `--json`, `--print-install` |
 | `rain gradle` | Import a Gradle project and generate `rain.toml` | — |
 | `rain deps` | Dependency management commands | — |
 | `rain version` | Show the Rain version | — |
@@ -239,6 +239,12 @@ include = ["**/*.ts", "**/*.js", "package.json"]
 exclude = ["**/*.d.ts", "**/*.map"]
 replace = true  # discard old files in the destination directory
 
+# Optional: build native .so before compiling (script runs from rain.toml dir).
+[native]
+script = "native/build.sh"
+inputs = ["native", "third_party"]  # default: script + those dirs when present
+outputs = ["app/src/main/jniLibs"]  # must contain at least one .so afterwards
+
 [signing]
 store_file = "release.keystore"
 store_password = "password"
@@ -274,6 +280,15 @@ precedence over libraries coming from AAR dependencies. Rain also packages
 the module's own `jniLibs` still wins on collisions. No re-zipping or
 re-signing script is needed: the libraries go through Rain's normal
 `zipalign`/`apksigner` steps.
+
+For projects that build native code from source, add `[native]` with the
+project's own build script (Buddy uses `native/build.sh`). Rain runs it from
+the project root with `ANDROID_NDK_HOME` pointing to an existing NDK or to the
+managed one; `rain doctor --fix --ndk` can download that NDK in advance. The
+step is cached: changing the script, its inputs or the NDK version runs it
+again. Rain does not replace the project's Makefile — it invokes it, packages
+the resulting `.so` and signs the APK normally. `--skip-native-build` reuses
+libraries already on disk.
 
 `[[assets.copy]]` prepares assets before `aapt2` runs, so a bridge runtime can
 be assembled without a Python copy script. `replace = true` clears the

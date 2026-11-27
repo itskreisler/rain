@@ -32,6 +32,7 @@ func newBuildCmd() *cobra.Command {
 		nativeLibsDir        string
 		excludeAssets        []string
 		noNativeLibs         bool
+		skipNativeBuild      bool
 	)
 
 	cmd := &cobra.Command{
@@ -47,7 +48,10 @@ func newBuildCmd() *cobra.Command {
 			"RAIN_ANDROID_JAR tiene prioridad sobre la autodetección.\n\n" +
 			"--native-libs-dir añade .so de <abi>/*.so (build/jni se detecta solo),\n" +
 			"--exclude-assets node quita assets/node del APK y --no-native-libs\n" +
-			"genera la variante sin bibliotecas nativas.",
+			"genera la variante sin bibliotecas nativas.\n\n" +
+			"Si rain.toml define [native] script, Rain ejecuta ese script antes de\n" +
+			"compilar, con el NDK gestionado en ANDROID_NDK_HOME. --skip-native-build\n" +
+			"usa las .so ya generadas sin volver a ejecutarlo.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if kotlinBackendThreads < 0 {
@@ -73,9 +77,10 @@ func newBuildCmd() *cobra.Command {
 			}
 
 			opts := buildOverrides{
-				NativeLibsDir: nativeLibsDir,
-				ExcludeAssets: excludeAssets,
-				NoNativeLibs:  noNativeLibs,
+				NativeLibsDir:   nativeLibsDir,
+				ExcludeAssets:   excludeAssets,
+				NoNativeLibs:    noNativeLibs,
+				SkipNativeBuild: skipNativeBuild,
 			}
 			if len(args) == 1 {
 				return runBuildDir(args[0], absJar, release, allowDebugSigning, kotlinBackendThreads, opts)
@@ -91,6 +96,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nativeLibsDir, "native-libs-dir", "", "directorio adicional con <abi>/*.so (por defecto build/jni si existe)")
 	cmd.Flags().StringSliceVar(&excludeAssets, "exclude-assets", nil, "rutas de assets/ que no se empaquetan (p. ej. node)")
 	cmd.Flags().BoolVar(&noNativeLibs, "no-native-libs", false, "no empaquetar ninguna biblioteca nativa")
+	cmd.Flags().BoolVar(&skipNativeBuild, "skip-native-build", false, "no ejecutar [native] script; usar las .so existentes")
 
 	return cmd
 }
@@ -98,9 +104,10 @@ func newBuildCmd() *cobra.Command {
 // buildOverrides son las opciones de empaquetado que se pueden forzar desde
 // la línea de comandos. Si el flag no se da, manda el rain.toml.
 type buildOverrides struct {
-	NativeLibsDir string
-	ExcludeAssets []string
-	NoNativeLibs  bool
+	NativeLibsDir   string
+	ExcludeAssets   []string
+	NoNativeLibs    bool
+	SkipNativeBuild bool
 }
 
 // apply devuelve el valor efectivo de cada opción: un flag explícito gana al
@@ -114,6 +121,9 @@ func (o buildOverrides) apply(cfg config.Config) config.Config {
 	}
 	if o.NoNativeLibs {
 		cfg.Build.NoNativeLibs = true
+	}
+	if o.SkipNativeBuild || o.NoNativeLibs {
+		cfg.Native.Script = ""
 	}
 	return cfg
 }
@@ -225,6 +235,7 @@ func runBuildOrCheck(androidJar string, release, allowDebugSigning, checkOnly, f
 			NativeLibsDir:        cfg.Build.NativeLibsDir,
 			ExcludeAssets:        cfg.Build.ExcludeAssets,
 			Assets:               cfg.Assets,
+			Native:               cfg.Native,
 			NoNativeLibs:         cfg.Build.NoNativeLibs,
 			Libs:                 libs,
 			AllowDebugSigning:    allowDebugSigning,

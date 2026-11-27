@@ -426,6 +426,89 @@ func TestWrappersContent(t *testing.T) {
 	}
 }
 
+func makeFakeNDK(t *testing.T, dir string) {
+	t.Helper()
+	clang := filepath.Join(dir, "toolchains", "llvm", "prebuilt", "linux-x86_64", "bin", nativeName("clang"))
+	if err := os.MkdirAll(filepath.Dir(clang), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(clang, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindNDKRespetaEntornoYGestionado(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	t.Setenv("ANDROID_NDK_HOME", "")
+	t.Setenv("ANDROID_NDK_ROOT", "")
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	managed := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion)
+	makeFakeNDK(t, managed)
+	if got := FindNDK(); got != managed {
+		t.Errorf("FindNDK = %q, quiero %q", got, managed)
+	}
+
+	external := filepath.Join(t.TempDir(), "ndk-externo")
+	makeFakeNDK(t, external)
+	t.Setenv("ANDROID_NDK_HOME", external)
+	if got := FindNDK(); got != external {
+		t.Errorf("FindNDK con variable = %q, quiero %q", got, external)
+	}
+
+	t.Setenv("ANDROID_NDK_HOME", filepath.Join(t.TempDir(), "vacío"))
+	if got := FindNDK(); got != managed {
+		t.Errorf("FindNDK con variable inválida = %q, quiero %q", got, managed)
+	}
+}
+
+func TestEnsureNDKNoDescargaSiYaEsta(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	makeFakeNDK(t, filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion))
+
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Un servidor que falla demuestra que no se intenta descargar nada.
+	manager.Client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("EnsureNDK intentó descargar con un NDK gestionado presente")
+		return nil, os.ErrClosed
+	})}
+	got, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureNDK: %v", err)
+	}
+	if want := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion); got != want {
+		t.Errorf("EnsureNDK = %q, quiero %q", got, want)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNDKURLsDisponibles(t *testing.T) {
+	for _, goos := range []string{"linux", "windows", "darwin"} {
+		url, err := ndkURLFor(goos, "amd64")
+		if err != nil || !strings.Contains(url, "android-ndk-"+NDKVersion) {
+			t.Errorf("ndkURLFor(%s) = %q, %v", goos, url, err)
+		}
+	}
+	if _, err := ndkURLFor("linux", "arm64"); err == nil {
+		t.Error("ndkURLFor(linux, arm64) debería avisar de que no hay ZIP oficial")
+	}
+}
+
 func writeZipFile(t *testing.T, path string, entries map[string]string) {
 	t.Helper()
 	f, err := os.Create(path)

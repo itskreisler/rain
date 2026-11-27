@@ -74,6 +74,11 @@ to = 'app/assets/node'
 include = ['**/*.ts', 'package.json']
 exclude = ['**/*.d.ts']
 replace = true
+
+[native]
+script = 'native/build.sh'
+inputs = ['native', 'third_party']
+outputs = ['app/src/main/jniLibs']
 `
 	if err := os.WriteFile(path, []byte(contenido), 0o644); err != nil {
 		t.Fatal(err)
@@ -99,6 +104,11 @@ replace = true
 	if !reflect.DeepEqual(rule.Include, []string{"**/*.ts", "package.json"}) ||
 		!reflect.DeepEqual(rule.Exclude, []string{"**/*.d.ts"}) || !rule.Replace {
 		t.Errorf("filtros = %+v", rule)
+	}
+	if got.Native.Script != "native/build.sh" ||
+		!reflect.DeepEqual(got.Native.Inputs, []string{"native", "third_party"}) ||
+		!reflect.DeepEqual(got.Native.Outputs, []string{"app/src/main/jniLibs"}) {
+		t.Errorf("Native = %+v", got.Native)
 	}
 }
 

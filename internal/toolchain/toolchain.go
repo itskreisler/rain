@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,7 +18,31 @@ import (
 const (
 	BuildToolsURL = "https://dl.google.com/android/repository/build-tools_r36_linux.zip"
 	PlatformURL   = "https://dl.google.com/android/repository/platform-36_r02.zip"
+
+	// NDKVersion es el NDK que Rain descarga para los proyectos con [native].
+	// r27c es la última versión estable con soporte para API 21+ y toolchain
+	// LLVM única, que es la que esperan los scripts clang/make de los proyectos.
+	NDKVersion = "r27c"
 )
+
+var ndkURLs = map[string]string{
+	"linux":   "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-linux.zip",
+	"windows": "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-windows.zip",
+	"darwin":  "https://dl.google.com/android/repository/android-ndk-" + NDKVersion + "-darwin.zip",
+}
+
+func ndkURLFor(goos, goarch string) (string, error) {
+	url, ok := ndkURLs[goos]
+	if !ok {
+		return "", fmt.Errorf("no hay NDK oficial de Rain para %s", goos)
+	}
+	// Google publica el ZIP de Linux solo para x86-64. En otras arquitecturas
+	// se respeta un NDK del sistema, pero no se intenta ejecutar el de x86-64.
+	if goos == "linux" && goarch != "amd64" {
+		return "", fmt.Errorf("no hay ZIP de NDK para linux/%s; usa un NDK del sistema o ANDROID_NDK_HOME", goarch)
+	}
+	return url, nil
+}
 
 // buildToolsURLs son los artefactos oficiales de build-tools 36. Se usan para
 // extraer apksigner.jar, aapt2 y zipalign sin depender del gestor de paquetes.
@@ -142,6 +167,91 @@ func (m *Manager) GoogleJavaFormatJar() string {
 }
 func (m *Manager) ComposePlugin() string {
 	return filepath.Join(m.ToolDir(), "kotlinc", "lib", "compose-compiler-plugin.jar")
+}
+func (m *Manager) NDKDir() string {
+	return filepath.Join(m.ToolDir(), "android-ndk-"+NDKVersion)
+}
+
+// FindNDK devuelve el NDK a usar, sin descargar nada. Respeta las variables
+// tradicionales, luego el gestionado por Rain y por último los NDK instalados
+// por Android Studio en el SDK.
+func FindNDK() string {
+	for _, key := range []string{"ANDROID_NDK_HOME", "ANDROID_NDK_ROOT"} {
+		if dir := strings.TrimSpace(os.Getenv(key)); dir != "" && ndkUsable(dir) {
+			return dir
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		managed := filepath.Join(home, ".rain", "toolchain", "android-ndk-"+NDKVersion)
+		if ndkUsable(managed) {
+			return managed
+		}
+		for _, sdk := range []string{
+			os.Getenv("ANDROID_HOME"),
+			os.Getenv("ANDROID_SDK_ROOT"),
+			filepath.Join(home, "Android", "Sdk"),
+		} {
+			if sdk == "" {
+				continue
+			}
+			matches, _ := filepath.Glob(filepath.Join(sdk, "ndk", "*"))
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, dir := range matches {
+				if ndkUsable(dir) {
+					return dir
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ndkUsable comprueba el binario que realmente necesita el script de build de los
+// proyectos: el clang del toolchain LLVM. Un directorio vacío no cuenta.
+func ndkUsable(dir string) bool {
+	if dir == "" || !dirExists(dir) {
+		return false
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "toolchains", "llvm", "prebuilt", "*", "bin", nativeName("clang")))
+	return len(matches) > 0
+}
+
+// EnsureNDK devuelve un NDK usable, descargando el gestionado solo si no hay
+// ninguno en el equipo. Es deliberadamente independiente de Ensure: el NDK
+// pesa cientos de MB y solo hace falta en proyectos con código nativo.
+func (m *Manager) EnsureNDK(ctx context.Context) (string, error) {
+	if ndk := FindNDK(); ndk != "" {
+		return ndk, nil
+	}
+	url, err := ndkURLFor(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := m.downloadTemp(ctx, url, "Android NDK "+NDKVersion)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+
+	staging := filepath.Join(m.ToolDir(), ".android-ndk-"+NDKVersion+".part")
+	if err := os.RemoveAll(staging); err != nil {
+		return "", err
+	}
+	if err := extractPrefix(tmp, "android-ndk-"+NDKVersion+"/", staging); err != nil {
+		return "", err
+	}
+	if !ndkUsable(staging) {
+		return "", fmt.Errorf("el ZIP del NDK no contiene toolchains/llvm/prebuilt/*/bin/clang")
+	}
+	if err := os.RemoveAll(m.NDKDir()); err != nil {
+		return "", err
+	}
+	if err := os.Rename(staging, m.NDKDir()); err != nil {
+		return "", err
+	}
+	return m.NDKDir(), nil
 }
 
 // Ensure descarga e instala en ~/.rain solo lo que falte.
@@ -683,6 +793,12 @@ func extractPrefix(zipPath, prefix, destDir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
+		if f.Mode()&os.ModeSymlink != 0 {
+			if err := extractZipSymlink(f, target); err != nil {
+				return err
+			}
+			continue
+		}
 		mode := f.Mode()
 		if mode == 0 {
 			mode = 0o644
@@ -690,6 +806,28 @@ func extractPrefix(zipPath, prefix, destDir string) error {
 		if err := copyZipFile(f, target, mode.Perm()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// extractZipSymlink conserva los enlaces del NDK. Copiar su contenido como un
+// fichero normal rompe las librerías con versiones aliasadas (libc++.so.1...).
+func extractZipSymlink(f *zip.File, dest string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	target, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Symlink(string(target), dest); err != nil {
+		// Windows sin permisos para symlinks: el contenido sigue siendo útil.
+		return os.WriteFile(dest, target, 0o644)
 	}
 	return nil
 }
@@ -725,4 +863,9 @@ func safeJoin(base, rel string) (string, error) {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }

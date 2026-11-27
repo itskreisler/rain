@@ -430,10 +430,13 @@ func TestBuildRequiresProject(t *testing.T) {
 }
 
 func TestBuildOverridesAplicaFlags(t *testing.T) {
-	cfg := config.Config{Build: config.Build{
-		NativeLibsDir: "otro/jni",
-		ExcludeAssets: []string{"fonts"},
-	}}
+	cfg := config.Config{
+		Build: config.Build{
+			NativeLibsDir: "otro/jni",
+			ExcludeAssets: []string{"fonts"},
+		},
+		Native: config.Native{Script: "native/build.sh"},
+	}
 	opts := buildOverrides{
 		NativeLibsDir: "build/jni",
 		ExcludeAssets: []string{"node"},
@@ -449,7 +452,21 @@ func TestBuildOverridesAplicaFlags(t *testing.T) {
 	if !got.Build.NoNativeLibs {
 		t.Error("NoNativeLibs = false")
 	}
+	if got.Native.Script != "" {
+		t.Errorf("--no-native-libs no desactivó el script nativo: %q", got.Native.Script)
+	}
 	if cfg.Build.NativeLibsDir != "otro/jni" {
+		t.Error("apply modificó la configuración original")
+	}
+}
+
+func TestBuildOverridesSkipNativeBuild(t *testing.T) {
+	cfg := config.Config{Native: config.Native{Script: "native/build.sh"}}
+	got := (buildOverrides{SkipNativeBuild: true}).apply(cfg)
+	if got.Native.Script != "" {
+		t.Errorf("Script = %q, quiero vacío", got.Native.Script)
+	}
+	if cfg.Native.Script != "native/build.sh" {
 		t.Error("apply modificó la configuración original")
 	}
 }

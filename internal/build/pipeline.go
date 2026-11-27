@@ -3,6 +3,7 @@ package build
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/itskreisler/rain/internal/config"
 	"github.com/itskreisler/rain/internal/hilt"
 	"github.com/itskreisler/rain/internal/memenv"
+	"github.com/itskreisler/rain/internal/toolchain"
 	"github.com/itskreisler/rain/internal/ui"
 )
 
@@ -57,6 +59,8 @@ type Config struct {
 	ExcludeAssets []string
 	// Assets son reglas de copia ejecutadas antes de compilar recursos.
 	Assets config.Assets
+	// Native ejecuta un script de compilación nativa antes de los recursos.
+	Native config.Native
 	// NoNativeLibs descarta todas las .so del APK (variante sin runtime nativo).
 	NoNativeLibs bool
 	// KotlinBackendThreads controla -Xbackend-threads de kotlinc.
@@ -410,6 +414,203 @@ func substituteManifestPlaceholders(src, dst string, cfg Config) (string, error)
 		return src, err
 	}
 	return dst, nil
+}
+
+// nativeInputs son las rutas que invalidan el paso nativo. Si el proyecto no
+// declara ninguna, se toman el script y los directorios de fuentes habituales.
+func (c Config) nativeInputs() []string {
+	root := c.projectRoot()
+	paths := []string{}
+	if c.Native.Script != "" {
+		paths = append(paths, c.Native.Script)
+	}
+	if len(c.Native.Inputs) > 0 {
+		paths = append(paths, c.Native.Inputs...)
+	} else {
+		for _, guess := range []string{"native", "third_party"} {
+			if dirExists(filepath.Join(root, guess)) {
+				paths = append(paths, guess)
+			}
+		}
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// nativeOutputs son los directorios en los que se esperan .so tras el script.
+func (c Config) nativeOutputs() []string {
+	root := c.projectRoot()
+	paths := c.Native.Outputs
+	if len(paths) == 0 {
+		paths = []string{
+			filepath.Join(root, "app", "src", "main", "jniLibs"),
+			filepath.Join(sourceRoot(c.AppDir), "jniLibs"),
+			filepath.Join(root, "build", "jni"),
+		}
+		if c.NativeLibsDir != "" {
+			paths = append(paths, c.NativeLibsDir)
+		}
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (c Config) nativeOutputsReady() bool {
+	for _, dir := range c.nativeOutputs() {
+		found := false
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				// Directorio ausente o sin permisos: se prueba el siguiente.
+				return filepath.SkipAll
+			}
+			if info == nil || info.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(info.Name(), ".so") {
+				found = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeHash incluye el script, sus entradas y la versión del NDK. Cambiar
+// cualquier fuente C o el NDK fuerza una nueva ejecución; no hace falta borrar
+// marcas a mano como en los scripts externos.
+func (c Config) nativeHash(ndk string) (string, error) {
+	h := sha256.New()
+	_, _ = h.Write([]byte("rain-native-v1\x00"))
+	_, _ = h.Write([]byte(toolchain.NDKVersion))
+	_, _ = h.Write([]byte(ndk))
+
+	for _, root := range c.nativeInputs() {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info == nil || info.IsDir() {
+				return nil
+			}
+			rel, relErr := filepath.Rel(c.projectRoot(), path)
+			if relErr != nil {
+				return relErr
+			}
+			sum, err := hashFile(path)
+			if err != nil {
+				return err
+			}
+			_, _ = h.Write([]byte(filepath.ToSlash(rel)))
+			_, _ = h.Write(sum)
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// prepareNative ejecuta el script de build nativo, si hay uno, antes de que el
+// pipeline calcule hashes y compile recursos. El NDK se descarga solo si no
+// existe; las .so resultantes se empaquetan después por nativeLibs().
+func (c Config) prepareNative() error {
+	if c.Native.Script == "" || c.NoNativeLibs {
+		return nil
+	}
+	root := c.projectRoot()
+	script := c.Native.Script
+	if !filepath.IsAbs(script) {
+		script = filepath.Join(root, script)
+	}
+	if !fileExists(script) {
+		return fmt.Errorf("no se encontró el script nativo %s", script)
+	}
+
+	if err := os.MkdirAll(c.BuildDir, 0755); err != nil {
+		return fmt.Errorf("creando directorio de build: %w", err)
+	}
+
+	manager, err := toolchain.New()
+	if err != nil {
+		return err
+	}
+	ndk, err := manager.EnsureNDK(context.Background())
+	if err != nil {
+		return fmt.Errorf("preparando NDK: %w", err)
+	}
+	ui.VerboseLog("NDK: %s", ndk)
+
+	hash, err := c.nativeHash(ndk)
+	if err != nil {
+		return fmt.Errorf("hash nativo: %w", err)
+	}
+	stamp := filepath.Join(c.BuildDir, ".rain-native-hash")
+	prev, _ := os.ReadFile(stamp)
+	if string(prev) == hash && c.nativeOutputsReady() {
+		ui.Info("código nativo sin cambios, reutilizando bibliotecas")
+		return nil
+	}
+
+	ui.Info("compilando código nativo...")
+	if err := runNativeScript(script, root, ndk); err != nil {
+		return fmt.Errorf("script nativo %s: %w", c.Native.Script, err)
+	}
+	if !c.nativeOutputsReady() {
+		return fmt.Errorf("el script nativo terminó pero no generó .so en %v", c.nativeOutputs())
+	}
+	if err := os.WriteFile(stamp, []byte(hash), 0644); err != nil {
+		return fmt.Errorf("guardando marca nativa: %w", err)
+	}
+	return nil
+}
+
+// runNativeScript lanza el script desde la raíz del proyecto con el toolchain
+// LLVM del NDK delante del PATH. Se respeta el NDK del usuario si ya lo tiene.
+func runNativeScript(script, root, ndk string) error {
+	var cmd *exec.Cmd
+	lower := strings.ToLower(script)
+	switch {
+	case runtime.GOOS == "windows" && (strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")):
+		cmd = exec.Command("cmd", "/C", script)
+	case runtime.GOOS != "windows":
+		if st, err := os.Stat(script); err == nil && st.Mode()&0111 != 0 {
+			cmd = exec.Command(script)
+		} else {
+			cmd = exec.Command("bash", script)
+		}
+	default:
+		cmd = exec.Command(script)
+	}
+	cmd.Dir = root
+
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "ANDROID_NDK_HOME="+ndk, "ANDROID_NDK_ROOT="+ndk)
+	if bin, err := filepath.Glob(filepath.Join(ndk, "toolchains", "llvm", "prebuilt", "*", "bin")); err == nil && len(bin) > 0 {
+		env = append(env, "PATH="+bin[0]+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func hashFile(path string) ([]byte, error) {
@@ -959,6 +1160,12 @@ func Run(cfg Config) error {
 
 	if err := os.MkdirAll(cfg.BuildDir, 0755); err != nil {
 		return fmt.Errorf("creando directorio de build: %w", err)
+	}
+
+	// El código nativo se genera antes de hashear recursos y fuentes: sus .so
+	// entran en la caché del DEX y en el APK final.
+	if err := cfg.prepareNative(); err != nil {
+		return err
 	}
 
 	genDir := filepath.Join(cfg.BuildDir, "gen")
